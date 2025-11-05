@@ -21,6 +21,10 @@
     <File Path="test/Directory.Build.props" />
     <File Path="test/Directory.Build.targets" />
   </Folder>
-  <Project Path="src/Library/Library.csproj" />
-  <Project Path="test/Library.Tests/Library.Tests.csproj" />
+  <Folder Name="/src/">
+    <Project Path="src/Nerdbank.JsonRpc/Nerdbank.JsonRpc.csproj" />
+  </Folder>
+  <Folder Name="/test/">
+    <Project Path="test/Nerdbank.JsonRpc.Tests/Nerdbank.JsonRpc.Tests.csproj" />
+  </Folder>
 </Solution>
