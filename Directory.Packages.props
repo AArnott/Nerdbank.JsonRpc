@@ -6,7 +6,10 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="Nerdbank.MessagePack" Version="0.11.34-rc" />
+    <PackageVersion Include="Microsoft.VisualStudio.Threading" Version="17.14.15" />
+    <PackageVersion Include="Nerdbank.MessagePack" Version="0.11.54-rc" />
+    <PackageVersion Include="Nerdbank.Streams" Version="2.13.16" />
+    <PackageVersion Include="System.Threading.Channels" Version="8.0.0" />
   </ItemGroup>
   <ItemGroup Label="Library.Template">
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.0.0" />
