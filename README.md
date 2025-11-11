@@ -1,10 +1,5 @@
 # Your Library
 
-***An awesome template for your awesome library***
-
-[![NuGet package](https://img.shields.io/nuget/v/Nerdbank.JsonRpc.svg)](https://nuget.org/packages/Nerdbank.JsonRpc)
-
-
 ## Features
 
 * Follow the best and simplest patterns of build, pack and test with dotnet CLI.
