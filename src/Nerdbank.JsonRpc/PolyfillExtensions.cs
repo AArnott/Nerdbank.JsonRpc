@@ -1,4 +1,8 @@
-﻿#if !NET
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+
+#if !NET
+
 using System.Text;
 
 namespace Nerdbank.JsonRpc;
@@ -16,7 +20,7 @@ internal static class PolyfillExtensions
 		}
 	}
 
-	internal static void Deconstruct<K, V>(this KeyValuePair<K, V> pair, out K key, out V value) => (key, value) = (pair.Key, pair.Value);
+	internal static void Deconstruct<TKey, TValue>(this KeyValuePair<TKey, TValue> pair, out TKey key, out TValue value) => (key, value) = (pair.Key, pair.Value);
 }
 
 #endif
