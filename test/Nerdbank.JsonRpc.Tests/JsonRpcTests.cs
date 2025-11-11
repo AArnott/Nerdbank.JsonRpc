@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Threading.Channels;
+using Microsoft.VisualStudio.Threading;
 using Nerdbank.JsonRpc;
 using Nerdbank.MessagePack;
 using Nerdbank.Streams;
@@ -13,13 +14,14 @@ public partial class JsonRpcTests : TestBase
 	private readonly ChannelReader<JsonRpcMessage> reader;
 	private readonly ChannelWriter<JsonRpcMessage> writer;
 	private readonly JsonRpc jsonRpc;
+	private readonly MockServer server = new();
 
 	public JsonRpcTests()
 	{
 		this.jsonRpc = new();
 		this.reader = this.jsonRpc.OutboundMessages;
 
-		this.jsonRpc.AddRpcTarget(new MockServer());
+		this.jsonRpc.AddRpcTarget(this.server);
 
 		Channel<JsonRpcMessage> inboundChannel = Channel.CreateUnbounded<JsonRpcMessage>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
 		this.writer = inboundChannel.Writer;
@@ -33,6 +35,38 @@ public partial class JsonRpcTests : TestBase
 		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.reader.ReadAsync(this.TimeoutToken));
 		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
 		Assert.Equal(42, resultValue);
+	}
+
+	[Fact]
+	public async Task PauseAsync_Unpause()
+	{
+		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.PauseAsync) }, this.TimeoutToken);
+
+		// Confirm that the response is not yet available.
+		Task<JsonRpcMessage> responseMessageTask = this.reader.ReadAsync(this.TimeoutToken).AsTask();
+		await Task.Delay(ExpectedTimeout, this.TimeoutToken);
+		Assert.False(responseMessageTask.IsCompleted);
+
+		// Unblock the server and confirm response.
+		this.server.Unpause.Set();
+		JsonRpcMessage responseMessage = await responseMessageTask;
+		JsonRpcResult result = Assert.IsType<JsonRpcResult>(responseMessage);
+		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
+		Assert.Equal(42, resultValue);
+	}
+
+	[Fact]
+	public async Task PauseAsync_Cancel()
+	{
+		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.PauseAsync) }, this.TimeoutToken);
+
+		// Wait for the method to be invoked, then cancel it.
+		await this.server.PauseReached.WaitAsync(this.TimeoutToken);
+		await this.writer.WriteAsync(this.CreateCancellationRequest(1), this.TimeoutToken);
+
+		JsonRpcMessage responseMessage = await this.reader.ReadAsync(this.TimeoutToken);
+		JsonRpcError error = Assert.IsType<JsonRpcError>(responseMessage);
+		this.Logger?.WriteLine($"Received error: {error.Message}");
 	}
 
 	[Fact]
@@ -169,9 +203,24 @@ public partial class JsonRpcTests : TestBase
 		this.Logger?.WriteLine(error.Message);
 	}
 
+	private JsonRpcRequest CreateCancellationRequest(RequestId id)
+	{
+		Sequence<byte> seq = new();
+		MessagePackWriter msgpackWriter = new(seq);
+		msgpackWriter.WriteArrayHeader(1);
+		this.jsonRpc.Serializer.Serialize(ref msgpackWriter, id, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.RequestId, this.TimeoutToken);
+		msgpackWriter.Flush();
+
+		return new JsonRpcRequest { Method = "$/cancelRequest", Arguments = (RawMessagePack)seq.AsReadOnlySequence };
+	}
+
 	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 	internal partial class MockServer
 	{
+		internal AsyncManualResetEvent PauseReached { get; } = new();
+
+		internal AsyncManualResetEvent Unpause { get; } = new();
+
 		public int GetMagicNumber() => 42;
 
 		public int Add(int a, int b) => a + b;
@@ -179,5 +228,22 @@ public partial class JsonRpcTests : TestBase
 		public ValueTask<int> AddValueTask(int a, int b) => new(a + b);
 
 		public Task<int> AddTask(int a, int b) => Task.FromResult(a + b);
+
+		public async Task<int> PauseAsync(CancellationToken cancellationToken)
+		{
+			this.PauseReached.Set();
+			try
+			{
+				await this.Unpause.WaitAsync(cancellationToken);
+				return 42;
+			}
+			finally
+			{
+				this.PauseReached.Reset();
+			}
+		}
 	}
+
+	[GenerateShapeFor<RequestId>]
+	private partial class Witness;
 }

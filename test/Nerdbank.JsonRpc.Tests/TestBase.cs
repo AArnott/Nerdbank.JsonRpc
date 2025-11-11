@@ -23,6 +23,8 @@ public abstract class TestBase : IDisposable
 
 	public static TimeSpan UnexpectedTimeout => Debugger.IsAttached ? Timeout.InfiniteTimeSpan : TimeSpan.FromSeconds(5);
 
+	public static TimeSpan ExpectedTimeout => TimeSpan.FromMilliseconds(100);
+
 	public CancellationToken TimeoutToken => this.timeoutJoinedSource.Token;
 
 	public ITestOutputHelper? Logger { get; }

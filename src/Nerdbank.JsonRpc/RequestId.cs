@@ -1,12 +1,14 @@
 ﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.ComponentModel;
 using Nerdbank.MessagePack;
 
 namespace Nerdbank.JsonRpc;
 
+[GenerateShape]
 [MessagePackConverter(typeof(Converter))]
-public struct RequestId
+public partial struct RequestId : IEquatable<RequestId>
 {
 	private string? stringValue;
 	private long? numberValue;
@@ -27,7 +29,14 @@ public struct RequestId
 
 	public override string ToString() => this.stringValue ?? this.numberValue?.ToString() ?? "null";
 
-	internal class Converter : MessagePackConverter<RequestId>
+	public override int GetHashCode() => this.numberValue is long n ? n.GetHashCode() : this.stringValue?.GetHashCode() ?? 0;
+
+	public override bool Equals(object? obj) => obj is RequestId other && this.Equals(other);
+
+	public bool Equals(RequestId other) => this.stringValue == other.stringValue && this.numberValue == other.numberValue;
+
+	[EditorBrowsable(EditorBrowsableState.Never)]
+	public class Converter : MessagePackConverter<RequestId>
 	{
 		public override RequestId Read(ref MessagePackReader reader, SerializationContext context)
 		{

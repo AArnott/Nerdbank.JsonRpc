@@ -9,8 +9,9 @@ using Nerdbank.MessagePack;
 
 namespace Nerdbank.JsonRpc;
 
-public class JsonRpc : IDisposableObservable
+public partial class JsonRpc : IDisposableObservable
 {
+	private readonly ConcurrentDictionary<RequestId, PendingInboundRequest> pendingInboundRequests = [];
 	private readonly TaskCompletionSource<bool> completionSource = new();
 	private readonly CancellationTokenSource disposalSource = new();
 	private readonly ConcurrentDictionary<string, (object? Target, MethodInvoker Invoker)> handlers = new();
@@ -22,6 +23,8 @@ public class JsonRpc : IDisposableObservable
 		Channel<JsonRpcMessage> outbound = Channel.CreateUnbounded<JsonRpcMessage>(new UnboundedChannelOptions { SingleReader = true });
 		this.outboundWriter = outbound.Writer;
 		this.OutboundMessages = outbound.Reader;
+
+		this.AddRpcTarget(new SpecialMethodsTarget(this));
 	}
 
 	public ChannelReader<JsonRpcMessage> OutboundMessages { get; }
@@ -83,12 +86,28 @@ public class JsonRpc : IDisposableObservable
 		// Dispatch to the handler.
 		try
 		{
+			PendingInboundRequest tracker;
+
+			if (request.Id is RequestId id)
+			{
+				tracker = new()
+				{
+					CancellationTokenSource = new(),
+				};
+
+				Assumes.True(this.pendingInboundRequests.TryAdd(id, tracker));
+			}
+			else
+			{
+				tracker = default;
+			}
+
 			DispatchRequest dispatchRequest = new()
 			{
 				JsonRpc = this,
 				Request = request,
 				TargetInstance = handler.Target,
-				CancellationToken = default, // TODO
+				CancellationToken = tracker.CancellationTokenSource?.Token ?? default,
 			};
 
 			Helper();
@@ -109,6 +128,16 @@ public class JsonRpc : IDisposableObservable
 				catch (Exception ex)
 				{
 					this.Fault(ex);
+				}
+				finally
+				{
+					if (request.Id is RequestId id)
+					{
+						if (this.pendingInboundRequests.TryRemove(id, out PendingInboundRequest tracker))
+						{
+							tracker.Dispose();
+						}
+					}
 				}
 			}
 		}
@@ -159,5 +188,28 @@ public class JsonRpc : IDisposableObservable
 	private void Fault(Exception exception)
 	{
 		this.completionSource.TrySetException(exception);
+	}
+
+	private struct PendingInboundRequest : IDisposable
+	{
+		internal required CancellationTokenSource? CancellationTokenSource { get; init; }
+
+		public void Dispose()
+		{
+			this.CancellationTokenSource?.Dispose();
+		}
+	}
+
+	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+	internal partial class SpecialMethodsTarget(JsonRpc owner)
+	{
+		[MethodShape(Name = "$/cancelRequest")]
+		public void CancelRequest(RequestId id)
+		{
+			if (owner.pendingInboundRequests.TryGetValue(id, out PendingInboundRequest tracker))
+			{
+				tracker.CancellationTokenSource.Cancel();
+			}
+		}
 	}
 }
