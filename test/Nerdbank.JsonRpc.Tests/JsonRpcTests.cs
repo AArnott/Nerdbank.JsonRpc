@@ -52,6 +52,38 @@ public partial class JsonRpcTests : TestBase
 	}
 
 	[Fact]
+	public async Task AddValueTask_PositionalArgs()
+	{
+		Sequence<byte> seq = new();
+		MessagePackWriter msgpackWriter = new(seq);
+		msgpackWriter.WriteArrayHeader(2);
+		msgpackWriter.Write(3);
+		msgpackWriter.Write(2);
+		msgpackWriter.Flush();
+
+		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.AddValueTask), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
+		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.reader.ReadAsync(this.TimeoutToken));
+		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
+		Assert.Equal(5, resultValue);
+	}
+
+	[Fact]
+	public async Task AddTask_PositionalArgs()
+	{
+		Sequence<byte> seq = new();
+		MessagePackWriter msgpackWriter = new(seq);
+		msgpackWriter.WriteArrayHeader(2);
+		msgpackWriter.Write(3);
+		msgpackWriter.Write(2);
+		msgpackWriter.Flush();
+
+		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.AddTask), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
+		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.reader.ReadAsync(this.TimeoutToken));
+		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
+		Assert.Equal(5, resultValue);
+	}
+
+	[Fact]
 	public async Task Add_NamedArgs()
 	{
 		Sequence<byte> seq = new();
@@ -75,5 +107,9 @@ public partial class JsonRpcTests : TestBase
 		public int GetMagicNumber() => 42;
 
 		public int Add(int a, int b) => a + b;
+
+		public ValueTask<int> AddValueTask(int a, int b) => new(a + b);
+
+		public Task<int> AddTask(int a, int b) => Task.FromResult(a + b);
 	}
 }
