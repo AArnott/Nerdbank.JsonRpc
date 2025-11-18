@@ -66,7 +66,7 @@ public partial class JsonRpcTests : TestBase
 
 		JsonRpcMessage responseMessage = await this.reader.ReadAsync(this.TimeoutToken);
 		JsonRpcError error = Assert.IsType<JsonRpcError>(responseMessage);
-		this.Logger?.WriteLine($"Received error: {error.Message}");
+		this.Logger?.WriteLine($"Received error: {error.Error.Message}");
 	}
 
 	[Fact]
@@ -128,8 +128,8 @@ public partial class JsonRpcTests : TestBase
 
 		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.AddTask), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
 		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.reader.ReadAsync(this.TimeoutToken));
-		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Code);
-		this.Logger?.WriteLine(error.Message);
+		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
+		this.Logger?.WriteLine(error.Error.Message);
 	}
 
 	[Fact]
@@ -145,8 +145,8 @@ public partial class JsonRpcTests : TestBase
 
 		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.AddTask), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
 		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.reader.ReadAsync(this.TimeoutToken));
-		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Code);
-		this.Logger?.WriteLine(error.Message);
+		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
+		this.Logger?.WriteLine(error.Error.Message);
 	}
 
 	[Fact]
@@ -179,8 +179,8 @@ public partial class JsonRpcTests : TestBase
 
 		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.Add), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
 		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.reader.ReadAsync(this.TimeoutToken));
-		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Code);
-		this.Logger?.WriteLine(error.Message);
+		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
+		this.Logger?.WriteLine(error.Error.Message);
 	}
 
 	[Fact]
@@ -199,8 +199,8 @@ public partial class JsonRpcTests : TestBase
 
 		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.Add), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
 		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.reader.ReadAsync(this.TimeoutToken));
-		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Code);
-		this.Logger?.WriteLine(error.Message);
+		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
+		this.Logger?.WriteLine(error.Error.Message);
 	}
 
 	private JsonRpcRequest CreateCancellationRequest(RequestId id)

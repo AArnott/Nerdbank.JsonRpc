@@ -78,7 +78,7 @@ public partial class JsonRpc : IDisposableObservable
 			if (request.Id is RequestId missingId)
 			{
 				// Report method not found.
-				this.PostMessage(new JsonRpcError { Id = missingId, Code = -32601, Message = $"The method {request.Method} is not supported." });
+				this.PostMessage(new JsonRpcError { Id = missingId, Error = new() { Code = -32601, Message = $"The method {request.Method} is not supported." } });
 				return;
 			}
 		}
@@ -117,7 +117,7 @@ public partial class JsonRpc : IDisposableObservable
 			{
 				try
 				{
-					DispatchResponse response = await handler.Invoker(dispatchRequest);
+					DispatchResponse response = await handler.Invoker(dispatchRequest).ConfigureAwait(false);
 					Assumes.True(request.Id is null == response.Response is null, "A response is expected iff the request included an ID.");
 
 					if (response.Response is not null)

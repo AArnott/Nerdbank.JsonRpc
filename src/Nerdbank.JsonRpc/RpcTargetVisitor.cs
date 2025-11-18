@@ -88,8 +88,11 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 											? new JsonRpcError
 											{
 												Id = id,
-												Code = JsonRpcErrorCode.InvalidParams,
-												Message = $"Unknown parameter name: '{StringEncoding.UTF8.GetString(parameterNameUtf8.ToArray())}'.",
+												Error = new JsonRpcErrorDetails
+												{
+													Code = JsonRpcErrorCode.InvalidParams,
+													Message = $"Unknown parameter name: '{StringEncoding.UTF8.GetString(parameterNameUtf8.ToArray())}'.",
+												},
 											}
 											: null,
 									};
@@ -109,8 +112,11 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 										? new JsonRpcError
 										{
 											Id = id,
-											Code = JsonRpcErrorCode.InvalidParams,
-											Message = $"Expected at most {parameterSetters.Length} arguments but received {argCount}.",
+											Error = new JsonRpcErrorDetails
+											{
+												Code = JsonRpcErrorCode.InvalidParams,
+												Message = $"Expected at most {parameterSetters.Length} arguments but received {argCount}.",
+											},
 										}
 										: null,
 								};
@@ -130,8 +136,11 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 										? new JsonRpcError
 										{
 											Id = id,
-											Code = JsonRpcErrorCode.InvalidParams,
-											Message = "params must be either an object or an array.",
+											Error = new JsonRpcErrorDetails
+											{
+												Code = JsonRpcErrorCode.InvalidParams,
+												Message = "params must be either an object or an array.",
+											},
 										}
 										: null,
 									IsProtocolViolation = true,
@@ -150,8 +159,11 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 							? new JsonRpcError
 							{
 								Id = id,
-								Code = JsonRpcErrorCode.InvalidParams,
-								Message = "Not all required parameters were provided.",
+								Error = new JsonRpcErrorDetails
+								{
+									Code = JsonRpcErrorCode.InvalidParams,
+									Message = "Not all required parameters were provided.",
+								},
 							}
 							: null,
 					};
@@ -161,7 +173,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 				JsonRpcResponse? response;
 				try
 				{
-					TResult result = await invoker(ref target, ref argState);
+					TResult result = await invoker(ref target, ref argState).ConfigureAwait(false);
 
 					if (dispatch.Request.Id is RequestId id)
 					{
@@ -183,8 +195,11 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 						response = new JsonRpcError
 						{
 							Id = id,
-							Message = ex.Message,
-							Code = JsonRpcErrorCode.InternalError,
+							Error = new JsonRpcErrorDetails
+							{
+								Message = ex.Message,
+								Code = JsonRpcErrorCode.InternalError,
+							},
 						};
 					}
 					else
