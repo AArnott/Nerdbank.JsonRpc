@@ -208,7 +208,7 @@ public partial class JsonRpc : IDisposableObservable
 		{
 			if (owner.pendingInboundRequests.TryGetValue(id, out PendingInboundRequest tracker))
 			{
-				tracker.CancellationTokenSource.Cancel();
+				tracker.CancellationTokenSource?.Cancel();
 			}
 		}
 	}
