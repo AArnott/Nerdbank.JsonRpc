@@ -11,3 +11,6 @@ dotnet_diagnostic.SA1602.severity = suggestion
 
 # SA1601: Partial elements should be documented
 dotnet_diagnostic.SA1601.severity = suggestion
+
+# VSTHRD111: Use ConfigureAwait(bool)
+dotnet_diagnostic.VSTHRD111.severity = warning

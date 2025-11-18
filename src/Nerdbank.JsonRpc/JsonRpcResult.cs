@@ -8,5 +8,6 @@ namespace Nerdbank.JsonRpc;
 [GenerateShape]
 public partial class JsonRpcResult : JsonRpcResponse
 {
+	[PropertyShape(Name = "result")]
 	public required RawMessagePack Result { get; init; }
 }
