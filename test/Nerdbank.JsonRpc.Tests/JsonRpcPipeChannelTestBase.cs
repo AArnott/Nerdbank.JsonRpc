@@ -8,7 +8,7 @@ using Nerdbank.MessagePack;
 using Nerdbank.Streams;
 using Xunit;
 
-public abstract class TransportTestBase((JsonRpcTransport Alice, JsonRpcTransport Bob) pair) : TestBase
+public abstract class JsonRpcPipeChannelTestBase((JsonRpcPipeChannel Alice, JsonRpcPipeChannel Bob) pair) : TestBase
 {
 	[Fact]
 	public async Task SendAndReceiveOneRequest()

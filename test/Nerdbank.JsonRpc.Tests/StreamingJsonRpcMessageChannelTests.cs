@@ -5,11 +5,11 @@ using System.IO.Pipelines;
 using Nerdbank.JsonRpc;
 using Nerdbank.Streams;
 
-public class PipeTransportTests() : TransportTestBase(CreateTransports())
+public class StreamingJsonRpcMessageChannelTests() : JsonRpcPipeChannelTestBase(CreateTransports())
 {
-	private static (JsonRpcTransport Alice, JsonRpcTransport Bob) CreateTransports()
+	private static (JsonRpcPipeChannel Alice, JsonRpcPipeChannel Bob) CreateTransports()
 	{
 		(IDuplexPipe alice, IDuplexPipe bob) = FullDuplexStream.CreatePipePair();
-		return (new PipeTransport(alice), new PipeTransport(bob));
+		return (new StreamingJsonRpcMessageChannel(alice), new StreamingJsonRpcMessageChannel(bob));
 	}
 }
