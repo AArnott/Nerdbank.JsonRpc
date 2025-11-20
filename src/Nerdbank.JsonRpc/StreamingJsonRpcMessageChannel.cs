@@ -5,6 +5,7 @@ using System.IO.Pipelines;
 using System.Net;
 using System.Runtime.CompilerServices;
 using Microsoft;
+using Microsoft.Extensions.Logging;
 using Nerdbank.MessagePack;
 
 namespace Nerdbank.JsonRpc;
@@ -15,8 +16,8 @@ namespace Nerdbank.JsonRpc;
 /// </summary>
 public class StreamingJsonRpcMessageChannel : JsonRpcPipeChannel
 {
-	public StreamingJsonRpcMessageChannel(IDuplexPipe pipe, int? inboundCapacity = 100, int? outboundCapacity = null)
-		: base(pipe, CreateInboundChannel(inboundCapacity), CreateOutboundChannel(outboundCapacity))
+	public StreamingJsonRpcMessageChannel(IDuplexPipe pipe, ILogger<JsonRpcPipeChannel> logger, int? inboundCapacity = 100, int? outboundCapacity = null)
+		: base(pipe, CreateInboundChannel(inboundCapacity), CreateOutboundChannel(outboundCapacity), logger)
 	{
 	}
 
