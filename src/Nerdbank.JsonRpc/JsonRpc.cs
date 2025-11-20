@@ -11,25 +11,31 @@ namespace Nerdbank.JsonRpc;
 
 public partial class JsonRpc : IDisposableObservable
 {
+	private const string SpecialCancelMethodName = "$/cancelRequest";
+
 	private readonly ConcurrentDictionary<RequestId, PendingInboundRequest> pendingInboundRequests = [];
 	private readonly TaskCompletionSource<bool> completionSource = new();
 	private readonly CancellationTokenSource disposalSource = new();
 	private readonly ConcurrentDictionary<string, (object? Target, MethodInvoker Invoker)> handlers = new();
-	private ChannelWriter<JsonRpcMessage> outboundWriter;
+	private readonly ConcurrentDictionary<RequestId, TaskCompletionSource<JsonRpcResponse>> pendingOutboundRequests = new();
+	private readonly Action<object?> cancelOutboundRequestDelegate;
+	private readonly Channel<JsonRpcMessage> channel;
 	private Task? readerTask;
+	private int nextRequestId;
 
-	public JsonRpc()
+	public JsonRpc(Channel<JsonRpcMessage> channel)
 	{
-		Channel<JsonRpcMessage> outbound = Channel.CreateUnbounded<JsonRpcMessage>(new UnboundedChannelOptions { SingleReader = true });
-		this.outboundWriter = outbound.Writer;
-		this.OutboundMessages = outbound.Reader;
+		// Store a delegate we can reuse to avoid allocations.
+		this.cancelOutboundRequestDelegate = this.CancelOutboundRequest;
 
 		this.AddRpcTarget(new SpecialMethodsTarget(this));
+		this.channel = channel;
 	}
 
-	public ChannelReader<JsonRpcMessage> OutboundMessages { get; }
-
-	public MessagePackSerializer Serializer { get; init; } = new MessagePackSerializer();
+	public MessagePackSerializer Serializer { get; init; } = new MessagePackSerializer
+	{
+		InternStrings = true,
+	};
 
 	public JsonRpcState State =>
 		this.IsDisposed ? JsonRpcState.Disposed :
@@ -59,10 +65,94 @@ public partial class JsonRpc : IDisposableObservable
 		}
 	}
 
-	public void Start(ChannelReader<JsonRpcMessage> inboundMessages)
+#if NET
+	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, CancellationToken cancellationToken)
+		where TArg : IShapeable<TArg> => this.RequestAsync(method, arguments, TArg.GetTypeShape(), cancellationToken);
+
+	public ValueTask<TResult> RequestAsync<TArg, TResult>(string method, in TArg arguments, CancellationToken cancellationToken)
+		where TArg : IShapeable<TArg>
+		where TResult : IShapeable<TResult>
 	{
-		Requires.NotNull(inboundMessages);
-		this.readerTask = this.ReadAsync(inboundMessages);
+		return this.RequestAsync(method, arguments, TArg.GetTypeShape(), TResult.GetTypeShape(), cancellationToken);
+	}
+
+	public ValueTask<TResult> RequestAsync<TArg, TResult, TResultProvider>(string method, in TArg arguments, CancellationToken cancellationToken)
+		where TArg : IShapeable<TArg>
+		where TResultProvider : IShapeable<TResult>
+	{
+		return this.RequestAsync(method, arguments, TArg.GetTypeShape(), TResultProvider.GetTypeShape(), cancellationToken);
+	}
+
+	public void Notify<TArg>(string method, in TArg arguments, CancellationToken cancellationToken)
+		where TArg : IShapeable<TArg> => this.Notify(method, arguments, TArg.GetTypeShape(), cancellationToken);
+#endif
+
+	public ValueTask<TResult> RequestAsync<TArg, TResult>(string method, in TArg arguments, ITypeShape<TArg> argShape, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
+	{
+		JsonRpcRequest request = new()
+		{
+			Id = this.GetNextRequestId(),
+			Method = method,
+			Arguments = (RawMessagePack)this.Serializer.Serialize(arguments, argShape, cancellationToken),
+		};
+
+		return HelperAsync();
+		async ValueTask<TResult> HelperAsync()
+		{
+			JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
+			switch (response)
+			{
+				case JsonRpcResult result:
+					TResult returnValue = this.Serializer.Deserialize(result.Result, resultShape, cancellationToken)!;
+					return returnValue;
+				case JsonRpcError error:
+					throw new JsonRpcException(error.Error);
+				default:
+					throw new InvalidOperationException("Received an unknown response type.");
+			}
+		}
+	}
+
+	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
+	{
+		JsonRpcRequest request = new()
+		{
+			Id = this.GetNextRequestId(),
+			Method = method,
+			Arguments = (RawMessagePack)this.Serializer.Serialize(arguments, argShape, cancellationToken),
+		};
+
+		return HelperAsync();
+		async ValueTask HelperAsync()
+		{
+			JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
+			switch (response)
+			{
+				case JsonRpcResult:
+					return;
+				case JsonRpcError error:
+					throw new JsonRpcException(error.Error);
+				default:
+					throw new InvalidOperationException("Received an unknown response type.");
+			}
+		}
+	}
+
+	public void Notify<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
+	{
+		JsonRpcRequest request = new()
+		{
+			Id = null,
+			Method = method,
+			Arguments = (RawMessagePack)this.Serializer.Serialize(arguments, argShape, cancellationToken),
+		};
+
+		this.PostMessage(request);
+	}
+
+	public void Start()
+	{
+		this.readerTask = this.ReadAsync(this.channel.Reader);
 	}
 
 	/// <inheritdoc/>
@@ -70,6 +160,8 @@ public partial class JsonRpc : IDisposableObservable
 	{
 		this.disposalSource.Cancel();
 	}
+
+	private long GetNextRequestId() => Interlocked.Increment(ref this.nextRequestId);
 
 	private void Dispatch(JsonRpcRequest request)
 	{
@@ -151,6 +243,14 @@ public partial class JsonRpc : IDisposableObservable
 
 	private void ProcessResponse(JsonRpcResponse response)
 	{
+		if (this.pendingOutboundRequests.TryRemove(response.Id, out TaskCompletionSource<JsonRpcResponse>? tcs))
+		{
+			tcs.SetResult(response);
+		}
+		else
+		{
+			this.Fault(new InvalidOperationException($"Received a response with ID {response.Id} that does not match any pending requests."));
+		}
 	}
 
 	private void ProcessIncomingMessage(JsonRpcMessage message)
@@ -166,6 +266,29 @@ public partial class JsonRpc : IDisposableObservable
 		}
 	}
 
+	private async ValueTask<JsonRpcResponse> RequestAsync(JsonRpcRequest request, CancellationToken cancellationToken)
+	{
+		cancellationToken.ThrowIfCancellationRequested();
+		Requires.Argument(request.Id.HasValue, nameof(request), "Request must have an ID for tracking the response.");
+		Verify.Operation(this.State == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.State}.");
+
+		TaskCompletionSource<JsonRpcResponse> responseTcs = new();
+		Assumes.True(this.pendingOutboundRequests.TryAdd(request.Id.Value, responseTcs));
+		this.PostMessage(request);
+
+		using (cancellationToken.Register(this.cancelOutboundRequestDelegate, request))
+		{
+			JsonRpcResponse response = await responseTcs.Task.ConfigureAwait(false);
+			return response;
+		}
+	}
+
+	private void CancelOutboundRequest(object? state)
+	{
+		JsonRpcRequest request = (JsonRpcRequest)state!;
+		this.Notify(SpecialCancelMethodName, new CancelRequestParams(request.Id!.Value), CancellationToken.None);
+	}
+
 	private async Task ReadAsync(ChannelReader<JsonRpcMessage> inbound)
 	{
 		while (!inbound.Completion.IsCompleted)
@@ -177,7 +300,7 @@ public partial class JsonRpc : IDisposableObservable
 
 	private void PostMessage(JsonRpcMessage message)
 	{
-		if (this.outboundWriter.TryWrite(message))
+		if (this.channel.Writer.TryWrite(message))
 		{
 			return;
 		}
@@ -188,6 +311,16 @@ public partial class JsonRpc : IDisposableObservable
 	private void Fault(Exception exception)
 	{
 		this.completionSource.TrySetException(exception);
+	}
+
+	[GenerateShape]
+	internal partial struct CancelRequestParams
+	{
+		public CancelRequestParams(RequestId id) => this.Id = id;
+
+		[Key(0)]
+		[PropertyShape(IsRequired = true)]
+		public RequestId Id { get; set; }
 	}
 
 	private struct PendingInboundRequest : IDisposable
@@ -203,7 +336,7 @@ public partial class JsonRpc : IDisposableObservable
 	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 	internal partial class SpecialMethodsTarget(JsonRpc owner)
 	{
-		[MethodShape(Name = "$/cancelRequest")]
+		[MethodShape(Name = SpecialCancelMethodName)]
 		public void CancelRequest(RequestId id)
 		{
 			if (owner.pendingInboundRequests.TryGetValue(id, out PendingInboundRequest tracker))

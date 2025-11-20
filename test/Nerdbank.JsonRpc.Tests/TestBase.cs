@@ -3,11 +3,11 @@
 
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
-using Nerdbank.JsonRpc.Tests;
-using Xunit;
 
 public abstract class TestBase : IDisposable
 {
+	protected static readonly RawMessagePack NilMsgPack = WriteNil();
+
 	private readonly CancellationTokenSource timeoutSource = new(UnexpectedTimeout);
 
 	private readonly CancellationTokenSource timeoutJoinedSource;
@@ -42,9 +42,19 @@ public abstract class TestBase : IDisposable
 
 	public ITestOutputHelper? Logger { get; }
 
+	public void Log(JsonRpcMessage message, JsonRpc jsonRpc)
+		=> this.Logger?.WriteLine(jsonRpc.Serializer.ConvertToJson(jsonRpc.Serializer.Serialize(message, TestContext.Current.CancellationToken)));
+
 	public virtual void Dispose()
 	{
 		this.timeoutSource.Dispose();
 		this.timeoutJoinedSource.Dispose();
+	}
+
+	private static RawMessagePack WriteNil()
+	{
+		byte[] msgpack = new byte[1];
+		MessagePackPrimitives.TryWriteNil(msgpack, out _);
+		return (RawMessagePack)msgpack;
 	}
 }

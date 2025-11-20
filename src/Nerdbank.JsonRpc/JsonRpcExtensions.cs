@@ -29,4 +29,44 @@ public static class JsonRpcExtensions
 	[Obsolete("Use the instance method instead. If using the extension method syntax, check that your type argument actually has a [GenerateShape] attribute or otherwise implements IShapeable<T> to avoid a runtime failure.", error: true)]
 #endif
 	public static void AddRpcTarget<T>(this JsonRpc self, T target) => Requires.NotNull(self).AddRpcTarget(target, PolyType.Abstractions.TypeShapeResolver.ResolveDynamicOrThrow<T>());
+
+#if NET8_0
+	[RequiresDynamicCode(ResolveDynamicMessage)]
+#endif
+#if NET
+	[EditorBrowsable(EditorBrowsableState.Never)]
+	[Obsolete("Use the instance method instead. If using the extension method syntax, check that your type argument actually has a [GenerateShape] attribute or otherwise implements IShapeable<T> to avoid a runtime failure.", error: true)]
+#endif
+	public static void Notify<TArg>(this JsonRpc self, string method, in TArg arguments, CancellationToken cancellationToken)
+		=> Requires.NotNull(self).Notify(method, arguments, TypeShapeResolver.ResolveDynamicOrThrow<TArg>(), cancellationToken);
+
+#if NET8_0
+	[RequiresDynamicCode(ResolveDynamicMessage)]
+#endif
+#if NET
+	[EditorBrowsable(EditorBrowsableState.Never)]
+	[Obsolete("Use the instance method instead. If using the extension method syntax, check that your type argument actually has a [GenerateShape] attribute or otherwise implements IShapeable<T> to avoid a runtime failure.", error: true)]
+#endif
+	public static ValueTask RequestAsync<TArg>(this JsonRpc self, string method, in TArg arguments, CancellationToken cancellationToken)
+		=> Requires.NotNull(self).RequestAsync(method, arguments, TypeShapeResolver.ResolveDynamicOrThrow<TArg>(), cancellationToken);
+
+#if NET8_0
+	[RequiresDynamicCode(ResolveDynamicMessage)]
+#endif
+#if NET
+	[EditorBrowsable(EditorBrowsableState.Never)]
+	[Obsolete("Use the instance method instead. If using the extension method syntax, check that your type argument actually has a [GenerateShape] attribute or otherwise implements IShapeable<T> to avoid a runtime failure.", error: true)]
+#endif
+	public static ValueTask<TResult> RequestAsync<TArg, TResult>(this JsonRpc self, string method, in TArg arguments, CancellationToken cancellationToken)
+		=> Requires.NotNull(self).RequestAsync(method, arguments, TypeShapeResolver.ResolveDynamicOrThrow<TArg>(), TypeShapeResolver.ResolveDynamicOrThrow<TResult>(), cancellationToken);
+
+#if NET8_0
+	[RequiresDynamicCode(ResolveDynamicMessage)]
+#endif
+#if NET
+	[EditorBrowsable(EditorBrowsableState.Never)]
+	[Obsolete("Use the instance method instead. If using the extension method syntax, check that your type argument actually has a [GenerateShape] attribute or otherwise implements IShapeable<T> to avoid a runtime failure.", error: true)]
+#endif
+	public static ValueTask<TResult> RequestAsync<TArg, TResult, TResultProvider>(this JsonRpc self, string method, in TArg arguments, CancellationToken cancellationToken)
+		=> Requires.NotNull(self).RequestAsync(method, arguments, TypeShapeResolver.ResolveDynamicOrThrow<TArg>(), TypeShapeResolver.ResolveDynamicOrThrow<TResult, TResultProvider>(), cancellationToken);
 }

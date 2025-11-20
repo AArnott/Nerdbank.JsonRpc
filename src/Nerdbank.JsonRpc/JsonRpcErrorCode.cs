@@ -10,4 +10,5 @@ public static class JsonRpcErrorCode
 	public const int MethodNotFound = -32601;
 	public const int InvalidParams = -32602;
 	public const int InternalError = -32603;
+	public const int RequestCancelled = -32800;
 }

@@ -16,7 +16,7 @@ namespace Nerdbank.JsonRpc;
 /// </summary>
 public class StreamingJsonRpcMessageChannel : JsonRpcPipeChannel
 {
-	public StreamingJsonRpcMessageChannel(IDuplexPipe pipe, ILogger<JsonRpcPipeChannel> logger, int? inboundCapacity = 100, int? outboundCapacity = null)
+	public StreamingJsonRpcMessageChannel(IDuplexPipe pipe, ILogger logger, int? inboundCapacity = 100, int? outboundCapacity = null)
 		: base(pipe, CreateInboundChannel(inboundCapacity), CreateOutboundChannel(outboundCapacity), logger)
 	{
 	}
