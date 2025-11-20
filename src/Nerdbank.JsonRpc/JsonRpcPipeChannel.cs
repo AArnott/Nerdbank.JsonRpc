@@ -34,7 +34,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	private readonly ChannelWriter<JsonRpcMessage> inboundMessageWriter;
 	private readonly ChannelReader<JsonRpcMessage> outboundMessageReader;
 
-	protected JsonRpcPipeChannel(IDuplexPipe pipe, Channel<JsonRpcMessage> inboundChannel, Channel<JsonRpcMessage> outboundChannel, ILogger<JsonRpcPipeChannel> logger)
+	protected JsonRpcPipeChannel(IDuplexPipe pipe, Channel<JsonRpcMessage> inboundChannel, Channel<JsonRpcMessage> outboundChannel, ILogger logger)
 	{
 		Requires.NotNull(pipe);
 		Requires.NotNull(inboundChannel);
@@ -49,7 +49,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 		this.outboundTaskProcessor = this.HandleOutboundMessagesAsync(pipe.Output, this.disposalSource.Token);
 	}
 
-	protected ILogger<JsonRpcPipeChannel> Logger { get; }
+	protected ILogger Logger { get; }
 
 	public async ValueTask DisposeAsync()
 	{
