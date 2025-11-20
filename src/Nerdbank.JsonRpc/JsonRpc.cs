@@ -19,23 +19,18 @@ public partial class JsonRpc : IDisposableObservable
 	private readonly ConcurrentDictionary<string, (object? Target, MethodInvoker Invoker)> handlers = new();
 	private readonly ConcurrentDictionary<RequestId, TaskCompletionSource<JsonRpcResponse>> pendingOutboundRequests = new();
 	private readonly Action<object?> cancelOutboundRequestDelegate;
-	private ChannelWriter<JsonRpcMessage> outboundWriter;
+	private readonly Channel<JsonRpcMessage> channel;
 	private Task? readerTask;
 	private int nextRequestId;
 
-	public JsonRpc()
+	public JsonRpc(Channel<JsonRpcMessage> channel)
 	{
 		// Store a delegate we can reuse to avoid allocations.
 		this.cancelOutboundRequestDelegate = this.CancelOutboundRequest;
 
-		Channel<JsonRpcMessage> outbound = Channel.CreateUnbounded<JsonRpcMessage>(new UnboundedChannelOptions { SingleReader = true });
-		this.outboundWriter = outbound.Writer;
-		this.OutboundMessages = outbound.Reader;
-
 		this.AddRpcTarget(new SpecialMethodsTarget(this));
+		this.channel = channel;
 	}
-
-	public ChannelReader<JsonRpcMessage> OutboundMessages { get; }
 
 	public MessagePackSerializer Serializer { get; init; } = new MessagePackSerializer
 	{
@@ -96,7 +91,7 @@ public partial class JsonRpc : IDisposableObservable
 	{
 		JsonRpcRequest request = new()
 		{
-			Id = this.nextRequestId++,
+			Id = this.GetNextRequestId(),
 			Method = method,
 			Arguments = (RawMessagePack)this.Serializer.Serialize(arguments, argShape, cancellationToken),
 		};
@@ -122,7 +117,7 @@ public partial class JsonRpc : IDisposableObservable
 	{
 		JsonRpcRequest request = new()
 		{
-			Id = this.nextRequestId++,
+			Id = this.GetNextRequestId(),
 			Method = method,
 			Arguments = (RawMessagePack)this.Serializer.Serialize(arguments, argShape, cancellationToken),
 		};
@@ -133,7 +128,7 @@ public partial class JsonRpc : IDisposableObservable
 			JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
 			switch (response)
 			{
-				case JsonRpcResult result:
+				case JsonRpcResult:
 					return;
 				case JsonRpcError error:
 					throw new JsonRpcException(error.Error);
@@ -155,10 +150,9 @@ public partial class JsonRpc : IDisposableObservable
 		this.PostMessage(request);
 	}
 
-	public void Start(ChannelReader<JsonRpcMessage> inboundMessages)
+	public void Start()
 	{
-		Requires.NotNull(inboundMessages);
-		this.readerTask = this.ReadAsync(inboundMessages);
+		this.readerTask = this.ReadAsync(this.channel.Reader);
 	}
 
 	/// <inheritdoc/>
@@ -166,6 +160,8 @@ public partial class JsonRpc : IDisposableObservable
 	{
 		this.disposalSource.Cancel();
 	}
+
+	private long GetNextRequestId() => Interlocked.Increment(ref this.nextRequestId);
 
 	private void Dispatch(JsonRpcRequest request)
 	{
@@ -304,7 +300,7 @@ public partial class JsonRpc : IDisposableObservable
 
 	private void PostMessage(JsonRpcMessage message)
 	{
-		if (this.outboundWriter.TryWrite(message))
+		if (this.channel.Writer.TryWrite(message))
 		{
 			return;
 		}

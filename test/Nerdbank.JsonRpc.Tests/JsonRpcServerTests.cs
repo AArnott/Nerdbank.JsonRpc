@@ -8,28 +8,24 @@ using PolyType;
 
 public partial class JsonRpcServerTests : TestBase
 {
-	private readonly ChannelReader<JsonRpcMessage> reader;
-	private readonly ChannelWriter<JsonRpcMessage> writer;
+	private readonly Channel<JsonRpcMessage> channel;
 	private readonly JsonRpc jsonRpc;
 	private readonly MockServer server = new();
 
 	public JsonRpcServerTests()
 	{
-		this.jsonRpc = new();
-		this.reader = this.jsonRpc.OutboundMessages;
+		(this.channel, Channel<JsonRpcMessage> jsonRpcChannel) = MockChannel<JsonRpcMessage>.CreatePair();
+		this.jsonRpc = new(jsonRpcChannel);
 
 		this.jsonRpc.AddRpcTarget(this.server);
-
-		Channel<JsonRpcMessage> inboundChannel = Channel.CreateUnbounded<JsonRpcMessage>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
-		this.writer = inboundChannel.Writer;
-		this.jsonRpc.Start(inboundChannel.Reader);
+		this.jsonRpc.Start();
 	}
 
 	[Fact]
 	public async Task SimpleRequestResponse()
 	{
-		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.GetMagicNumber) }, this.TimeoutToken);
-		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.reader.ReadAsync(this.TimeoutToken));
+		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.GetMagicNumber) }, this.TimeoutToken);
+		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
 		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
 		Assert.Equal(42, resultValue);
 	}
@@ -37,10 +33,10 @@ public partial class JsonRpcServerTests : TestBase
 	[Fact]
 	public async Task PauseAsync_Unpause()
 	{
-		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.PauseAsync) }, this.TimeoutToken);
+		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.PauseAsync) }, this.TimeoutToken);
 
 		// Confirm that the response is not yet available.
-		Task<JsonRpcMessage> responseMessageTask = this.reader.ReadAsync(this.TimeoutToken).AsTask();
+		Task<JsonRpcMessage> responseMessageTask = this.channel.Reader.ReadAsync(this.TimeoutToken).AsTask();
 		await Task.Delay(ExpectedTimeout, this.TimeoutToken);
 		Assert.False(responseMessageTask.IsCompleted);
 
@@ -55,13 +51,13 @@ public partial class JsonRpcServerTests : TestBase
 	[Fact]
 	public async Task PauseAsync_Cancel()
 	{
-		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.PauseAsync) }, this.TimeoutToken);
+		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.PauseAsync) }, this.TimeoutToken);
 
 		// Wait for the method to be invoked, then cancel it.
 		await this.server.PauseReached.WaitAsync(this.TimeoutToken);
-		await this.writer.WriteAsync(this.CreateCancellationRequest(1), this.TimeoutToken);
+		await this.channel.Writer.WriteAsync(this.CreateCancellationRequest(1), this.TimeoutToken);
 
-		JsonRpcMessage responseMessage = await this.reader.ReadAsync(this.TimeoutToken);
+		JsonRpcMessage responseMessage = await this.channel.Reader.ReadAsync(this.TimeoutToken);
 		JsonRpcError error = Assert.IsType<JsonRpcError>(responseMessage);
 		this.Logger?.WriteLine($"Received error: {error.Error.Message}");
 	}
@@ -76,8 +72,8 @@ public partial class JsonRpcServerTests : TestBase
 		msgpackWriter.Write(2);
 		msgpackWriter.Flush();
 
-		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.Add), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
-		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.reader.ReadAsync(this.TimeoutToken));
+		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.Add), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
+		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
 		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
 		Assert.Equal(5, resultValue);
 	}
@@ -92,8 +88,8 @@ public partial class JsonRpcServerTests : TestBase
 		msgpackWriter.Write(2);
 		msgpackWriter.Flush();
 
-		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.AddValueTask), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
-		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.reader.ReadAsync(this.TimeoutToken));
+		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.AddValueTask), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
+		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
 		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
 		Assert.Equal(5, resultValue);
 	}
@@ -108,8 +104,8 @@ public partial class JsonRpcServerTests : TestBase
 		msgpackWriter.Write(2);
 		msgpackWriter.Flush();
 
-		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.AddTask), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
-		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.reader.ReadAsync(this.TimeoutToken));
+		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.AddTask), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
+		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
 		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
 		Assert.Equal(5, resultValue);
 	}
@@ -123,8 +119,8 @@ public partial class JsonRpcServerTests : TestBase
 		msgpackWriter.Write(3);
 		msgpackWriter.Flush();
 
-		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.AddTask), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
-		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.reader.ReadAsync(this.TimeoutToken));
+		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.AddTask), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
+		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
 		this.Logger?.WriteLine(error.Error.Message);
 	}
@@ -140,8 +136,8 @@ public partial class JsonRpcServerTests : TestBase
 		msgpackWriter.Write(1);
 		msgpackWriter.Flush();
 
-		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.AddTask), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
-		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.reader.ReadAsync(this.TimeoutToken));
+		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.AddTask), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
+		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
 		this.Logger?.WriteLine(error.Error.Message);
 	}
@@ -158,8 +154,8 @@ public partial class JsonRpcServerTests : TestBase
 		msgpackWriter.Write(2);
 		msgpackWriter.Flush();
 
-		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.Add), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
-		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.reader.ReadAsync(this.TimeoutToken));
+		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.Add), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
+		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
 		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
 		Assert.Equal(5, resultValue);
 	}
@@ -174,8 +170,8 @@ public partial class JsonRpcServerTests : TestBase
 		msgpackWriter.Write(3);
 		msgpackWriter.Flush();
 
-		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.Add), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
-		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.reader.ReadAsync(this.TimeoutToken));
+		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.Add), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
+		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
 		this.Logger?.WriteLine(error.Error.Message);
 	}
@@ -194,8 +190,8 @@ public partial class JsonRpcServerTests : TestBase
 		msgpackWriter.Write(2);
 		msgpackWriter.Flush();
 
-		await this.writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.Add), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
-		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.reader.ReadAsync(this.TimeoutToken));
+		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.Add), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
+		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
 		this.Logger?.WriteLine(error.Error.Message);
 	}
