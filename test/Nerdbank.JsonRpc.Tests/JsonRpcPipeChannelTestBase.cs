@@ -3,10 +3,7 @@
 
 #pragma warning disable NBMsgPack051 // Prefer modern .NET APIs - Remove this when https://github.com/AArnott/Nerdbank.MessagePack/pull/771 merges
 
-using Nerdbank.JsonRpc;
-using Nerdbank.MessagePack;
 using Nerdbank.Streams;
-using Xunit;
 
 public abstract class JsonRpcPipeChannelTestBase((JsonRpcPipeChannel Alice, JsonRpcPipeChannel Bob) pair) : TestBase
 {

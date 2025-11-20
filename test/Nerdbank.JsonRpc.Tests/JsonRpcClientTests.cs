@@ -3,10 +3,7 @@
 
 using System.Threading.Channels;
 using Microsoft.VisualStudio.Threading;
-using Nerdbank.JsonRpc;
-using Nerdbank.MessagePack;
 using PolyType;
-using Xunit;
 
 public partial class JsonRpcClientTests : TestBase
 {

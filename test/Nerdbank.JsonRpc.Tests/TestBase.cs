@@ -3,10 +3,6 @@
 
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
-using Nerdbank.JsonRpc;
-using Nerdbank.JsonRpc.Tests;
-using Nerdbank.MessagePack;
-using Xunit;
 
 public abstract class TestBase : IDisposable
 {

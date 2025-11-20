@@ -3,11 +3,8 @@
 
 using System.Threading.Channels;
 using Microsoft.VisualStudio.Threading;
-using Nerdbank.JsonRpc;
-using Nerdbank.MessagePack;
 using Nerdbank.Streams;
 using PolyType;
-using Xunit;
 
 public partial class JsonRpcServerTests : TestBase
 {
