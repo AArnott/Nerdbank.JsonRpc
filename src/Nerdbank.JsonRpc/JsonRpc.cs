@@ -65,28 +65,28 @@ public partial class JsonRpc : IDisposableObservable
 	}
 
 #if NET
-	public ValueTask RequestAsync<TArg>(string method, TArg arguments, CancellationToken cancellationToken)
+	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, CancellationToken cancellationToken)
 		where TArg : IShapeable<TArg> => this.RequestAsync(method, arguments, TArg.GetTypeShape(), cancellationToken);
 
-	public ValueTask<TResult> RequestAsync<TArg, TResult>(string method, TArg arguments, CancellationToken cancellationToken)
+	public ValueTask<TResult> RequestAsync<TArg, TResult>(string method, in TArg arguments, CancellationToken cancellationToken)
 		where TArg : IShapeable<TArg>
 		where TResult : IShapeable<TResult>
 	{
 		return this.RequestAsync(method, arguments, TArg.GetTypeShape(), TResult.GetTypeShape(), cancellationToken);
 	}
 
-	public ValueTask<TResult> RequestAsync<TArg, TResult, TResultProvider>(string method, TArg arguments, CancellationToken cancellationToken)
+	public ValueTask<TResult> RequestAsync<TArg, TResult, TResultProvider>(string method, in TArg arguments, CancellationToken cancellationToken)
 		where TArg : IShapeable<TArg>
 		where TResultProvider : IShapeable<TResult>
 	{
 		return this.RequestAsync(method, arguments, TArg.GetTypeShape(), TResultProvider.GetTypeShape(), cancellationToken);
 	}
 
-	public void Notify<TArg>(string method, TArg arguments, CancellationToken cancellationToken)
+	public void Notify<TArg>(string method, in TArg arguments, CancellationToken cancellationToken)
 		where TArg : IShapeable<TArg> => this.Notify(method, arguments, TArg.GetTypeShape(), cancellationToken);
 #endif
 
-	public async ValueTask<TResult> RequestAsync<TArg, TResult>(string method, TArg arguments, ITypeShape<TArg> argShape, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
+	public ValueTask<TResult> RequestAsync<TArg, TResult>(string method, in TArg arguments, ITypeShape<TArg> argShape, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
 		JsonRpcRequest request = new()
 		{
@@ -95,20 +95,24 @@ public partial class JsonRpc : IDisposableObservable
 			Arguments = (RawMessagePack)this.Serializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
-		JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
-		switch (response)
+		return HelperAsync();
+		async ValueTask<TResult> HelperAsync()
 		{
-			case JsonRpcResult result:
-				TResult returnValue = this.Serializer.Deserialize(result.Result, resultShape, cancellationToken)!;
-				return returnValue;
-			case JsonRpcError error:
-				throw new JsonRpcException(error.Error);
-			default:
-				throw new InvalidOperationException("Received an unknown response type.");
+			JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
+			switch (response)
+			{
+				case JsonRpcResult result:
+					TResult returnValue = this.Serializer.Deserialize(result.Result, resultShape, cancellationToken)!;
+					return returnValue;
+				case JsonRpcError error:
+					throw new JsonRpcException(error.Error);
+				default:
+					throw new InvalidOperationException("Received an unknown response type.");
+			}
 		}
 	}
 
-	public async ValueTask RequestAsync<TArg>(string method, TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
+	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
 		JsonRpcRequest request = new()
 		{
@@ -117,19 +121,23 @@ public partial class JsonRpc : IDisposableObservable
 			Arguments = (RawMessagePack)this.Serializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
-		JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
-		switch (response)
+		return HelperAsync();
+		async ValueTask HelperAsync()
 		{
-			case JsonRpcResult result:
-				return;
-			case JsonRpcError error:
-				throw new JsonRpcException(error.Error);
-			default:
-				throw new InvalidOperationException("Received an unknown response type.");
+			JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
+			switch (response)
+			{
+				case JsonRpcResult result:
+					return;
+				case JsonRpcError error:
+					throw new JsonRpcException(error.Error);
+				default:
+					throw new InvalidOperationException("Received an unknown response type.");
+			}
 		}
 	}
 
-	public void Notify<TArg>(string method, TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
+	public void Notify<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
 		JsonRpcRequest request = new()
 		{

@@ -107,7 +107,7 @@ public partial class JsonRpcClientTests : TestBase
 	}
 
 	[GenerateShape]
-	internal partial class AddNamedArguments
+	internal partial struct AddNamedArguments
 	{
 		public required int A { get; init; }
 
@@ -115,7 +115,7 @@ public partial class JsonRpcClientTests : TestBase
 	}
 
 	[GenerateShape]
-	internal partial class AddPositionalArguments
+	internal partial struct AddPositionalArguments
 	{
 		[Key(0)]
 		public required int A { get; init; }
