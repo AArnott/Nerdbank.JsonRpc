@@ -15,8 +15,10 @@ public partial class JsonRpc : IDisposableObservable
 	private readonly TaskCompletionSource<bool> completionSource = new();
 	private readonly CancellationTokenSource disposalSource = new();
 	private readonly ConcurrentDictionary<string, (object? Target, MethodInvoker Invoker)> handlers = new();
+	private readonly ConcurrentDictionary<RequestId, TaskCompletionSource<JsonRpcResponse>> pendingOutboundRequests = new();
 	private ChannelWriter<JsonRpcMessage> outboundWriter;
 	private Task? readerTask;
+	private int nextRequestId;
 
 	public JsonRpc()
 	{
@@ -29,7 +31,10 @@ public partial class JsonRpc : IDisposableObservable
 
 	public ChannelReader<JsonRpcMessage> OutboundMessages { get; }
 
-	public MessagePackSerializer Serializer { get; init; } = new MessagePackSerializer();
+	public MessagePackSerializer Serializer { get; init; } = new MessagePackSerializer
+	{
+		InternStrings = true,
+	};
 
 	public JsonRpcState State =>
 		this.IsDisposed ? JsonRpcState.Disposed :
@@ -57,6 +62,83 @@ public partial class JsonRpc : IDisposableObservable
 		{
 			this.handlers.TryAdd(name, (target, invoker));
 		}
+	}
+
+#if NET
+	public ValueTask RequestAsync<TArg>(string method, TArg arguments, CancellationToken cancellationToken)
+		where TArg : IShapeable<TArg> => this.RequestAsync(method, arguments, TArg.GetTypeShape(), cancellationToken);
+
+	public ValueTask<TResult> RequestAsync<TArg, TResult>(string method, TArg arguments, CancellationToken cancellationToken)
+		where TArg : IShapeable<TArg>
+		where TResult : IShapeable<TResult>
+	{
+		return this.RequestAsync(method, arguments, TArg.GetTypeShape(), TResult.GetTypeShape(), cancellationToken);
+	}
+
+	public ValueTask<TResult> RequestAsync<TArg, TResult, TResultProvider>(string method, TArg arguments, CancellationToken cancellationToken)
+		where TArg : IShapeable<TArg>
+		where TResultProvider : IShapeable<TResult>
+	{
+		return this.RequestAsync(method, arguments, TArg.GetTypeShape(), TResultProvider.GetTypeShape(), cancellationToken);
+	}
+
+	public void Notify<TArg>(string method, TArg arguments, CancellationToken cancellationToken)
+		where TArg : IShapeable<TArg> => this.Notify(method, arguments, TArg.GetTypeShape(), cancellationToken);
+#endif
+
+	public async ValueTask<TResult> RequestAsync<TArg, TResult>(string method, TArg arguments, ITypeShape<TArg> argShape, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
+	{
+		JsonRpcRequest request = new()
+		{
+			Id = this.nextRequestId++,
+			Method = method,
+			Arguments = (RawMessagePack)this.Serializer.Serialize(arguments, argShape, cancellationToken),
+		};
+
+		JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
+		switch (response)
+		{
+			case JsonRpcResult result:
+				TResult returnValue = this.Serializer.Deserialize(result.Result, resultShape, cancellationToken)!;
+				return returnValue;
+			case JsonRpcError error:
+				throw new JsonRpcException(error.Error);
+			default:
+				throw new InvalidOperationException("Received an unknown response type.");
+		}
+	}
+
+	public async ValueTask RequestAsync<TArg>(string method, TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
+	{
+		JsonRpcRequest request = new()
+		{
+			Id = this.nextRequestId++,
+			Method = method,
+			Arguments = (RawMessagePack)this.Serializer.Serialize(arguments, argShape, cancellationToken),
+		};
+
+		JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
+		switch (response)
+		{
+			case JsonRpcResult result:
+				return;
+			case JsonRpcError error:
+				throw new JsonRpcException(error.Error);
+			default:
+				throw new InvalidOperationException("Received an unknown response type.");
+		}
+	}
+
+	public void Notify<TArg>(string method, TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
+	{
+		JsonRpcRequest request = new()
+		{
+			Id = null,
+			Method = method,
+			Arguments = (RawMessagePack)this.Serializer.Serialize(arguments, argShape, cancellationToken),
+		};
+
+		this.PostMessage(request);
 	}
 
 	public void Start(ChannelReader<JsonRpcMessage> inboundMessages)
@@ -151,6 +233,14 @@ public partial class JsonRpc : IDisposableObservable
 
 	private void ProcessResponse(JsonRpcResponse response)
 	{
+		if (this.pendingOutboundRequests.TryRemove(response.Id, out TaskCompletionSource<JsonRpcResponse>? tcs))
+		{
+			tcs.SetResult(response);
+		}
+		else
+		{
+			this.Fault(new InvalidOperationException($"Received a response with ID {response.Id} that does not match any pending requests."));
+		}
 	}
 
 	private void ProcessIncomingMessage(JsonRpcMessage message)
@@ -164,6 +254,22 @@ public partial class JsonRpc : IDisposableObservable
 				this.ProcessResponse(response);
 				break;
 		}
+	}
+
+	private async ValueTask<JsonRpcResponse> RequestAsync(JsonRpcRequest request, CancellationToken cancellationToken)
+	{
+		cancellationToken.ThrowIfCancellationRequested();
+		Requires.Argument(request.Id.HasValue, nameof(request), "Request must have an ID for tracking the response.");
+		Verify.Operation(this.State == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.State}.");
+
+		TaskCompletionSource<JsonRpcResponse> responseTcs = new();
+		Assumes.True(this.pendingOutboundRequests.TryAdd(request.Id.Value, responseTcs));
+		this.PostMessage(request);
+
+		// TODO: Handle cancellation of the request.
+
+		JsonRpcResponse response = await responseTcs.Task.ConfigureAwait(false);
+		return response;
 	}
 
 	private async Task ReadAsync(ChannelReader<JsonRpcMessage> inbound)

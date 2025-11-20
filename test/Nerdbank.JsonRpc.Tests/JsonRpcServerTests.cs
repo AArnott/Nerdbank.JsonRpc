@@ -9,14 +9,14 @@ using Nerdbank.Streams;
 using PolyType;
 using Xunit;
 
-public partial class JsonRpcTests : TestBase
+public partial class JsonRpcServerTests : TestBase
 {
 	private readonly ChannelReader<JsonRpcMessage> reader;
 	private readonly ChannelWriter<JsonRpcMessage> writer;
 	private readonly JsonRpc jsonRpc;
 	private readonly MockServer server = new();
 
-	public JsonRpcTests()
+	public JsonRpcServerTests()
 	{
 		this.jsonRpc = new();
 		this.reader = this.jsonRpc.OutboundMessages;
@@ -201,6 +201,12 @@ public partial class JsonRpcTests : TestBase
 		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
 		this.Logger?.WriteLine(error.Error.Message);
+	}
+
+	public override void Dispose()
+	{
+		this.jsonRpc.Dispose();
+		base.Dispose();
 	}
 
 	private JsonRpcRequest CreateCancellationRequest(RequestId id)
