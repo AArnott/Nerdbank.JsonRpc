@@ -2,6 +2,8 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Nerdbank.JsonRpc.Tests;
 using Xunit;
 
 public abstract class TestBase : IDisposable
@@ -24,6 +26,17 @@ public abstract class TestBase : IDisposable
 	public static TimeSpan UnexpectedTimeout => Debugger.IsAttached ? Timeout.InfiniteTimeSpan : TimeSpan.FromSeconds(5);
 
 	public static TimeSpan ExpectedTimeout => TimeSpan.FromMilliseconds(100);
+
+	public static ILoggerFactory LoggerFactory { get; } = Microsoft.Extensions.Logging.LoggerFactory.Create(
+		builder =>
+		{
+			if (TestContext.Current.TestOutputHelper is { } helper)
+			{
+				builder.AddProvider(new XUnitLoggerProvider(helper));
+			}
+
+			builder.SetMinimumLevel(LogLevel.Trace);
+		});
 
 	public CancellationToken TimeoutToken => this.timeoutJoinedSource.Token;
 
