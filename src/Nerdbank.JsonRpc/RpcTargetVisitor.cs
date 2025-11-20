@@ -188,6 +188,18 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 						response = null;
 					}
 				}
+				catch (OperationCanceledException ex) when (dispatch.CancellationToken.IsCancellationRequested && dispatch.Request.Id is RequestId id)
+				{
+					response = new JsonRpcError
+					{
+						Id = id,
+						Error = new JsonRpcErrorDetails
+						{
+							Message = ex.Message,
+							Code = JsonRpcErrorCode.RequestCancelled,
+						},
+					};
+				}
 				catch (Exception ex)
 				{
 					if (dispatch.Request.Id is RequestId id)

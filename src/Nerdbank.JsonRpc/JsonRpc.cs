@@ -11,17 +11,23 @@ namespace Nerdbank.JsonRpc;
 
 public partial class JsonRpc : IDisposableObservable
 {
+	private const string SpecialCancelMethodName = "$/cancelRequest";
+
 	private readonly ConcurrentDictionary<RequestId, PendingInboundRequest> pendingInboundRequests = [];
 	private readonly TaskCompletionSource<bool> completionSource = new();
 	private readonly CancellationTokenSource disposalSource = new();
 	private readonly ConcurrentDictionary<string, (object? Target, MethodInvoker Invoker)> handlers = new();
 	private readonly ConcurrentDictionary<RequestId, TaskCompletionSource<JsonRpcResponse>> pendingOutboundRequests = new();
+	private readonly Action<object?> cancelOutboundRequestDelegate;
 	private ChannelWriter<JsonRpcMessage> outboundWriter;
 	private Task? readerTask;
 	private int nextRequestId;
 
 	public JsonRpc()
 	{
+		// Store a delegate we can reuse to avoid allocations.
+		this.cancelOutboundRequestDelegate = this.CancelOutboundRequest;
+
 		Channel<JsonRpcMessage> outbound = Channel.CreateUnbounded<JsonRpcMessage>(new UnboundedChannelOptions { SingleReader = true });
 		this.outboundWriter = outbound.Writer;
 		this.OutboundMessages = outbound.Reader;
@@ -274,10 +280,17 @@ public partial class JsonRpc : IDisposableObservable
 		Assumes.True(this.pendingOutboundRequests.TryAdd(request.Id.Value, responseTcs));
 		this.PostMessage(request);
 
-		// TODO: Handle cancellation of the request.
+		using (cancellationToken.Register(this.cancelOutboundRequestDelegate, request))
+		{
+			JsonRpcResponse response = await responseTcs.Task.ConfigureAwait(false);
+			return response;
+		}
+	}
 
-		JsonRpcResponse response = await responseTcs.Task.ConfigureAwait(false);
-		return response;
+	private void CancelOutboundRequest(object? state)
+	{
+		JsonRpcRequest request = (JsonRpcRequest)state!;
+		this.Notify(SpecialCancelMethodName, new CancelRequestParams(request.Id!.Value), CancellationToken.None);
 	}
 
 	private async Task ReadAsync(ChannelReader<JsonRpcMessage> inbound)
@@ -304,6 +317,16 @@ public partial class JsonRpc : IDisposableObservable
 		this.completionSource.TrySetException(exception);
 	}
 
+	[GenerateShape]
+	internal partial struct CancelRequestParams
+	{
+		public CancelRequestParams(RequestId id) => this.Id = id;
+
+		[Key(0)]
+		[PropertyShape(IsRequired = true)]
+		public RequestId Id { get; set; }
+	}
+
 	private struct PendingInboundRequest : IDisposable
 	{
 		internal required CancellationTokenSource? CancellationTokenSource { get; init; }
@@ -317,7 +340,7 @@ public partial class JsonRpc : IDisposableObservable
 	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 	internal partial class SpecialMethodsTarget(JsonRpc owner)
 	{
-		[MethodShape(Name = "$/cancelRequest")]
+		[MethodShape(Name = SpecialCancelMethodName)]
 		public void CancelRequest(RequestId id)
 		{
 			if (owner.pendingInboundRequests.TryGetValue(id, out PendingInboundRequest tracker))

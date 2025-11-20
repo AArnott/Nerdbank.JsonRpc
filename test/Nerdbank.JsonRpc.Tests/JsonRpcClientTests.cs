@@ -36,9 +36,9 @@ public partial class JsonRpcClientTests : TestBase
 	{
 		Task<int> resultTask = this.jsonRpc.RequestAsync<AddNamedArguments, int, Witness>("Add", new AddNamedArguments { A = 2, B = 3 }, this.TimeoutToken).AsTask();
 		JsonRpcRequest requestMessage = Assert.IsAssignableFrom<JsonRpcRequest>(await this.jsonRpc.OutboundMessages.ReadAsync(this.TimeoutToken));
+		this.Log(requestMessage, this.jsonRpc);
 		Assert.NotNull(requestMessage.Id);
 		Assert.Equal("Add", requestMessage.Method);
-		this.Log(requestMessage, this.jsonRpc);
 
 		JsonRpcResult resultMessage = new()
 		{
@@ -56,9 +56,9 @@ public partial class JsonRpcClientTests : TestBase
 	{
 		Task<int> resultTask = this.jsonRpc.RequestAsync<AddPositionalArguments, int, Witness>("Add", new AddPositionalArguments { A = 2, B = 3 }, this.TimeoutToken).AsTask();
 		JsonRpcRequest requestMessage = Assert.IsAssignableFrom<JsonRpcRequest>(await this.jsonRpc.OutboundMessages.ReadAsync(this.TimeoutToken));
+		this.Log(requestMessage, this.jsonRpc);
 		Assert.NotNull(requestMessage.Id);
 		Assert.Equal("Add", requestMessage.Method);
-		this.Log(requestMessage, this.jsonRpc);
 
 		JsonRpcResult resultMessage = new()
 		{
@@ -76,9 +76,9 @@ public partial class JsonRpcClientTests : TestBase
 	{
 		Task resultTask = this.jsonRpc.RequestAsync("Add", new AddNamedArguments { A = 2, B = 3 }, this.TimeoutToken).AsTask();
 		JsonRpcRequest requestMessage = Assert.IsAssignableFrom<JsonRpcRequest>(await this.jsonRpc.OutboundMessages.ReadAsync(this.TimeoutToken));
+		this.Log(requestMessage, this.jsonRpc);
 		Assert.NotNull(requestMessage.Id);
 		Assert.Equal("Add", requestMessage.Method);
-		this.Log(requestMessage, this.jsonRpc);
 
 		JsonRpcResult resultMessage = new()
 		{
@@ -88,6 +88,45 @@ public partial class JsonRpcClientTests : TestBase
 		await this.inboundWriter.WriteAsync(resultMessage, this.TimeoutToken);
 
 		await resultTask.WithCancellation(this.TimeoutToken);
+	}
+
+	[Fact]
+	public async Task CancelPendingRequest()
+	{
+		CancellationTokenSource cts = new();
+		Task resultTask = this.jsonRpc.RequestAsync("Add", new AddNamedArguments { A = 2, B = 3 }, cts.Token).AsTask();
+		JsonRpcRequest requestMessage = Assert.IsAssignableFrom<JsonRpcRequest>(await this.jsonRpc.OutboundMessages.ReadAsync(this.TimeoutToken));
+		this.Log(requestMessage, this.jsonRpc);
+		Assert.NotNull(requestMessage.Id);
+		Assert.Equal("Add", requestMessage.Method);
+
+		// Cancel the request and verify that a cancellation notification is transmitted.
+		cts.Cancel();
+		JsonRpcRequest cancelMessage = Assert.IsAssignableFrom<JsonRpcRequest>(await this.jsonRpc.OutboundMessages.ReadAsync(this.TimeoutToken));
+		this.Log(cancelMessage, this.jsonRpc);
+		Assert.Equal("$/cancelRequest", cancelMessage.Method);
+		Assert.Null(cancelMessage.Id);
+		int[]? args = this.jsonRpc.Serializer.Deserialize<int[], Witness>(cancelMessage.Arguments, this.TimeoutToken);
+		Assert.Equal(requestMessage.Id, args?.Single());
+
+		// Verify that the original client request only completes after a response is received.
+		await Assert.ThrowsAsync<TimeoutException>(() => resultTask.WithTimeout(ExpectedTimeout));
+
+		// Send the server message acknowledging the cancellation.
+		JsonRpcError errorMessage = new()
+		{
+			Id = requestMessage.Id.Value,
+			Error = new JsonRpcErrorDetails
+			{
+				Code = JsonRpcErrorCode.RequestCancelled,
+				Message = "Request was cancelled.",
+			},
+		};
+		await this.inboundWriter.WriteAsync(errorMessage, this.TimeoutToken);
+
+		// Verify that the client finally resolves.
+		JsonRpcException ex = await Assert.ThrowsAsync<JsonRpcException>(() => resultTask.WithCancellation(this.TimeoutToken));
+		Assert.Equal(JsonRpcErrorCode.RequestCancelled, ex.ErrorDetails.Code);
 	}
 
 	[Fact]
@@ -125,5 +164,6 @@ public partial class JsonRpcClientTests : TestBase
 	}
 
 	[GenerateShapeFor<int>]
+	[GenerateShapeFor<int[]>]
 	private partial class Witness;
 }
