@@ -12,5 +12,5 @@ public partial class JsonRpcRequest : JsonRpcMessage
 	public required string Method { get; init; }
 
 	[PropertyShape(Name = "params")]
-	public RawMessagePack Arguments { get; init; }
+	public RawMessagePack Arguments { get; init; } = MsgPackValues.EmptyMap;
 }
