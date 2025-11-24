@@ -9,5 +9,5 @@ namespace Nerdbank.JsonRpc;
 public partial class JsonRpcResult : JsonRpcResponse
 {
 	[PropertyShape(Name = "result")]
-	public required RawMessagePack Result { get; init; }
+	public required RawMessagePack Result { get; init; } = MsgPackValues.EmptyMap;
 }

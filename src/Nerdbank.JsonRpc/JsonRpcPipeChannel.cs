@@ -106,7 +106,8 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 
 	private static string FormatLoggedMessage(JsonRpcMessage message, Exception? exception)
 	{
-		return Serializer.ConvertToJson(Serializer.Serialize(message, CancellationToken.None));
+		byte[] msgpack = Serializer.Serialize(message, CancellationToken.None);
+		return Serializer.ConvertToJson(msgpack);
 	}
 
 	private async Task HandleInboundMessagesAsync(PipeReader reader, CancellationToken cancellationToken)
