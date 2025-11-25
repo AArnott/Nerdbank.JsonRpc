@@ -25,6 +25,7 @@
     <Project Path="src/Nerdbank.JsonRpc/Nerdbank.JsonRpc.csproj" />
   </Folder>
   <Folder Name="/test/">
+    <Project Path="test/Benchmarks/Benchmarks.csproj" Id="ed5946fd-7801-431e-85b6-c34fad22c4f3" />
     <Project Path="test/Nerdbank.JsonRpc.Tests/Nerdbank.JsonRpc.Tests.csproj" />
   </Folder>
 </Solution>
