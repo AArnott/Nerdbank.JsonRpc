@@ -24,11 +24,12 @@ public partial class JsonRpcTests : TestBase
 		this.client = new ServerProxy(this.clientRpc);
 
 		this.serverRpc = new(serverChannel);
-		this.serverRpc.AddRpcTarget(this.server = new Server());
+		this.serverRpc.AddRpcTarget<IServer>(this.server = new Server());
 		this.serverRpc.Start();
 	}
 
-	public interface IServer
+	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+	public partial interface IServer
 	{
 		ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken);
 	}
@@ -40,8 +41,7 @@ public partial class JsonRpcTests : TestBase
 		Assert.Equal(4, sum);
 	}
 
-	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
-	public partial class Server : IServer
+	public class Server : IServer
 	{
 		public ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken) => new(a + b);
 	}
