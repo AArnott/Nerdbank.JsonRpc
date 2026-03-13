@@ -6,6 +6,10 @@ using Microsoft.VisualStudio.Threading;
 using Nerdbank.Streams;
 using PolyType;
 
+/// <summary>
+/// Tests the server-side functions of <see cref="JsonRpc"/> by mocking the
+/// client request messages and directly analyzing the server response messages.
+/// </summary>
 public partial class JsonRpcServerTests : TestBase
 {
 	private readonly Channel<JsonRpcMessage> channel;
@@ -26,6 +30,16 @@ public partial class JsonRpcServerTests : TestBase
 	{
 		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.GetMagicNumber) }, this.TimeoutToken);
 		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
+		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
+		Assert.Equal(42, resultValue);
+	}
+
+	[Fact]
+	public async Task SimpleRequestResponse_StringId()
+	{
+		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = "Abc", Method = nameof(MockServer.GetMagicNumber) }, this.TimeoutToken);
+		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal("Abc", result.Id);
 		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
 		Assert.Equal(42, resultValue);
 	}
@@ -60,6 +74,7 @@ public partial class JsonRpcServerTests : TestBase
 		JsonRpcMessage responseMessage = await this.channel.Reader.ReadAsync(this.TimeoutToken);
 		JsonRpcError error = Assert.IsType<JsonRpcError>(responseMessage);
 		this.Logger?.WriteLine($"Received error: {error.Error.Message}");
+		Assert.Contains(MockServer.CancellationAcknowledgementMessage, error.Error.Message);
 	}
 
 	[Fact]
@@ -216,6 +231,8 @@ public partial class JsonRpcServerTests : TestBase
 	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 	internal partial class MockServer
 	{
+		internal const string CancellationAcknowledgementMessage = "PauseAsync acknowledges cancellation";
+
 		internal AsyncManualResetEvent PauseReached { get; } = new();
 
 		internal AsyncManualResetEvent Unpause { get; } = new();
@@ -235,6 +252,10 @@ public partial class JsonRpcServerTests : TestBase
 			{
 				await this.Unpause.WaitAsync(cancellationToken);
 				return 42;
+			}
+			catch (OperationCanceledException ex)
+			{
+				throw new OperationCanceledException(CancellationAcknowledgementMessage, ex);
 			}
 			finally
 			{

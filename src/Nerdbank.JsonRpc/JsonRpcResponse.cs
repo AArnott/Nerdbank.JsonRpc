@@ -5,6 +5,7 @@ namespace Nerdbank.JsonRpc;
 
 public abstract partial class JsonRpcResponse : JsonRpcMessage
 {
+	[PropertyShape(Name = "id")]
 	public new required RequestId Id
 	{
 		get => base.Id!.Value;

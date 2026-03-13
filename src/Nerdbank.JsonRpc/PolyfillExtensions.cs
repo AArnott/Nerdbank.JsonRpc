@@ -20,6 +20,14 @@ internal static class PolyfillExtensions
 		}
 	}
 
+	internal static unsafe string GetString(this Encoding encoding, ReadOnlySpan<byte> source)
+	{
+		fixed (byte* pSource = source)
+		{
+			return encoding.GetString(pSource, source.Length);
+		}
+	}
+
 	internal static void Deconstruct<TKey, TValue>(this KeyValuePair<TKey, TValue> pair, out TKey key, out TValue value) => (key, value) = (pair.Key, pair.Value);
 }
 
