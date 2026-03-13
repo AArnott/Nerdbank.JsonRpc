@@ -64,6 +64,7 @@ public partial class JsonRpcServerTests : TestBase
 		JsonRpcMessage responseMessage = await this.channel.Reader.ReadAsync(this.TimeoutToken);
 		JsonRpcError error = Assert.IsType<JsonRpcError>(responseMessage);
 		this.Logger?.WriteLine($"Received error: {error.Error.Message}");
+		Assert.Contains(MockServer.CancellationAcknowledgementMessage, error.Error.Message);
 	}
 
 	[Fact]
@@ -220,6 +221,8 @@ public partial class JsonRpcServerTests : TestBase
 	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 	internal partial class MockServer
 	{
+		internal const string CancellationAcknowledgementMessage = "PauseAsync acknowleges cancellation";
+
 		internal AsyncManualResetEvent PauseReached { get; } = new();
 
 		internal AsyncManualResetEvent Unpause { get; } = new();
@@ -239,6 +242,10 @@ public partial class JsonRpcServerTests : TestBase
 			{
 				await this.Unpause.WaitAsync(cancellationToken);
 				return 42;
+			}
+			catch (OperationCanceledException ex)
+			{
+				throw new OperationCanceledException(CancellationAcknowledgementMessage, ex);
 			}
 			finally
 			{
