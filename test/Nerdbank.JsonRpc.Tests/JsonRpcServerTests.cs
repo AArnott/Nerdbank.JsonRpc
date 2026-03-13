@@ -35,6 +35,16 @@ public partial class JsonRpcServerTests : TestBase
 	}
 
 	[Fact]
+	public async Task SimpleRequestResponse_StringId()
+	{
+		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = "Abc", Method = nameof(MockServer.GetMagicNumber) }, this.TimeoutToken);
+		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal("Abc", result.Id);
+		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
+		Assert.Equal(42, resultValue);
+	}
+
+	[Fact]
 	public async Task PauseAsync_Unpause()
 	{
 		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.PauseAsync) }, this.TimeoutToken);

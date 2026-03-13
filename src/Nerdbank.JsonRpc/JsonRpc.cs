@@ -32,10 +32,18 @@ public partial class JsonRpc : IDisposableObservable
 		this.channel = channel;
 	}
 
-	public MessagePackSerializer Serializer { get; init; } = new MessagePackSerializer
+	/// <summary>
+	/// Gets the default serializer used for JSON-RPC messages.
+	/// </summary>
+	public static MessagePackSerializer DefaultSerializer { get; } = new MessagePackSerializer
 	{
 		InternStrings = true,
 	};
+
+	/// <summary>
+	/// Gets the serializer used for JSON-RPC messages by this instance.
+	/// </summary>
+	public MessagePackSerializer Serializer { get; init; } = DefaultSerializer;
 
 	public JsonRpcState State =>
 		this.IsDisposed ? JsonRpcState.Disposed :
