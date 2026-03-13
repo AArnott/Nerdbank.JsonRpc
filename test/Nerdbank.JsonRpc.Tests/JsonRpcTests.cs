@@ -5,14 +5,14 @@ using System.IO.Pipelines;
 using Nerdbank.Streams;
 using PolyType;
 
-public partial class JsonRpcTests : TestBase
+public abstract partial class JsonRpcTests : TestBase
 {
 	private readonly JsonRpc clientRpc;
 	private readonly JsonRpc serverRpc;
 	private readonly Server server;
 	private readonly IServer client;
 
-	public JsonRpcTests()
+	public JsonRpcTests(Func<JsonRpc, IServer> clientFactory)
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 
@@ -21,7 +21,7 @@ public partial class JsonRpcTests : TestBase
 
 		this.clientRpc = new(clientChannel);
 		this.clientRpc.Start();
-		this.client = new ServerProxy(this.clientRpc);
+		this.client = clientFactory(this.clientRpc);
 
 		this.serverRpc = new(serverChannel);
 		this.serverRpc.AddRpcTarget<IServer>(this.server = new Server());
@@ -46,19 +46,42 @@ public partial class JsonRpcTests : TestBase
 		public ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken) => new(a + b);
 	}
 
-	internal partial class ServerProxy(JsonRpc jsonRpc) : IServer
+	public partial class Named() : JsonRpcTests(rpc => new ServerProxy(rpc))
 	{
-		public ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken)
-			=> jsonRpc.RequestAsync<AddArgs, int, Witness>(nameof(IServer.AddAsync), new AddArgs { a = a, b = b }, cancellationToken);
+		internal partial class ServerProxy(JsonRpc jsonRpc) : IServer
+		{
+			public ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken)
+				=> jsonRpc.RequestAsync<AddArgs, int, Witness>(nameof(IServer.AddAsync), new AddArgs { a = a, b = b }, cancellationToken);
 
 #pragma warning disable SA1307 // Public field should start with an upper-case letter.
-		[GenerateShape]
-		internal partial struct AddArgs
-		{
-			public int a;
-			public int b;
-		}
+			[GenerateShape]
+			internal partial struct AddArgs
+			{
+				public int a;
+				public int b;
+			}
 #pragma warning restore SA1307 // Public field should start with an upper-case letter.
+		}
+	}
+
+	public partial class Positional() : JsonRpcTests(rpc => new ServerProxy(rpc))
+	{
+		internal partial class ServerProxy(JsonRpc jsonRpc) : IServer
+		{
+			public ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken)
+				=> jsonRpc.RequestAsync<AddArgs, int, Witness>(nameof(IServer.AddAsync), new AddArgs { a = a, b = b }, cancellationToken);
+
+#pragma warning disable SA1307 // Public field should start with an upper-case letter.
+			[GenerateShape]
+			internal partial struct AddArgs
+			{
+				[Key(0)]
+				public int a;
+				[Key(1)]
+				public int b;
+			}
+#pragma warning restore SA1307 // Public field should start with an upper-case letter.
+		}
 	}
 
 	[GenerateShapeFor<int>]
