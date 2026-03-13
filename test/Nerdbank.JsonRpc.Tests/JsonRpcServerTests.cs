@@ -6,6 +6,10 @@ using Microsoft.VisualStudio.Threading;
 using Nerdbank.Streams;
 using PolyType;
 
+/// <summary>
+/// Tests the server-side functions of <see cref="JsonRpc"/> by mocking the
+/// client request messages and directly analyzing the server response messages.
+/// </summary>
 public partial class JsonRpcServerTests : TestBase
 {
 	private readonly Channel<JsonRpcMessage> channel;

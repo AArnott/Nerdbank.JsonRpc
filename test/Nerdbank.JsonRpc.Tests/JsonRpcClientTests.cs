@@ -5,6 +5,11 @@ using System.Threading.Channels;
 using Microsoft.VisualStudio.Threading;
 using PolyType;
 
+/// <summary>
+/// Tests the client-side functions of <see cref="JsonRpc"/> by mocking the server
+/// in order to directly analyze the requests made by the client and test its handling
+/// of particular server responses.
+/// </summary>
 public partial class JsonRpcClientTests : TestBase
 {
 	private readonly JsonRpc jsonRpc;
