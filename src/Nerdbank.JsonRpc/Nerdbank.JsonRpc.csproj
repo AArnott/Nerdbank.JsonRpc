@@ -14,4 +14,7 @@
   <ItemGroup Condition="'$(TargetFrameworkIdentifier)'!='.NETCoreApp'">
     <PackageReference Include="System.Threading.Channels" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Nerdbank.JsonRpc.Analyzers\Nerdbank.JsonRpc.Analyzers.csproj" />
+  </ItemGroup>
 </Project>

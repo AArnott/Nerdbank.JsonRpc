@@ -13,6 +13,8 @@
   </Folder>
   <Folder Name="/Solution Items/src/">
     <File Path="src/.editorconfig" />
+    <File Path="src/Analyzers.props" />
+    <File Path="src/AnalyzerUser.targets" />
     <File Path="src/Directory.Build.props" />
     <File Path="src/Directory.Build.targets" />
   </Folder>
@@ -22,10 +24,12 @@
     <File Path="test/Directory.Build.targets" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/Nerdbank.JsonRpc.Analyzers/Nerdbank.JsonRpc.Analyzers.csproj" Id="5fd20eae-a518-4f3e-9d55-bfb034f6f404" />
     <Project Path="src/Nerdbank.JsonRpc/Nerdbank.JsonRpc.csproj" />
   </Folder>
   <Folder Name="/test/">
     <Project Path="test/Benchmarks/Benchmarks.csproj" Id="ed5946fd-7801-431e-85b6-c34fad22c4f3" />
+    <Project Path="test/Nerdbank.JsonRpc.Analyzers.Tests/Nerdbank.JsonRpc.Analyzers.Tests.csproj" Id="07fed5d4-9711-4c91-82f9-a7baa7ce8e49" />
     <Project Path="test/Nerdbank.JsonRpc.Tests/Nerdbank.JsonRpc.Tests.csproj" />
   </Folder>
 </Solution>

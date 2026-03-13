@@ -18,4 +18,5 @@
     <PackageReference Include="xunit.v3.mtp-v2" />
   </ItemGroup>
 
+  <Import Project="$(RepoRootPath)src\AnalyzerUser.targets" />
 </Project>

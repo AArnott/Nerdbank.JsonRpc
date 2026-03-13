@@ -1,0 +1,16 @@
+﻿<Project>
+  <ItemGroup>
+    <AnalyzerProjectReference Include="$(RepoRootPath)src\Nerdbank.JsonRpc.Analyzers\Nerdbank.JsonRpc.Analyzers.csproj" />
+    <!--<AnalyzerProjectReference Include="$(RepoRootPath)src\Nerdbank.JsonRpc.Analyzers.CodeFixes\Nerdbank.JsonRpc.Analyzers.CodeFixes.csproj" />-->
+    <ProjectReference Include="@(AnalyzerProjectReference)">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <OutputItemType>AnalyzerAssembly</OutputItemType>
+    </ProjectReference>
+  </ItemGroup>
+  <Target Name="ConsumeAnalyzersDirectly" AfterTargets="ResolveProjectReferences">
+    <ItemGroup>
+      <Analyzer Include="%(AnalyzerAssembly.Identity)" />
+    </ItemGroup>
+  </Target>
+  <!--<Import Project="$(RepoRootPath)src\Nerdbank.JsonRpc.Analyzers\buildTransitive\Nerdbank.JsonRpc.targets"/>-->
+</Project>
