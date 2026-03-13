@@ -21,6 +21,14 @@ public class RequestIdTests
 	}
 
 	[Fact]
+	public void StringConstructor()
+	{
+		RequestId id = new("abc");
+		Assert.Equal("abc", id.ToString());
+		Assert.Equal((RequestId)"abc", id);
+	}
+
+	[Fact]
 	public void Default_Value()
 	{
 		Assert.Equal(default(RequestId), default(RequestId));
@@ -61,6 +69,15 @@ public class RequestIdTests
 		"def"u8.CopyTo(stringBuffer2);
 		id2 = new(stringBuffer2);
 		Assert.NotEqual(id1, id2);
+	}
+
+	[Fact]
+	public void DefaultAndEmptyStringAreDistinct()
+	{
+		RequestId empty = string.Empty;
+
+		Assert.NotEqual(default, empty);
+		Assert.NotEqual(default(RequestId).GetHashCode(), empty.GetHashCode());
 	}
 
 	private static void AssertRoundTrip(RequestId requestId) => Assert.Equal(requestId, Roundtrip(requestId));

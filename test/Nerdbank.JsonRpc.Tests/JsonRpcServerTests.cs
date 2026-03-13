@@ -231,7 +231,7 @@ public partial class JsonRpcServerTests : TestBase
 	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 	internal partial class MockServer
 	{
-		internal const string CancellationAcknowledgementMessage = "PauseAsync acknowleges cancellation";
+		internal const string CancellationAcknowledgementMessage = "PauseAsync acknowledges cancellation";
 
 		internal AsyncManualResetEvent PauseReached { get; } = new();
 

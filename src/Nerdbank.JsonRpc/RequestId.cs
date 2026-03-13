@@ -19,8 +19,20 @@ public partial struct RequestId : IEquatable<RequestId>
 	/// Initializes a new instance of the <see cref="RequestId"/> struct
 	/// with a string value.
 	/// </summary>
+	/// <param name="value">The string request ID.</param>
+	public RequestId(string value)
+		: this(Encoding.UTF8.GetBytes(value))
+	{
+		this.stringCache = value;
+	}
+
+	/// <summary>
+	/// Initializes a new instance of the <see cref="RequestId"/> struct
+	/// with UTF-8 encoded bytes for a string value.
+	/// </summary>
 	/// <param name="value">The UTF-8 encoded bytes of the string request ID.</param>
 	public RequestId(ReadOnlyMemory<byte> value)
+		: this()
 	{
 		this.utf8Value = value;
 	}
@@ -31,6 +43,7 @@ public partial struct RequestId : IEquatable<RequestId>
 	/// </summary>
 	/// <param name="value">The request ID.</param>
 	public RequestId(long value)
+		: this()
 	{
 		this.numberValue = value;
 	}
@@ -39,7 +52,7 @@ public partial struct RequestId : IEquatable<RequestId>
 
 	public static implicit operator RequestId(ReadOnlyMemory<byte> value) => new RequestId(value);
 
-	public static implicit operator RequestId(string value) => new RequestId(Encoding.UTF8.GetBytes(value)) { stringCache = value };
+	public static implicit operator RequestId(string value) => new RequestId(value);
 
 	public static implicit operator RequestId(long value) => new RequestId(value);
 
@@ -49,11 +62,15 @@ public partial struct RequestId : IEquatable<RequestId>
 	{
 		if (this.numberValue is long n)
 		{
-			return n.GetHashCode();
+			HashCode hash = default;
+			hash.Add(n);
+			hash.Add(false);
+			return hash.ToHashCode();
 		}
 		else if (this.utf8Value is { Span: { } utf8Value })
 		{
 			HashCode hash = default;
+			hash.Add(true);
 #if NET
 			hash.AddBytes(utf8Value);
 #else
@@ -72,7 +89,10 @@ public partial struct RequestId : IEquatable<RequestId>
 
 	public readonly override bool Equals(object? obj) => obj is RequestId other && this.Equals(other);
 
-	public readonly bool Equals(RequestId other) => this.numberValue == other.numberValue && this.Utf8Value.SequenceEqual(other.Utf8Value);
+	public readonly bool Equals(RequestId other)
+		=> this.numberValue == other.numberValue
+		&& this.utf8Value.HasValue == other.utf8Value.HasValue
+		&& this.Utf8Value.SequenceEqual(other.Utf8Value);
 
 	[EditorBrowsable(EditorBrowsableState.Never)]
 	public class Converter : MessagePackConverter<RequestId>
