@@ -25,6 +25,8 @@ Supported generated method shapes currently include:
 - `Task`
 - `void` notifications
 
+Argument packing defaults to named MessagePack maps. The generator prototype also supports explicit positional packing via `[JsonRpcArgumentMatch(JsonRpcArgumentMatch.Positional)]` on an interface or individual method.
+
 That means the consumer flow is:
 
 1. Declare the RPC interface and annotate it for PolyType shape generation.

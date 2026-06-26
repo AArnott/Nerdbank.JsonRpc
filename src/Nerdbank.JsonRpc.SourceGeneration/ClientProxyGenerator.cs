@@ -21,6 +21,20 @@ namespace Nerdbank.JsonRpc;
 internal sealed class GenerateJsonRpcProxyAttribute : global::System.Attribute
 {
 }
+
+internal enum JsonRpcArgumentMatch
+{
+	Named,
+	Positional,
+}
+
+[global::System.AttributeUsage(global::System.AttributeTargets.Interface | global::System.AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
+internal sealed class JsonRpcArgumentMatchAttribute : global::System.Attribute
+{
+	public JsonRpcArgumentMatchAttribute(JsonRpcArgumentMatch argumentMatch) => this.ArgumentMatch = argumentMatch;
+
+	public JsonRpcArgumentMatch ArgumentMatch { get; }
+}
 """;
 
 	private enum ProxyMethodKind
@@ -31,6 +45,12 @@ internal sealed class GenerateJsonRpcProxyAttribute : global::System.Attribute
 		ValueTask,
 		Task,
 		Notification,
+	}
+
+	private enum ProxyArgumentMatch
+	{
+		Named,
+		Positional,
 	}
 
 	public void Initialize(IncrementalGeneratorInitializationContext context)
@@ -53,17 +73,18 @@ internal sealed class GenerateJsonRpcProxyAttribute : global::System.Attribute
 
 	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol)
 	{
+		ProxyArgumentMatch defaultArgumentMatch = GetArgumentMatch(interfaceSymbol.GetAttributes(), ProxyArgumentMatch.Named);
 		ImmutableArray<MethodInfo> methods = interfaceSymbol
 			.GetMembers()
 			.OfType<IMethodSymbol>()
 			.Where(static method => method.MethodKind == MethodKind.Ordinary)
-			.Select(CreateMethodInfo)
+			.Select(method => CreateMethodInfo(method, defaultArgumentMatch))
 			.ToImmutableArray();
 
 		return new InterfaceInfo(interfaceSymbol, methods);
 	}
 
-	private static MethodInfo CreateMethodInfo(IMethodSymbol method)
+	private static MethodInfo CreateMethodInfo(IMethodSymbol method, ProxyArgumentMatch defaultArgumentMatch)
 	{
 		bool hasCancellationToken = method.Parameters.LastOrDefault()?.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.Threading.CancellationToken";
 		ImmutableArray<IParameterSymbol> payloadParameters = hasCancellationToken
@@ -71,8 +92,24 @@ internal sealed class GenerateJsonRpcProxyAttribute : global::System.Attribute
 			: method.Parameters.ToImmutableArray();
 
 		ProxyMethodKind methodKind = GetMethodKind(method.ReturnType, out string? resultTypeName);
+		ProxyArgumentMatch argumentMatch = GetArgumentMatch(method.GetAttributes(), defaultArgumentMatch);
 
-		return new MethodInfo(method, payloadParameters, hasCancellationToken, methodKind, resultTypeName);
+		return new MethodInfo(method, payloadParameters, hasCancellationToken, methodKind, argumentMatch, resultTypeName);
+	}
+
+	private static ProxyArgumentMatch GetArgumentMatch(ImmutableArray<AttributeData> attributes, ProxyArgumentMatch defaultValue)
+	{
+		foreach (AttributeData attribute in attributes)
+		{
+			if (attribute.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::Nerdbank.JsonRpc.JsonRpcArgumentMatchAttribute"
+				&& attribute.ConstructorArguments.Length == 1
+				&& attribute.ConstructorArguments[0].Value is int value)
+			{
+				return value == 1 ? ProxyArgumentMatch.Positional : ProxyArgumentMatch.Named;
+			}
+		}
+
+		return defaultValue;
 	}
 
 	private static ProxyMethodKind GetMethodKind(ITypeSymbol returnType, out string? resultTypeName)
@@ -140,12 +177,16 @@ internal sealed class GenerateJsonRpcProxyAttribute : global::System.Attribute
 		{
 			builder.AppendLine("\t\tglobal::System.Buffers.ArrayBufferWriter<byte> argumentsBuffer = new();");
 			builder.AppendLine("\t\tglobal::Nerdbank.MessagePack.MessagePackWriter argumentsWriter = new(argumentsBuffer);");
-			builder.Append("\t\targumentsWriter.WriteMapHeader(").Append(method.PayloadParameters.Length).AppendLine(");");
+			builder.Append("\t\targumentsWriter.Write").Append(method.ArgumentMatch == ProxyArgumentMatch.Positional ? "Array" : "Map").Append("Header(").Append(method.PayloadParameters.Length).AppendLine(");");
 
 			foreach (IParameterSymbol parameter in method.PayloadParameters)
 			{
-				builder.Append("\t\targumentsWriter.Write(");
-				AppendQuoted(builder, parameter.Name).AppendLine(");");
+				if (method.ArgumentMatch == ProxyArgumentMatch.Named)
+				{
+					builder.Append("\t\targumentsWriter.Write(");
+					AppendQuoted(builder, parameter.Name).AppendLine(");");
+				}
+
 				builder.Append("\t\tthis.jsonRpc.Serializer.Serialize(ref argumentsWriter, ").Append(parameter.Name).Append(", ");
 				builder.Append("global::PolyType.TypeShapeProviderExtensions.GetTypeShapeOrThrow<");
 				builder.Append(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append(">(this.typeShapeProvider), ");
@@ -218,5 +259,6 @@ internal sealed class GenerateJsonRpcProxyAttribute : global::System.Attribute
 		ImmutableArray<IParameterSymbol> PayloadParameters,
 		bool HasCancellationToken,
 		ProxyMethodKind Kind,
+		ProxyArgumentMatch ArgumentMatch,
 		string? ResultTypeName);
 }
