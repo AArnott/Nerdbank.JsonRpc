@@ -17,6 +17,14 @@ The repository now includes an experimental client proxy generator driven by `[G
 
 The current prototype intentionally does not rely on dynamic shape resolution. Instead, the generated proxy accepts an explicit `ITypeShapeProvider` instance at construction time and uses that provider for argument and result serialization.
 
+Supported generated method shapes currently include:
+
+- `ValueTask<T>`
+- `Task<T>`
+- `ValueTask`
+- `Task`
+- `void` notifications
+
 That means the consumer flow is:
 
 1. Declare the RPC interface and annotate it for PolyType shape generation.

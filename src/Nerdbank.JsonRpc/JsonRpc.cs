@@ -179,6 +179,38 @@ public partial class JsonRpc : IDisposableObservable
 	/// <summary>
 	/// Sends a request with arguments that have already been serialized to MessagePack.
 	/// </summary>
+	/// <param name="method">The name of the remote method to invoke.</param>
+	/// <param name="arguments">The pre-serialized arguments payload.</param>
+	/// <param name="cancellationToken">A token whose cancellation should be propagated to the remote endpoint.</param>
+	/// <returns>A task that completes when the remote endpoint sends its response.</returns>
+	public ValueTask RequestAsync(string method, RawMessagePack arguments, CancellationToken cancellationToken)
+	{
+		JsonRpcRequest request = new()
+		{
+			Id = this.GetNextRequestId(),
+			Method = method,
+			Arguments = arguments,
+		};
+
+		return HelperAsync();
+		async ValueTask HelperAsync()
+		{
+			JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
+			switch (response)
+			{
+				case JsonRpcResult:
+					return;
+				case JsonRpcError error:
+					throw new JsonRpcException(error.Error);
+				default:
+					throw new InvalidOperationException("Received an unknown response type.");
+			}
+		}
+	}
+
+	/// <summary>
+	/// Sends a request with arguments that have already been serialized to MessagePack.
+	/// </summary>
 	/// <typeparam name="TResult">The expected result type.</typeparam>
 	/// <param name="method">The name of the remote method to invoke.</param>
 	/// <param name="arguments">The pre-serialized arguments payload.</param>

@@ -12,7 +12,7 @@ using ShapeProvider = PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRp
 public class GeneratedProxyTests
 {
 	[Fact]
-	public async Task GeneratedProxy_SimpleAdd()
+	public async Task GeneratedProxy_SupportsRequestsAndNotifications()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 
@@ -23,12 +23,24 @@ public class GeneratedProxyTests
 		clientRpc.Start();
 		CalculatorProxy client = new(clientRpc, ShapeProvider.Default);
 
+		Calculator server = new();
 		JsonRpc serverRpc = new(serverChannel);
-		serverRpc.AddRpcTarget<ICalculator>(new Calculator());
+		serverRpc.AddRpcTarget<ICalculator>(server);
 		serverRpc.Start();
 
 		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
 		int sum = await client.AddAsync(1, 3, cts.Token);
 		Assert.Equal(4, sum);
+
+		int product = await client.MultiplyAsync(2, 5, cts.Token);
+		Assert.Equal(10, product);
+
+		await client.PingAsync(cts.Token);
+		await client.PingTaskAsync(cts.Token);
+		Assert.Equal(2, server.PingCount);
+
+		client.SetLastValue(7, cts.Token);
+		int notificationValue = await server.NotificationReceived.Task.WaitAsync(cts.Token);
+		Assert.Equal(7, notificationValue);
 	}
 }

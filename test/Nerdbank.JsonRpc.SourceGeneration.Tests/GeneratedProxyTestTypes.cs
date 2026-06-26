@@ -9,9 +9,40 @@ using PolyType;
 internal partial interface ICalculator
 {
 	ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken);
+
+	Task<int> MultiplyAsync(int a, int b, CancellationToken cancellationToken);
+
+	ValueTask PingAsync(CancellationToken cancellationToken);
+
+	Task PingTaskAsync(CancellationToken cancellationToken);
+
+	void SetLastValue(int value, CancellationToken cancellationToken);
 }
 
 internal sealed class Calculator : ICalculator
 {
+	internal TaskCompletionSource<int> NotificationReceived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	internal int PingCount { get; private set; }
+
 	public ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken) => new(a + b);
+
+	public Task<int> MultiplyAsync(int a, int b, CancellationToken cancellationToken) => Task.FromResult(a * b);
+
+	public ValueTask PingAsync(CancellationToken cancellationToken)
+	{
+		this.PingCount++;
+		return ValueTask.CompletedTask;
+	}
+
+	public Task PingTaskAsync(CancellationToken cancellationToken)
+	{
+		this.PingCount++;
+		return Task.CompletedTask;
+	}
+
+	public void SetLastValue(int value, CancellationToken cancellationToken)
+	{
+		this.NotificationReceived.TrySetResult(value);
+	}
 }

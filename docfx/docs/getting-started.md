@@ -52,3 +52,5 @@ int sum = await client.AddAsync(1, 2, CancellationToken.None);
 ```
 
 This is the key workaround for source-generator non-chaining: the proxy uses an explicitly supplied provider instead of relying on runtime reflection or on PolyType discovering shapes for generator-emitted DTOs.
+
+The current prototype supports `ValueTask<T>`, `Task<T>`, `ValueTask`, `Task`, and `void` notification methods.

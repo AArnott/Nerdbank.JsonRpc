@@ -23,6 +23,16 @@ internal sealed class GenerateJsonRpcProxyAttribute : global::System.Attribute
 }
 """;
 
+	private enum ProxyMethodKind
+	{
+		Unsupported,
+		ValueTaskOfT,
+		TaskOfT,
+		ValueTask,
+		Task,
+		Notification,
+	}
+
 	public void Initialize(IncrementalGeneratorInitializationContext context)
 	{
 		context.RegisterPostInitializationOutput(static ctx =>
@@ -60,15 +70,37 @@ internal sealed class GenerateJsonRpcProxyAttribute : global::System.Attribute
 			? method.Parameters.Take(method.Parameters.Length - 1).ToImmutableArray()
 			: method.Parameters.ToImmutableArray();
 
-		bool isSupported = method.ReturnType is INamedTypeSymbol namedReturnType
-			&& namedReturnType.IsGenericType
-			&& namedReturnType.ConstructedFrom.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.Threading.Tasks.ValueTask<TResult>";
+		ProxyMethodKind methodKind = GetMethodKind(method.ReturnType, out string? resultTypeName);
 
-		string? resultTypeName = isSupported
-			? ((INamedTypeSymbol)method.ReturnType).TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-			: null;
+		return new MethodInfo(method, payloadParameters, hasCancellationToken, methodKind, resultTypeName);
+	}
 
-		return new MethodInfo(method, payloadParameters, hasCancellationToken, isSupported, resultTypeName);
+	private static ProxyMethodKind GetMethodKind(ITypeSymbol returnType, out string? resultTypeName)
+	{
+		resultTypeName = null;
+		string returnTypeName = returnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+		if (returnTypeName == "void")
+		{
+			return ProxyMethodKind.Notification;
+		}
+
+		if (returnType is INamedTypeSymbol namedReturnType && namedReturnType.IsGenericType)
+		{
+			string genericTypeName = namedReturnType.ConstructedFrom.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+			if (genericTypeName is "global::System.Threading.Tasks.ValueTask<TResult>" or "global::System.Threading.Tasks.Task<TResult>")
+			{
+				resultTypeName = namedReturnType.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+				return genericTypeName == "global::System.Threading.Tasks.ValueTask<TResult>" ? ProxyMethodKind.ValueTaskOfT : ProxyMethodKind.TaskOfT;
+			}
+		}
+
+		return returnTypeName switch
+		{
+			"global::System.Threading.Tasks.ValueTask" => ProxyMethodKind.ValueTask,
+			"global::System.Threading.Tasks.Task" => ProxyMethodKind.Task,
+			_ => ProxyMethodKind.Unsupported,
+		};
 	}
 
 	private static string RenderProxy(InterfaceInfo info)
@@ -104,7 +136,7 @@ internal sealed class GenerateJsonRpcProxyAttribute : global::System.Attribute
 		builder.Append("\tpublic ").Append(method.Symbol.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append(' ').Append(method.Symbol.Name).Append('(').Append(parameters).AppendLine(")");
 		builder.AppendLine("\t{");
 
-		if (method.IsSupported)
+		if (method.Kind is not ProxyMethodKind.Unsupported)
 		{
 			builder.AppendLine("\t\tglobal::System.Buffers.ArrayBufferWriter<byte> argumentsBuffer = new();");
 			builder.AppendLine("\t\tglobal::Nerdbank.MessagePack.MessagePackWriter argumentsWriter = new(argumentsBuffer);");
@@ -123,15 +155,42 @@ internal sealed class GenerateJsonRpcProxyAttribute : global::System.Attribute
 			builder.AppendLine("\t\targumentsWriter.Flush();");
 			builder.AppendLine("\t\tglobal::Nerdbank.MessagePack.RawMessagePack arguments = (global::Nerdbank.MessagePack.RawMessagePack)argumentsBuffer.WrittenMemory;");
 
-			builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
-			AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
-			builder.Append("global::PolyType.TypeShapeProviderExtensions.GetTypeShapeOrThrow<").Append(method.ResultTypeName).Append(">(this.typeShapeProvider), ");
-			builder.Append(cancellationToken).AppendLine(");");
+			switch (method.Kind)
+			{
+				case ProxyMethodKind.ValueTaskOfT:
+					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
+					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
+					builder.Append("global::PolyType.TypeShapeProviderExtensions.GetTypeShapeOrThrow<").Append(method.ResultTypeName).Append(">(this.typeShapeProvider), ");
+					builder.Append(cancellationToken).AppendLine(");");
+					break;
+				case ProxyMethodKind.TaskOfT:
+					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
+					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
+					builder.Append("global::PolyType.TypeShapeProviderExtensions.GetTypeShapeOrThrow<").Append(method.ResultTypeName).Append(">(this.typeShapeProvider), ");
+					builder.Append(cancellationToken).AppendLine(").AsTask();");
+					break;
+				case ProxyMethodKind.ValueTask:
+					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
+					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
+					builder.Append(cancellationToken).AppendLine(");");
+					break;
+				case ProxyMethodKind.Task:
+					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
+					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
+					builder.Append(cancellationToken).AppendLine(").AsTask();");
+					break;
+				case ProxyMethodKind.Notification:
+					builder.Append("\t\tthis.jsonRpc.Notify(");
+					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
+					builder.Append(cancellationToken).AppendLine(");");
+					builder.AppendLine("\t\treturn;");
+					break;
+			}
 		}
 		else
 		{
 			builder.Append("\t\tthrow new global::System.NotSupportedException(");
-			AppendQuoted(builder, $"Generated proxies currently support only ValueTask<T> methods. Unsupported method: {method.Symbol.Name}.");
+			AppendQuoted(builder, $"Generated proxies currently support only ValueTask<T>, Task<T>, ValueTask, Task, and void methods. Unsupported method: {method.Symbol.Name}.");
 			builder.AppendLine(");");
 		}
 
@@ -158,6 +217,6 @@ internal sealed class GenerateJsonRpcProxyAttribute : global::System.Attribute
 		IMethodSymbol Symbol,
 		ImmutableArray<IParameterSymbol> PayloadParameters,
 		bool HasCancellationToken,
-		bool IsSupported,
+		ProxyMethodKind Kind,
 		string? ResultTypeName);
 }
