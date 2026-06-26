@@ -158,6 +158,61 @@ public partial class JsonRpc : IDisposableObservable
 		this.PostMessage(request);
 	}
 
+	/// <summary>
+	/// Sends a notification with arguments that have already been serialized to MessagePack.
+	/// </summary>
+	/// <param name="method">The name of the remote method to invoke.</param>
+	/// <param name="arguments">The pre-serialized arguments payload.</param>
+	/// <param name="cancellationToken">A token whose cancellation should be propagated to the remote endpoint.</param>
+	public void Notify(string method, RawMessagePack arguments, CancellationToken cancellationToken)
+	{
+		JsonRpcRequest request = new()
+		{
+			Id = null,
+			Method = method,
+			Arguments = arguments,
+		};
+
+		this.PostMessage(request);
+	}
+
+	/// <summary>
+	/// Sends a request with arguments that have already been serialized to MessagePack.
+	/// </summary>
+	/// <typeparam name="TResult">The expected result type.</typeparam>
+	/// <param name="method">The name of the remote method to invoke.</param>
+	/// <param name="arguments">The pre-serialized arguments payload.</param>
+	/// <param name="resultShape">The type shape describing <typeparamref name="TResult"/>.</param>
+	/// <param name="cancellationToken">A token whose cancellation should be propagated to the remote endpoint.</param>
+	/// <returns>A task that completes with the result returned by the remote endpoint.</returns>
+	public ValueTask<TResult> RequestAsync<TResult>(string method, RawMessagePack arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
+	{
+		Requires.NotNull(resultShape);
+
+		JsonRpcRequest request = new()
+		{
+			Id = this.GetNextRequestId(),
+			Method = method,
+			Arguments = arguments,
+		};
+
+		return HelperAsync();
+		async ValueTask<TResult> HelperAsync()
+		{
+			JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
+			switch (response)
+			{
+				case JsonRpcResult result:
+					TResult returnValue = this.Serializer.Deserialize(result.Result, resultShape, cancellationToken)!;
+					return returnValue;
+				case JsonRpcError error:
+					throw new JsonRpcException(error.Error);
+				default:
+					throw new InvalidOperationException("Received an unknown response type.");
+			}
+		}
+	}
+
 	public void Start()
 	{
 		this.readerTask = this.ReadAsync(this.channel.Reader);
