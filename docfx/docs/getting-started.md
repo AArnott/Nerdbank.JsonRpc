@@ -55,9 +55,12 @@ This is the key workaround for source-generator non-chaining: the proxy uses an 
 
 The current prototype supports `ValueTask<T>`, `Task<T>`, `ValueTask`, `Task`, and `void` notification methods.
 
-Named argument packing is the default. To request positional packing for a specific method, annotate it explicitly:
+Positional argument packing is the default. To request named packing for an entire contract, set the attribute property explicitly:
 
 ```csharp
-[JsonRpcArgumentMatch(JsonRpcArgumentMatch.Positional)]
-ValueTask<int> SubtractAsync(int a, int b, CancellationToken cancellationToken);
+[GenerateJsonRpcProxy(UseNamedArguments = true)]
+public partial interface ICalculator
+{
+	ValueTask<int> SubtractAsync(int a, int b, CancellationToken cancellationToken);
+}
 ```

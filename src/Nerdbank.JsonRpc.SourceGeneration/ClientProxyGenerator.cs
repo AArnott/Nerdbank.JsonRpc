@@ -14,29 +14,6 @@ namespace Nerdbank.JsonRpc.SourceGeneration;
 [Generator(LanguageNames.CSharp)]
 public sealed class ClientProxyGenerator : IIncrementalGenerator
 {
-	private const string AttributeSource = """
-namespace Nerdbank.JsonRpc;
-
-[global::System.AttributeUsage(global::System.AttributeTargets.Interface, Inherited = false, AllowMultiple = false)]
-internal sealed class GenerateJsonRpcProxyAttribute : global::System.Attribute
-{
-}
-
-internal enum JsonRpcArgumentMatch
-{
-	Named,
-	Positional,
-}
-
-[global::System.AttributeUsage(global::System.AttributeTargets.Interface | global::System.AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
-internal sealed class JsonRpcArgumentMatchAttribute : global::System.Attribute
-{
-	public JsonRpcArgumentMatchAttribute(JsonRpcArgumentMatch argumentMatch) => this.ArgumentMatch = argumentMatch;
-
-	public JsonRpcArgumentMatch ArgumentMatch { get; }
-}
-""";
-
 	private enum ProxyMethodKind
 	{
 		Unsupported,
@@ -55,11 +32,6 @@ internal sealed class JsonRpcArgumentMatchAttribute : global::System.Attribute
 
 	public void Initialize(IncrementalGeneratorInitializationContext context)
 	{
-		context.RegisterPostInitializationOutput(static ctx =>
-		{
-			ctx.AddSource("GenerateJsonRpcProxyAttribute.g.cs", SourceText.From(AttributeSource, Encoding.UTF8));
-		});
-
 		IncrementalValuesProvider<InterfaceInfo> proxyInterfaces = context.SyntaxProvider.ForAttributeWithMetadataName(
 			"Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute",
 			static (node, _) => node is InterfaceDeclarationSyntax,
@@ -73,7 +45,7 @@ internal sealed class JsonRpcArgumentMatchAttribute : global::System.Attribute
 
 	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol)
 	{
-		ProxyArgumentMatch defaultArgumentMatch = GetArgumentMatch(interfaceSymbol.GetAttributes(), ProxyArgumentMatch.Named);
+		ProxyArgumentMatch defaultArgumentMatch = GetArgumentMatch(interfaceSymbol.GetAttributes(), ProxyArgumentMatch.Positional);
 		ImmutableArray<MethodInfo> methods = interfaceSymbol
 			.GetMembers()
 			.OfType<IMethodSymbol>()
@@ -84,7 +56,7 @@ internal sealed class JsonRpcArgumentMatchAttribute : global::System.Attribute
 		return new InterfaceInfo(interfaceSymbol, methods);
 	}
 
-	private static MethodInfo CreateMethodInfo(IMethodSymbol method, ProxyArgumentMatch defaultArgumentMatch)
+	private static MethodInfo CreateMethodInfo(IMethodSymbol method, ProxyArgumentMatch argumentMatch)
 	{
 		bool hasCancellationToken = method.Parameters.LastOrDefault()?.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.Threading.CancellationToken";
 		ImmutableArray<IParameterSymbol> payloadParameters = hasCancellationToken
@@ -92,7 +64,6 @@ internal sealed class JsonRpcArgumentMatchAttribute : global::System.Attribute
 			: method.Parameters.ToImmutableArray();
 
 		ProxyMethodKind methodKind = GetMethodKind(method.ReturnType, out string? resultTypeName);
-		ProxyArgumentMatch argumentMatch = GetArgumentMatch(method.GetAttributes(), defaultArgumentMatch);
 
 		return new MethodInfo(method, payloadParameters, hasCancellationToken, methodKind, argumentMatch, resultTypeName);
 	}
@@ -101,11 +72,17 @@ internal sealed class JsonRpcArgumentMatchAttribute : global::System.Attribute
 	{
 		foreach (AttributeData attribute in attributes)
 		{
-			if (attribute.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::Nerdbank.JsonRpc.JsonRpcArgumentMatchAttribute"
-				&& attribute.ConstructorArguments.Length == 1
-				&& attribute.ConstructorArguments[0].Value is int value)
+			if (attribute.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute")
 			{
-				return value == 1 ? ProxyArgumentMatch.Positional : ProxyArgumentMatch.Named;
+				foreach (KeyValuePair<string, TypedConstant> namedArgument in attribute.NamedArguments)
+				{
+					if (namedArgument.Key == "UseNamedArguments" && namedArgument.Value.Value is bool useNamedArguments)
+					{
+						return useNamedArguments ? ProxyArgumentMatch.Named : ProxyArgumentMatch.Positional;
+					}
+				}
+
+				return defaultValue;
 			}
 		}
 

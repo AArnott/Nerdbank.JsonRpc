@@ -12,9 +12,6 @@ internal partial interface ICalculator
 
 	Task<int> MultiplyAsync(int a, int b, CancellationToken cancellationToken);
 
-	[JsonRpcArgumentMatch(JsonRpcArgumentMatch.Positional)]
-	ValueTask<int> SubtractAsync(int a, int b, CancellationToken cancellationToken);
-
 	ValueTask PingAsync(CancellationToken cancellationToken);
 
 	Task PingTaskAsync(CancellationToken cancellationToken);
@@ -31,8 +28,6 @@ internal sealed class Calculator : ICalculator
 	public ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken) => new(a + b);
 
 	public Task<int> MultiplyAsync(int a, int b, CancellationToken cancellationToken) => Task.FromResult(a * b);
-
-	public ValueTask<int> SubtractAsync(int a, int b, CancellationToken cancellationToken) => new(a - b);
 
 	public ValueTask PingAsync(CancellationToken cancellationToken)
 	{

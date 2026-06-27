@@ -25,7 +25,7 @@ Supported generated method shapes currently include:
 - `Task`
 - `void` notifications
 
-Argument packing defaults to named MessagePack maps. The generator prototype also supports explicit positional packing via `[JsonRpcArgumentMatch(JsonRpcArgumentMatch.Positional)]` on an interface or individual method.
+Argument packing defaults to positional MessagePack arrays. If a contract needs named arguments instead, apply `[GenerateJsonRpcProxy(UseNamedArguments = true)]` to emit a map keyed by parameter name.
 
 That means the consumer flow is:
 
