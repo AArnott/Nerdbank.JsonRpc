@@ -152,7 +152,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		if (method.Kind is not ProxyMethodKind.Unsupported)
 		{
-			builder.AppendLine("\t\tglobal::System.Buffers.ArrayBufferWriter<byte> argumentsBuffer = new();");
+			builder.AppendLine("\t\tusing global::Nerdbank.Streams.Sequence<byte> argumentsBuffer = new();");
 			builder.AppendLine("\t\tglobal::Nerdbank.MessagePack.MessagePackWriter argumentsWriter = new(argumentsBuffer);");
 			builder.Append("\t\targumentsWriter.Write").Append(method.ArgumentMatch == ProxyArgumentMatch.Positional ? "Array" : "Map").Append("Header(").Append(method.PayloadParameters.Length).AppendLine(");");
 
@@ -171,7 +171,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			}
 
 			builder.AppendLine("\t\targumentsWriter.Flush();");
-			builder.AppendLine("\t\tglobal::Nerdbank.MessagePack.RawMessagePack arguments = (global::Nerdbank.MessagePack.RawMessagePack)argumentsBuffer.WrittenMemory;");
+			builder.AppendLine("\t\tglobal::Nerdbank.MessagePack.RawMessagePack arguments = (global::Nerdbank.MessagePack.RawMessagePack)argumentsBuffer.AsReadOnlySequence;");
 
 			switch (method.Kind)
 			{

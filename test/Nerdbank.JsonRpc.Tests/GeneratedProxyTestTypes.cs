@@ -1,7 +1,6 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-using Nerdbank.JsonRpc;
 using PolyType;
 
 [GenerateJsonRpcProxy]
@@ -32,7 +31,7 @@ internal sealed class Calculator : ICalculator
 	public ValueTask PingAsync(CancellationToken cancellationToken)
 	{
 		this.PingCount++;
-		return ValueTask.CompletedTask;
+		return default;
 	}
 
 	public Task PingTaskAsync(CancellationToken cancellationToken)

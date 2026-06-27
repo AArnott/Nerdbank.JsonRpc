@@ -4,12 +4,12 @@
 using System.IO.Pipelines;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging.Abstractions;
-using Nerdbank.JsonRpc;
+using Microsoft.VisualStudio.Threading;
 using Nerdbank.MessagePack;
 using Nerdbank.Streams;
 using Xunit;
 
-using ShapeProvider = PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_SourceGeneration_Tests;
+using ShapeProvider = PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests;
 
 public class GeneratedProxyTests
 {
@@ -42,7 +42,7 @@ public class GeneratedProxyTests
 		Assert.Equal(2, server.PingCount);
 
 		client.SetLastValue(7, cts.Token);
-		int notificationValue = await server.NotificationReceived.Task.WaitAsync(cts.Token);
+		int notificationValue = await server.NotificationReceived.Task.WithCancellation(cts.Token);
 		Assert.Equal(7, notificationValue);
 	}
 
@@ -74,7 +74,7 @@ public class GeneratedProxyTests
 		};
 		await remote.Writer.WriteAsync(response, cts.Token);
 
-		Assert.Equal(5, await resultTask.WaitAsync(cts.Token));
+		Assert.Equal(5, await resultTask.WithCancellation(cts.Token));
 	}
 
 	[Fact]
@@ -107,6 +107,6 @@ public class GeneratedProxyTests
 		};
 		await remote.Writer.WriteAsync(response, cts.Token);
 
-		Assert.Equal(5, await resultTask.WaitAsync(cts.Token));
+		Assert.Equal(5, await resultTask.WithCancellation(cts.Token));
 	}
 }
