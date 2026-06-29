@@ -120,28 +120,88 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	private static string RenderProxy(InterfaceInfo info)
 	{
 		StringBuilder builder = new();
+		ImmutableArray<ShapeFieldInfo> shapeFields = GetShapeFields(info.Methods);
 		if (!info.Symbol.ContainingNamespace.IsGlobalNamespace)
 		{
 			builder.Append("namespace ").Append(info.Symbol.ContainingNamespace.ToDisplayString()).AppendLine(";");
 			builder.AppendLine();
 		}
 
-		builder.Append("internal sealed class ").Append(info.ProxyName).Append("(global::Nerdbank.JsonRpc.JsonRpc jsonRpc, global::PolyType.ITypeShapeProvider typeShapeProvider) : ").Append(info.InterfaceName).AppendLine();
+		builder.Append("internal sealed class ").Append(info.ProxyName).Append(" : ").Append(info.InterfaceName).AppendLine();
 		builder.AppendLine("{");
-		builder.AppendLine("\tprivate readonly global::Nerdbank.JsonRpc.JsonRpc jsonRpc = jsonRpc;");
-		builder.AppendLine("\tprivate readonly global::PolyType.ITypeShapeProvider typeShapeProvider = typeShapeProvider;");
+		builder.AppendLine("\tprivate readonly global::Nerdbank.JsonRpc.JsonRpc jsonRpc;");
+		builder.AppendLine();
+
+		foreach (ShapeFieldInfo shapeField in shapeFields)
+		{
+			builder.Append("\tprivate readonly global::PolyType.ITypeShape<")
+				.Append(shapeField.TypeName)
+				.Append("> ")
+				.Append(shapeField.FieldName)
+				.AppendLine(";");
+		}
+
+		if (shapeFields.Length > 0)
+		{
+			builder.AppendLine();
+		}
+
+		builder.Append("\tinternal ").Append(info.ProxyName).Append("(global::Nerdbank.JsonRpc.JsonRpc jsonRpc, global::PolyType.ITypeShapeProvider typeShapeProvider)").AppendLine();
+		builder.AppendLine("\t{");
+		builder.AppendLine("\t\tthis.jsonRpc = jsonRpc;");
+
+		foreach (ShapeFieldInfo shapeField in shapeFields)
+		{
+			builder.Append("\t\tthis.")
+				.Append(shapeField.FieldName)
+				.Append(" = global::PolyType.TypeShapeProviderExtensions.GetTypeShapeOrThrow<")
+				.Append(shapeField.TypeName)
+				.Append(">(typeShapeProvider);")
+				.AppendLine();
+		}
+
+		builder.AppendLine("\t}");
 
 		foreach (MethodInfo method in info.Methods)
 		{
 			builder.AppendLine();
-			builder.Append(RenderMethod(method));
+			builder.Append(RenderMethod(method, shapeFields));
 		}
 
 		builder.AppendLine("}");
 		return builder.ToString();
 	}
 
-	private static string RenderMethod(MethodInfo method)
+	private static ImmutableArray<ShapeFieldInfo> GetShapeFields(ImmutableArray<MethodInfo> methods)
+	{
+		HashSet<string> seenTypeNames = new(System.StringComparer.Ordinal);
+		ImmutableArray<ShapeFieldInfo>.Builder shapeFields = ImmutableArray.CreateBuilder<ShapeFieldInfo>();
+
+		foreach (MethodInfo method in methods)
+		{
+			foreach (IParameterSymbol parameter in method.PayloadParameters)
+			{
+				AddShapeField(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), seenTypeNames, shapeFields);
+			}
+
+			if (method.ResultTypeName is not null)
+			{
+				AddShapeField(method.ResultTypeName, seenTypeNames, shapeFields);
+			}
+		}
+
+		return shapeFields.ToImmutable();
+	}
+
+	private static void AddShapeField(string typeName, HashSet<string> seenTypeNames, ImmutableArray<ShapeFieldInfo>.Builder shapeFields)
+	{
+		if (seenTypeNames.Add(typeName))
+		{
+			shapeFields.Add(new(typeName, $"shape{shapeFields.Count}"));
+		}
+	}
+
+	private static string RenderMethod(MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields)
 	{
 		StringBuilder builder = new();
 		string parameters = string.Join(", ", method.Symbol.Parameters.Select(static p => $"{p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} {p.Name}"));
@@ -165,26 +225,33 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				}
 
 				builder.Append("\t\tthis.jsonRpc.Serializer.Serialize(ref argumentsWriter, ").Append(parameter.Name).Append(", ");
-				builder.Append("global::PolyType.TypeShapeProviderExtensions.GetTypeShapeOrThrow<");
-				builder.Append(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append(">(this.typeShapeProvider), ");
+				builder.Append("this.").Append(GetShapeFieldName(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), shapeFields)).Append(", ");
 				builder.Append(cancellationToken).AppendLine(");");
 			}
 
 			builder.AppendLine("\t\targumentsWriter.Flush();");
-			builder.AppendLine("\t\tglobal::Nerdbank.MessagePack.RawMessagePack arguments = (global::Nerdbank.MessagePack.RawMessagePack)argumentsBuffer.AsReadOnlySequence;");
+			builder.AppendLine("\t\tglobal::System.Buffers.ReadOnlySequence<byte> writtenSequence = argumentsBuffer.AsReadOnlySequence;");
+			builder.AppendLine("\t\tbyte[] serializedArguments = new byte[checked((int)writtenSequence.Length)];");
+			builder.AppendLine("\t\tint copiedLength = 0;");
+			builder.AppendLine("\t\tforeach (global::System.ReadOnlyMemory<byte> segment in writtenSequence)");
+			builder.AppendLine("\t\t{");
+			builder.AppendLine("\t\t\tsegment.Span.CopyTo(serializedArguments.AsSpan(copiedLength));");
+			builder.AppendLine("\t\t\tcopiedLength += segment.Length;");
+			builder.AppendLine("\t\t}");
+			builder.AppendLine("\t\tglobal::Nerdbank.MessagePack.RawMessagePack arguments = (global::Nerdbank.MessagePack.RawMessagePack)serializedArguments;");
 
 			switch (method.Kind)
 			{
 				case ProxyMethodKind.ValueTaskOfT:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
 					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
-					builder.Append("global::PolyType.TypeShapeProviderExtensions.GetTypeShapeOrThrow<").Append(method.ResultTypeName).Append(">(this.typeShapeProvider), ");
+					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
 					builder.Append(cancellationToken).AppendLine(");");
 					break;
 				case ProxyMethodKind.TaskOfT:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
 					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
-					builder.Append("global::PolyType.TypeShapeProviderExtensions.GetTypeShapeOrThrow<").Append(method.ResultTypeName).Append(">(this.typeShapeProvider), ");
+					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
 					builder.Append(cancellationToken).AppendLine(").AsTask();");
 					break;
 				case ProxyMethodKind.ValueTask:
@@ -217,6 +284,19 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		return builder.ToString();
 	}
 
+	private static string GetShapeFieldName(string typeName, ImmutableArray<ShapeFieldInfo> shapeFields)
+	{
+		foreach (ShapeFieldInfo shapeField in shapeFields)
+		{
+			if (shapeField.TypeName == typeName)
+			{
+				return shapeField.FieldName;
+			}
+		}
+
+		throw new InvalidOperationException($"No cached shape field found for type '{typeName}'.");
+	}
+
 	private static StringBuilder AppendQuoted(StringBuilder builder, string value)
 		=> builder.Append('"').Append(value.Replace("\\", "\\\\").Replace("\"", "\\\"")).Append('"');
 
@@ -238,4 +318,6 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		ProxyMethodKind Kind,
 		ProxyArgumentMatch ArgumentMatch,
 		string? ResultTypeName);
+
+	private sealed record ShapeFieldInfo(string TypeName, string FieldName);
 }
