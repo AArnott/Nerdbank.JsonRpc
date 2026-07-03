@@ -78,7 +78,7 @@ public partial class JsonRpc : IDisposableObservable
 	/// Attaches a generated client proxy for an RPC contract interface to this JSON-RPC connection.
 	/// </summary>
 	/// <typeparam name="T">The RPC contract interface to proxy.</typeparam>
-	/// <param name="options">Options that control proxy attachment.</param>
+	/// <param name="options">Options reserved for future proxy attachment behavior.</param>
 	/// <returns>A generated proxy instance that implements <typeparamref name="T"/>.</returns>
 	public T Attach<T>(JsonRpcProxyOptions? options = null) => (T)this.Attach(typeof(T), options);
 
@@ -86,7 +86,7 @@ public partial class JsonRpc : IDisposableObservable
 	/// Attaches a generated client proxy for an RPC contract interface to this JSON-RPC connection.
 	/// </summary>
 	/// <param name="interfaceType">The RPC contract interface to proxy.</param>
-	/// <param name="options">Options that control proxy attachment.</param>
+	/// <param name="options">Options reserved for future proxy attachment behavior.</param>
 	/// <returns>A generated proxy instance that implements <paramref name="interfaceType"/>.</returns>
 	public object Attach(Type interfaceType, JsonRpcProxyOptions? options = null)
 	{

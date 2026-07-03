@@ -18,6 +18,12 @@ internal partial interface ICalculator
 	void SetLastValue(int value, CancellationToken cancellationToken);
 }
 
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface ICompositeCalculator : ICalculator
+{
+}
+
 internal interface INotGeneratedProxy
 {
 }

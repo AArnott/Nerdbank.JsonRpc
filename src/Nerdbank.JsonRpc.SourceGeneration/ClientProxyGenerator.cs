@@ -85,7 +85,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
 		}
 
-		foreach (IMethodSymbol method in interfaceSymbol.GetMembers().OfType<IMethodSymbol>().Where(static method => method.MethodKind == MethodKind.Ordinary))
+		foreach (IMethodSymbol method in GetProxyMethods(interfaceSymbol))
 		{
 			if (GetUnsupportedSignatureReason(method) is string reason)
 			{
@@ -98,6 +98,30 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
 	}
+
+	private static IEnumerable<IMethodSymbol> GetProxyMethods(INamedTypeSymbol interfaceSymbol)
+	{
+		HashSet<string> seenMethods = new(System.StringComparer.Ordinal);
+		foreach (INamedTypeSymbol currentInterface in interfaceSymbol.AllInterfaces.Concat([interfaceSymbol]))
+		{
+			foreach (IMethodSymbol method in currentInterface.GetMembers().OfType<IMethodSymbol>().Where(static method => method.MethodKind == MethodKind.Ordinary))
+			{
+				if (seenMethods.Add(GetMethodSignatureKey(method)))
+				{
+					yield return method;
+				}
+			}
+		}
+	}
+
+	private static string GetMethodSignatureKey(IMethodSymbol method)
+		=> string.Join(
+			"|",
+			[
+				method.Name,
+				method.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+				.. method.Parameters.Select(static parameter => $"{parameter.RefKind}:{parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}"),
+			]);
 
 	private static string? GetUnsupportedInterfaceReason(INamedTypeSymbol interfaceSymbol)
 	{
@@ -429,6 +453,11 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		=> accessibility switch
 		{
 			Accessibility.Public => "public",
+			Accessibility.Private => "private",
+			Accessibility.Protected => "protected",
+			Accessibility.Internal => "internal",
+			Accessibility.ProtectedOrInternal => "protected internal",
+			Accessibility.ProtectedAndInternal => "private protected",
 			_ => "internal",
 		};
 

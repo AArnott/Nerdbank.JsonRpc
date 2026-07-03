@@ -47,6 +47,28 @@ public class GeneratedProxyTests
 	}
 
 	[Fact]
+	public async Task GeneratedProxy_IncludesInheritedInterfaceMethods()
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+
+		StreamingJsonRpcMessageChannel clientChannel = new(clientPipe, NullLogger.Instance);
+		StreamingJsonRpcMessageChannel serverChannel = new(serverPipe, NullLogger.Instance);
+
+		JsonRpc clientRpc = new(clientChannel);
+		clientRpc.Start();
+		ICompositeCalculator client = clientRpc.Attach<ICompositeCalculator>();
+
+		Calculator server = new();
+		JsonRpc serverRpc = new(serverChannel);
+		serverRpc.AddRpcTarget<ICalculator>(server);
+		serverRpc.Start();
+
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		int sum = await client.AddAsync(2, 3, cts.Token);
+		Assert.Equal(5, sum);
+	}
+
+	[Fact]
 	public async Task GeneratedProxy_CanPackArgumentsPositionally()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
