@@ -12,6 +12,9 @@ using Microsoft.CodeAnalysis.Text;
 
 namespace Nerdbank.JsonRpc.SourceGeneration;
 
+/// <summary>
+/// Generates JSON-RPC client proxy implementations for interfaces annotated with <c>GenerateJsonRpcProxyAttribute</c>.
+/// </summary>
 [Generator(LanguageNames.CSharp)]
 public sealed class ClientProxyGenerator : IIncrementalGenerator
 {
@@ -19,6 +22,14 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		"NBJSONRPC001",
 		"Unsupported JSON-RPC proxy method signature",
 		"Method '{0}' cannot be generated as a JSON-RPC client proxy because {1}",
+		"Usage",
+		DiagnosticSeverity.Warning,
+		isEnabledByDefault: true);
+
+	private static readonly DiagnosticDescriptor UnsupportedInterface = new(
+		"NBJSONRPC001",
+		"Unsupported JSON-RPC proxy interface",
+		"Interface '{0}' cannot be generated as a JSON-RPC client proxy because {1}",
 		"Usage",
 		DiagnosticSeverity.Warning,
 		isEnabledByDefault: true);
@@ -39,6 +50,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		Positional,
 	}
 
+	/// <inheritdoc />
 	public void Initialize(IncrementalGeneratorInitializationContext context)
 	{
 		IncrementalValuesProvider<InterfaceInfo> proxyInterfaces = context.SyntaxProvider.ForAttributeWithMetadataName(
@@ -67,6 +79,12 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		ProxyArgumentMatch defaultArgumentMatch = GetArgumentMatch(interfaceSymbol.GetAttributes(), ProxyArgumentMatch.Positional);
 		ImmutableArray<MethodInfo>.Builder methods = ImmutableArray.CreateBuilder<MethodInfo>();
 		ImmutableArray<Diagnostic>.Builder diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
+		if (GetUnsupportedInterfaceReason(interfaceSymbol) is string interfaceReason)
+		{
+			diagnostics.Add(Diagnostic.Create(UnsupportedInterface, interfaceSymbol.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), interfaceReason));
+			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
+		}
+
 		foreach (IMethodSymbol method in interfaceSymbol.GetMembers().OfType<IMethodSymbol>().Where(static method => method.MethodKind == MethodKind.Ordinary))
 		{
 			if (GetUnsupportedSignatureReason(method) is string reason)
@@ -81,6 +99,21 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
 	}
 
+	private static string? GetUnsupportedInterfaceReason(INamedTypeSymbol interfaceSymbol)
+	{
+		if (interfaceSymbol.TypeParameters.Length > 0)
+		{
+			return "generic interfaces are not supported yet";
+		}
+
+		if (interfaceSymbol.ContainingType is not null)
+		{
+			return "nested interfaces are not supported yet";
+		}
+
+		return null;
+	}
+
 	private static string? GetUnsupportedSignatureReason(IMethodSymbol method)
 	{
 		if (method.IsGenericMethod)
@@ -88,11 +121,17 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			return "generic methods are not supported yet";
 		}
 
-		foreach (IParameterSymbol parameter in method.Parameters)
+		for (int parameterIndex = 0; parameterIndex < method.Parameters.Length; parameterIndex++)
 		{
+			IParameterSymbol parameter = method.Parameters[parameterIndex];
 			if (parameter.RefKind is not RefKind.None)
 			{
 				return "ref, out, and in parameters are not supported yet";
+			}
+
+			if (IsCancellationToken(parameter.Type) && parameterIndex != method.Parameters.Length - 1)
+			{
+				return "CancellationToken parameters must appear last";
 			}
 
 			if (parameter.IsParams)
@@ -106,8 +145,16 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			}
 		}
 
+		if (GetMethodKind(method.ReturnType, out _) is ProxyMethodKind.Unsupported)
+		{
+			return $"return type '{method.ReturnType.ToDisplayString()}' is not supported yet";
+		}
+
 		return null;
 	}
+
+	private static bool IsCancellationToken(ITypeSymbol type)
+		=> type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.Threading.CancellationToken";
 
 	private static bool HasStaticTypeShapeResolver(Compilation compilation)
 	{
@@ -119,7 +166,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 	private static MethodInfo CreateMethodInfo(IMethodSymbol method, ProxyArgumentMatch argumentMatch)
 	{
-		bool hasCancellationToken = method.Parameters.LastOrDefault()?.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.Threading.CancellationToken";
+		bool hasCancellationToken = method.Parameters.LastOrDefault() is { } lastParameter && IsCancellationToken(lastParameter.Type);
 		ImmutableArray<IParameterSymbol> payloadParameters = hasCancellationToken
 			? method.Parameters.Take(method.Parameters.Length - 1).ToImmutableArray()
 			: method.Parameters.ToImmutableArray();
