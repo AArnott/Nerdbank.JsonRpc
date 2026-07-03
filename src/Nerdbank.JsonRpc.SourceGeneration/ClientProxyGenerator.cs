@@ -35,7 +35,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		IncrementalValuesProvider<InterfaceInfo> proxyInterfaces = context.SyntaxProvider.ForAttributeWithMetadataName(
 			"Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute",
 			static (node, _) => node is InterfaceDeclarationSyntax,
-			static (ctx, _) => CreateInterfaceInfo((INamedTypeSymbol)ctx.TargetSymbol));
+			static (ctx, _) => CreateInterfaceInfo((INamedTypeSymbol)ctx.TargetSymbol, ctx.SemanticModel.Compilation));
 
 		context.RegisterSourceOutput(proxyInterfaces, static (ctx, info) =>
 		{
@@ -43,7 +43,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		});
 	}
 
-	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol)
+	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol, Compilation compilation)
 	{
 		ProxyArgumentMatch defaultArgumentMatch = GetArgumentMatch(interfaceSymbol.GetAttributes(), ProxyArgumentMatch.Positional);
 		ImmutableArray<MethodInfo> methods = interfaceSymbol
@@ -53,7 +53,15 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			.Select(method => CreateMethodInfo(method, defaultArgumentMatch))
 			.ToImmutableArray();
 
-		return new InterfaceInfo(interfaceSymbol, methods);
+		return new InterfaceInfo(interfaceSymbol, methods, HasStaticTypeShapeResolver(compilation));
+	}
+
+	private static bool HasStaticTypeShapeResolver(Compilation compilation)
+	{
+		INamedTypeSymbol? resolver = compilation.GetTypeByMetadataName("PolyType.Abstractions.TypeShapeResolver");
+		return resolver?.GetMembers("Resolve")
+			.OfType<IMethodSymbol>()
+			.Any(static method => method.IsGenericMethod && method.TypeParameters.Length == 1 && method.ContainingAssembly.Name == "PolyType") is true;
 	}
 
 	private static MethodInfo CreateMethodInfo(IMethodSymbol method, ProxyArgumentMatch argumentMatch)
@@ -146,9 +154,17 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.AppendLine();
 		}
 
-		builder.Append("\tinternal ").Append(info.ProxyName).Append("(global::Nerdbank.JsonRpc.JsonRpc jsonRpc, global::PolyType.ITypeShapeProvider typeShapeProvider)").AppendLine();
+		builder.Append("\tinternal ").Append(info.ProxyName).Append("(global::Nerdbank.JsonRpc.JsonRpc jsonRpc)").AppendLine();
 		builder.AppendLine("\t{");
 		builder.AppendLine("\t\tthis.jsonRpc = jsonRpc;");
+		if (shapeFields.Length > 0)
+		{
+			builder.Append("\t\tglobal::PolyType.ITypeShapeProvider typeShapeProvider = global::PolyType.Abstractions.TypeShapeResolver.")
+				.Append(info.HasStaticTypeShapeResolver ? "Resolve" : "ResolveDynamicOrThrow")
+				.Append('<')
+				.Append(info.InterfaceName)
+				.AppendLine(">().Provider;");
+		}
 
 		foreach (ShapeFieldInfo shapeField in shapeFields)
 		{
@@ -300,7 +316,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	private static StringBuilder AppendQuoted(StringBuilder builder, string value)
 		=> builder.Append('"').Append(value.Replace("\\", "\\\\").Replace("\"", "\\\"")).Append('"');
 
-	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods)
+	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods, bool HasStaticTypeShapeResolver)
 	{
 		internal string HintName => this.ProxyName + ".g.cs";
 

@@ -39,19 +39,17 @@ public partial interface ICalculator
 }
 ```
 
-The generated proxy currently takes an explicit PolyType shape provider instance:
+The generated proxy resolves its PolyType shape provider from the annotated contract:
 
 ```csharp
-using ShapeProvider = PolyType.SourceGenerator.TypeShapeProvider_MyAssembly;
-
 JsonRpc rpc = new(channel);
 rpc.Start();
 
-var client = new CalculatorProxy(rpc, ShapeProvider.Default);
+var client = new CalculatorProxy(rpc);
 int sum = await client.AddAsync(1, 2, CancellationToken.None);
 ```
 
-This is the key workaround for source-generator non-chaining: the proxy uses an explicitly supplied provider instead of relying on runtime reflection or on PolyType discovering shapes for generator-emitted DTOs.
+The proxy resolves the provider once in its constructor and caches the type shapes it needs for method arguments and results.
 
 The current prototype supports `ValueTask<T>`, `Task<T>`, `ValueTask`, `Task`, and `void` notification methods.
 

@@ -23,7 +23,7 @@ public class GeneratedProxyTests
 
 		JsonRpc clientRpc = new(clientChannel);
 		clientRpc.Start();
-		CalculatorProxy client = new(clientRpc, ShapeProvider.Default);
+		CalculatorProxy client = new(clientRpc);
 
 		Calculator server = new();
 		JsonRpc serverRpc = new(serverChannel);
@@ -52,7 +52,7 @@ public class GeneratedProxyTests
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
 		JsonRpc clientRpc = new(transport);
 		clientRpc.Start();
-		PositionalCalculatorProxy client = new(clientRpc, ShapeProvider.Default);
+		PositionalCalculatorProxy client = new(clientRpc);
 
 		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
 		Task<int> resultTask = client.SubtractAsync(9, 4, cts.Token).AsTask();
@@ -83,7 +83,7 @@ public class GeneratedProxyTests
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
 		JsonRpc clientRpc = new(transport);
 		clientRpc.Start();
-		NamedCalculatorProxy client = new(clientRpc, ShapeProvider.Default);
+		NamedCalculatorProxy client = new(clientRpc);
 
 		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
 		Task<int> resultTask = client.SubtractAsync(9, 4, cts.Token).AsTask();
