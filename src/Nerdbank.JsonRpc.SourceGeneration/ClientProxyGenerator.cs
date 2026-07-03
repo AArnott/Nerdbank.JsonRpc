@@ -6,6 +6,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 
@@ -14,6 +15,14 @@ namespace Nerdbank.JsonRpc.SourceGeneration;
 [Generator(LanguageNames.CSharp)]
 public sealed class ClientProxyGenerator : IIncrementalGenerator
 {
+	private static readonly DiagnosticDescriptor UnsupportedMethodSignature = new(
+		"NBJSONRPC001",
+		"Unsupported JSON-RPC proxy method signature",
+		"Method '{0}' cannot be generated as a JSON-RPC client proxy because {1}",
+		"Usage",
+		DiagnosticSeverity.Warning,
+		isEnabledByDefault: true);
+
 	private enum ProxyMethodKind
 	{
 		Unsupported,
@@ -39,6 +48,16 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		context.RegisterSourceOutput(proxyInterfaces, static (ctx, info) =>
 		{
+			foreach (Diagnostic diagnostic in info.Diagnostics)
+			{
+				ctx.ReportDiagnostic(diagnostic);
+			}
+
+			if (info.Diagnostics.Length > 0)
+			{
+				return;
+			}
+
 			ctx.AddSource(info.HintName, SourceText.From(RenderProxy(info), Encoding.UTF8));
 		});
 	}
@@ -46,14 +65,48 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol, Compilation compilation)
 	{
 		ProxyArgumentMatch defaultArgumentMatch = GetArgumentMatch(interfaceSymbol.GetAttributes(), ProxyArgumentMatch.Positional);
-		ImmutableArray<MethodInfo> methods = interfaceSymbol
-			.GetMembers()
-			.OfType<IMethodSymbol>()
-			.Where(static method => method.MethodKind == MethodKind.Ordinary)
-			.Select(method => CreateMethodInfo(method, defaultArgumentMatch))
-			.ToImmutableArray();
+		ImmutableArray<MethodInfo>.Builder methods = ImmutableArray.CreateBuilder<MethodInfo>();
+		ImmutableArray<Diagnostic>.Builder diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
+		foreach (IMethodSymbol method in interfaceSymbol.GetMembers().OfType<IMethodSymbol>().Where(static method => method.MethodKind == MethodKind.Ordinary))
+		{
+			if (GetUnsupportedSignatureReason(method) is string reason)
+			{
+				diagnostics.Add(Diagnostic.Create(UnsupportedMethodSignature, method.Locations.FirstOrDefault(), method.ToDisplayString(), reason));
+				continue;
+			}
 
-		return new InterfaceInfo(interfaceSymbol, methods, HasStaticTypeShapeResolver(compilation));
+			methods.Add(CreateMethodInfo(method, defaultArgumentMatch));
+		}
+
+		return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
+	}
+
+	private static string? GetUnsupportedSignatureReason(IMethodSymbol method)
+	{
+		if (method.IsGenericMethod)
+		{
+			return "generic methods are not supported yet";
+		}
+
+		foreach (IParameterSymbol parameter in method.Parameters)
+		{
+			if (parameter.RefKind is not RefKind.None)
+			{
+				return "ref, out, and in parameters are not supported yet";
+			}
+
+			if (parameter.IsParams)
+			{
+				return "params parameters are not supported yet";
+			}
+
+			if (parameter.HasExplicitDefaultValue)
+			{
+				return "optional parameters with default values are not supported yet";
+			}
+		}
+
+		return null;
 	}
 
 	private static bool HasStaticTypeShapeResolver(Compilation compilation)
@@ -226,10 +279,10 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	private static string RenderMethod(MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields)
 	{
 		StringBuilder builder = new();
-		string parameters = string.Join(", ", method.Symbol.Parameters.Select(static p => $"{p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} {p.Name}"));
-		string cancellationToken = method.HasCancellationToken ? method.Symbol.Parameters[^1].Name : "global::System.Threading.CancellationToken.None";
+		string parameters = string.Join(", ", method.Symbol.Parameters.Select(static p => $"{p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} {EscapeIdentifier(p.Name)}"));
+		string cancellationToken = method.HasCancellationToken ? EscapeIdentifier(method.Symbol.Parameters[^1].Name) : "global::System.Threading.CancellationToken.None";
 
-		builder.Append("\tpublic ").Append(method.Symbol.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append(' ').Append(method.Symbol.Name).Append('(').Append(parameters).AppendLine(")");
+		builder.Append("\tpublic ").Append(method.Symbol.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append(' ').Append(EscapeIdentifier(method.Symbol.Name)).Append('(').Append(parameters).AppendLine(")");
 		builder.AppendLine("\t{");
 
 		if (method.Kind is not ProxyMethodKind.Unsupported)
@@ -246,7 +299,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 					AppendQuoted(builder, parameter.Name).AppendLine(");");
 				}
 
-				builder.Append("\t\tthis.jsonRpc.Serializer.Serialize(ref argumentsWriter, ").Append(parameter.Name).Append(", ");
+				builder.Append("\t\tthis.jsonRpc.Serializer.Serialize(ref argumentsWriter, ").Append(EscapeIdentifier(parameter.Name)).Append(", ");
 				builder.Append("this.").Append(GetShapeFieldName(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), shapeFields)).Append(", ");
 				builder.Append(cancellationToken).AppendLine(");");
 			}
@@ -322,6 +375,9 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	private static StringBuilder AppendQuoted(StringBuilder builder, string value)
 		=> builder.Append('"').Append(value.Replace("\\", "\\\\").Replace("\"", "\\\"")).Append('"');
 
+	private static string EscapeIdentifier(string identifier)
+		=> SyntaxFacts.GetKeywordKind(identifier) == SyntaxKind.None && SyntaxFacts.GetContextualKeywordKind(identifier) == SyntaxKind.None ? identifier : "@" + identifier;
+
 	private static string GetAccessibility(Accessibility accessibility)
 		=> accessibility switch
 		{
@@ -329,7 +385,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			_ => "internal",
 		};
 
-	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods, bool HasStaticTypeShapeResolver)
+	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods, bool HasStaticTypeShapeResolver, ImmutableArray<Diagnostic> Diagnostics)
 	{
 		internal string HintName => this.ProxyName + ".g.cs";
 

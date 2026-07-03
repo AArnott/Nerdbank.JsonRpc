@@ -8,9 +8,13 @@ using PolyType;
 internal partial interface IPositionalCalculator
 {
 	ValueTask<int> SubtractAsync(int a, int b, CancellationToken cancellationToken);
+
+	ValueTask<int> EchoKeywordAsync(int @event, CancellationToken cancellationToken);
 }
 
 internal sealed class PositionalCalculator : IPositionalCalculator
 {
 	public ValueTask<int> SubtractAsync(int a, int b, CancellationToken cancellationToken) => new(a - b);
+
+	public ValueTask<int> EchoKeywordAsync(int @event, CancellationToken cancellationToken) => new(@event);
 }

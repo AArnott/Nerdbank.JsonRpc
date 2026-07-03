@@ -204,9 +204,11 @@ public partial class JsonRpc : IDisposableObservable
 	/// </summary>
 	/// <param name="method">The name of the remote method to invoke.</param>
 	/// <param name="arguments">The pre-serialized arguments payload.</param>
-	/// <param name="cancellationToken">A token whose cancellation should be propagated to the remote endpoint.</param>
+	/// <param name="cancellationToken">A token whose cancellation is observed before the notification is posted.</param>
 	public void Notify(string method, RawMessagePack arguments, CancellationToken cancellationToken)
 	{
+		cancellationToken.ThrowIfCancellationRequested();
+
 		JsonRpcRequest request = new()
 		{
 			Id = null,

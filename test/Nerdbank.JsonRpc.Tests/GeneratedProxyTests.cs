@@ -78,12 +78,42 @@ public class GeneratedProxyTests
 	}
 
 	[Fact]
+	public async Task GeneratedProxy_EscapesKeywordParameterNames()
+	{
+		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(transport);
+		clientRpc.Start();
+		IPositionalCalculator client = clientRpc.Attach<IPositionalCalculator>();
+
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		Task<int> resultTask = client.EchoKeywordAsync(9, cts.Token).AsTask();
+
+		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(cts.Token));
+		Assert.Equal(nameof(IPositionalCalculator.EchoKeywordAsync), request.Method);
+		Assert.NotNull(request.Id);
+
+		MessagePackReader reader = new(request.Arguments);
+		Assert.Equal(MessagePackType.Array, reader.NextMessagePackType);
+		Assert.Equal(1, reader.ReadArrayHeader());
+		Assert.Equal(9, reader.ReadInt32());
+
+		JsonRpcResult response = new()
+		{
+			Id = request.Id!.Value,
+			Result = (RawMessagePack)clientRpc.Serializer.Serialize(9, ShapeProvider.Default.Int32, cts.Token),
+		};
+		await remote.Writer.WriteAsync(response, cts.Token);
+
+		Assert.Equal(9, await resultTask.WithCancellation(cts.Token));
+	}
+
+	[Fact]
 	public async Task GeneratedProxy_CanPackArgumentsByNameWhenRequested()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
 		JsonRpc clientRpc = new(transport);
 		clientRpc.Start();
-		NamedCalculatorProxy client = new(clientRpc);
+		INamedCalculator client = clientRpc.Attach<INamedCalculator>();
 
 		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
 		Task<int> resultTask = client.SubtractAsync(9, 4, cts.Token).AsTask();
