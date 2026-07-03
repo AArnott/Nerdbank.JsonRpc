@@ -15,7 +15,7 @@ Current highlights:
 
 The repository now includes an experimental client proxy generator driven by `[GenerateJsonRpcProxy]` on an interface contract.
 
-The current prototype intentionally does not rely on dynamic shape resolution. Instead, the generated proxy accepts an explicit `ITypeShapeProvider` instance at construction time and uses that provider for argument and result serialization.
+The current prototype intentionally does not require users to manually instantiate generated proxy classes. `JsonRpc.Attach<T>(JsonRpcProxyOptions? options = null)` reads generated metadata from the RPC interface and creates the matching proxy for the current connection.
 
 Supported generated method shapes currently include:
 
@@ -27,10 +27,10 @@ Supported generated method shapes currently include:
 
 Argument packing defaults to positional MessagePack arrays. If a contract needs named arguments instead, apply `[GenerateJsonRpcProxy(UseNamedArguments = true)]` to emit a map keyed by parameter name.
 
-That means the consumer flow is:
+The consumer flow is:
 
 1. Declare the RPC interface and annotate it for PolyType shape generation.
 2. Let the JsonRpc source generator emit the proxy implementation.
-3. Pass a PolyType-generated `ITypeShapeProvider` instance into the proxy constructor.
+3. Attach the proxy with `rpc.Attach<IMyContract>()`.
 
-This design proves a reflection-free path for generated proxies, while leaving room for a later convenience layer that hides the explicit provider parameter.
+For a proxy that implements multiple RPC interfaces, define an annotated composite interface and request that composite type. `Attach<IBase>()` only uses generated metadata on `IBase`; it does not search for composite proxies that happen to implement that base interface.

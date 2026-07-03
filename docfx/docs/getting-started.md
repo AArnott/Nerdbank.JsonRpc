@@ -39,17 +39,23 @@ public partial interface ICalculator
 }
 ```
 
-The generated proxy resolves its PolyType shape provider from the annotated contract:
+Attach the generated proxy to a running `JsonRpc` instance:
 
 ```csharp
 JsonRpc rpc = new(channel);
 rpc.Start();
 
-var client = new CalculatorProxy(rpc);
+ICalculator client = rpc.Attach<ICalculator>();
 int sum = await client.AddAsync(1, 2, CancellationToken.None);
 ```
 
 The proxy resolves the provider once in its constructor and caches the type shapes it needs for method arguments and results.
+
+`Attach<T>` also accepts an optional immutable options record for future proxy settings:
+
+```csharp
+ICalculator client = rpc.Attach<ICalculator>(new JsonRpcProxyOptions());
+```
 
 The current prototype supports `ValueTask<T>`, `Task<T>`, `ValueTask`, `Task`, and `void` notification methods.
 

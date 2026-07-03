@@ -135,6 +135,12 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.AppendLine();
 		}
 
+		builder.Append("[global::Nerdbank.JsonRpc.JsonRpcProxyImplementationAttribute(typeof(").Append(info.ProxyTypeName).AppendLine("))]");
+		builder.Append(GetAccessibility(info.Symbol.DeclaredAccessibility)).Append(" partial interface ").Append(info.Symbol.Name).AppendLine();
+		builder.AppendLine("{");
+		builder.AppendLine("}");
+		builder.AppendLine();
+
 		builder.Append("internal sealed class ").Append(info.ProxyName).Append(" : ").Append(info.InterfaceName).AppendLine();
 		builder.AppendLine("{");
 		builder.AppendLine("\tprivate readonly global::Nerdbank.JsonRpc.JsonRpc jsonRpc;");
@@ -316,11 +322,22 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	private static StringBuilder AppendQuoted(StringBuilder builder, string value)
 		=> builder.Append('"').Append(value.Replace("\\", "\\\\").Replace("\"", "\\\"")).Append('"');
 
+	private static string GetAccessibility(Accessibility accessibility)
+		=> accessibility switch
+		{
+			Accessibility.Public => "public",
+			_ => "internal",
+		};
+
 	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods, bool HasStaticTypeShapeResolver)
 	{
 		internal string HintName => this.ProxyName + ".g.cs";
 
 		internal string InterfaceName => this.Symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+		internal string ProxyTypeName => this.Symbol.ContainingNamespace.IsGlobalNamespace
+			? "global::" + this.ProxyName
+			: "global::" + this.Symbol.ContainingNamespace.ToDisplayString() + "." + this.ProxyName;
 
 		internal string ProxyName => this.Symbol.Name.StartsWith("I", System.StringComparison.Ordinal) && this.Symbol.Name.Length > 1 && char.IsUpper(this.Symbol.Name[1])
 			? this.Symbol.Name.Substring(1) + "Proxy"

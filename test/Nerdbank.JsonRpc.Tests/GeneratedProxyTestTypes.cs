@@ -18,6 +18,10 @@ internal partial interface ICalculator
 	void SetLastValue(int value, CancellationToken cancellationToken);
 }
 
+internal interface INotGeneratedProxy
+{
+}
+
 internal sealed class Calculator : ICalculator
 {
 	internal TaskCompletionSource<int> NotificationReceived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

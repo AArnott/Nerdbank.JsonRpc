@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Collections.Concurrent;
+using System.Reflection;
 using System.Threading.Channels;
 using Microsoft;
 using Microsoft.VisualStudio.Threading;
@@ -71,6 +72,46 @@ public partial class JsonRpc : IDisposableObservable
 		{
 			this.handlers.TryAdd(name, (target, invoker));
 		}
+	}
+
+	/// <summary>
+	/// Attaches a generated client proxy for an RPC contract interface to this JSON-RPC connection.
+	/// </summary>
+	/// <typeparam name="T">The RPC contract interface to proxy.</typeparam>
+	/// <param name="options">Options that control proxy attachment.</param>
+	/// <returns>A generated proxy instance that implements <typeparamref name="T"/>.</returns>
+	public T Attach<T>(JsonRpcProxyOptions? options = null) => (T)this.Attach(typeof(T), options);
+
+	/// <summary>
+	/// Attaches a generated client proxy for an RPC contract interface to this JSON-RPC connection.
+	/// </summary>
+	/// <param name="interfaceType">The RPC contract interface to proxy.</param>
+	/// <param name="options">Options that control proxy attachment.</param>
+	/// <returns>A generated proxy instance that implements <paramref name="interfaceType"/>.</returns>
+	public object Attach(Type interfaceType, JsonRpcProxyOptions? options = null)
+	{
+		Requires.NotNull(interfaceType);
+		Requires.Argument(interfaceType.IsInterface, nameof(interfaceType), "The requested proxy type must be an interface.");
+
+		JsonRpcProxyImplementationAttribute? implementation = interfaceType.GetCustomAttribute<JsonRpcProxyImplementationAttribute>();
+		if (implementation is null)
+		{
+			throw new NotSupportedException($"No generated JSON-RPC proxy was found for interface '{interfaceType.FullName}'. Add GenerateJsonRpcProxyAttribute to the interface or request an annotated composite interface.");
+		}
+
+		Type proxyType = implementation.ProxyType;
+		if (!interfaceType.IsAssignableFrom(proxyType))
+		{
+			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not implement requested interface '{interfaceType.FullName}'.");
+		}
+
+		ConstructorInfo? constructor = proxyType.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null, types: [typeof(JsonRpc)], modifiers: null);
+		if (constructor is null)
+		{
+			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not have a constructor that accepts a JsonRpc instance.");
+		}
+
+		return constructor.Invoke([this]);
 	}
 
 #if NET

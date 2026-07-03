@@ -23,7 +23,7 @@ public class GeneratedProxyTests
 
 		JsonRpc clientRpc = new(clientChannel);
 		clientRpc.Start();
-		CalculatorProxy client = new(clientRpc);
+		ICalculator client = clientRpc.Attach<ICalculator>();
 
 		Calculator server = new();
 		JsonRpc serverRpc = new(serverChannel);
@@ -52,7 +52,7 @@ public class GeneratedProxyTests
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
 		JsonRpc clientRpc = new(transport);
 		clientRpc.Start();
-		PositionalCalculatorProxy client = new(clientRpc);
+		IPositionalCalculator client = clientRpc.Attach<IPositionalCalculator>(new JsonRpcProxyOptions());
 
 		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
 		Task<int> resultTask = client.SubtractAsync(9, 4, cts.Token).AsTask();
@@ -108,5 +108,25 @@ public class GeneratedProxyTests
 		await remote.Writer.WriteAsync(response, cts.Token);
 
 		Assert.Equal(5, await resultTask.WithCancellation(cts.Token));
+	}
+
+	[Fact]
+	public void GeneratedProxy_AttachRequiresGeneratedProxyMetadata()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(transport);
+
+		NotSupportedException ex = Assert.Throws<NotSupportedException>(() => clientRpc.Attach<INotGeneratedProxy>());
+		Assert.Contains(nameof(INotGeneratedProxy), ex.Message);
+	}
+
+	[Fact]
+	public void GeneratedProxy_AttachRequiresInterfaceType()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(transport);
+
+		ArgumentException ex = Assert.Throws<ArgumentException>(() => clientRpc.Attach(typeof(string)));
+		Assert.Contains("interface", ex.Message, StringComparison.OrdinalIgnoreCase);
 	}
 }
