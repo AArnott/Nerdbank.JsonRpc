@@ -88,6 +88,61 @@ public class ClientProxyGeneratorTests
 	}
 
 	[Fact]
+	public async Task NonPartialInterfaceProducesDiagnosticAndNoProxy()
+	{
+		const string Source = """
+			using System.Threading;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			[GenerateJsonRpcProxy]
+			internal interface {|#0:INonPartialProxy|}
+			{
+				ValueTask<int> GetAsync(int value, CancellationToken cancellationToken);
+			}
+			""";
+
+		DiagnosticResult nonPartialInterface = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(0)
+			.WithArguments("INonPartialProxy", "annotated interfaces must be partial");
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, nonPartialInterface);
+	}
+
+	[Fact]
+	public async Task MatchingProxyNamesInDifferentNamespacesDoNotCollide()
+	{
+		const string Source = """
+			using System.Threading;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+			using PolyType;
+
+			namespace First
+			{
+				[GenerateJsonRpcProxy]
+				[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+				internal partial interface ICalculator
+				{
+					ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken);
+				}
+			}
+
+			namespace Second
+			{
+				[GenerateJsonRpcProxy]
+				[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+				internal partial interface ICalculator
+				{
+					ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken);
+				}
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source);
+	}
+
+	[Fact]
 	public async Task KeywordIdentifiersAreEscapedInGeneratedProxy()
 	{
 		const string Source = """

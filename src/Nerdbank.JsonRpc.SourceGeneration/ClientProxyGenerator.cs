@@ -56,7 +56,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		IncrementalValuesProvider<InterfaceInfo> proxyInterfaces = context.SyntaxProvider.ForAttributeWithMetadataName(
 			"Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute",
 			static (node, _) => node is InterfaceDeclarationSyntax,
-			static (ctx, _) => CreateInterfaceInfo((INamedTypeSymbol)ctx.TargetSymbol, ctx.SemanticModel.Compilation));
+			static (ctx, _) => CreateInterfaceInfo((INamedTypeSymbol)ctx.TargetSymbol, (InterfaceDeclarationSyntax)ctx.TargetNode, ctx.SemanticModel.Compilation));
 
 		context.RegisterSourceOutput(proxyInterfaces, static (ctx, info) =>
 		{
@@ -74,11 +74,17 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		});
 	}
 
-	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol, Compilation compilation)
+	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol, InterfaceDeclarationSyntax interfaceDeclaration, Compilation compilation)
 	{
 		ProxyArgumentMatch defaultArgumentMatch = GetArgumentMatch(interfaceSymbol.GetAttributes(), ProxyArgumentMatch.Positional);
 		ImmutableArray<MethodInfo>.Builder methods = ImmutableArray.CreateBuilder<MethodInfo>();
 		ImmutableArray<Diagnostic>.Builder diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
+		if (!interfaceDeclaration.Modifiers.Any(SyntaxKind.PartialKeyword))
+		{
+			diagnostics.Add(Diagnostic.Create(UnsupportedInterface, interfaceDeclaration.Identifier.GetLocation(), interfaceSymbol.ToDisplayString(), "annotated interfaces must be partial"));
+			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
+		}
+
 		if (GetUnsupportedInterfaceReason(interfaceSymbol) is string interfaceReason)
 		{
 			diagnostics.Add(Diagnostic.Create(UnsupportedInterface, interfaceSymbol.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), interfaceReason));
@@ -463,7 +469,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods, bool HasStaticTypeShapeResolver, ImmutableArray<Diagnostic> Diagnostics)
 	{
-		internal string HintName => this.ProxyName + ".g.cs";
+		internal string HintName => this.Symbol.ContainingNamespace.IsGlobalNamespace ? this.ProxyName + ".g.cs" : this.Symbol.ContainingNamespace.ToDisplayString() + "." + this.ProxyName + ".g.cs";
 
 		internal string InterfaceName => this.Symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
