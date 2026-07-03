@@ -141,6 +141,16 @@ public partial class JsonRpcClientTests : TestBase
 		this.Log(requestMessage, this.jsonRpc);
 	}
 
+	[Fact]
+	public void NotifyWithRawArgumentsHonorsCancellation()
+	{
+		using CancellationTokenSource cts = new();
+		cts.Cancel();
+
+		Assert.Throws<OperationCanceledException>(() => this.jsonRpc.Notify("Add", NilMsgPack, cts.Token));
+		Assert.False(this.channel.Reader.TryRead(out _));
+	}
+
 	public override void Dispose()
 	{
 		this.jsonRpc.Dispose();

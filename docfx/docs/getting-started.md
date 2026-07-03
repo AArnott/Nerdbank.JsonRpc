@@ -9,4 +9,62 @@ Click on the badge to find its latest version and the instructions for consuming
 
 ## Usage
 
-TODO
+### Server setup
+
+Annotate your contract for PolyType method-shape generation and register an implementation with `JsonRpc`:
+
+```csharp
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+public partial interface ICalculator
+{
+	ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken);
+}
+
+public sealed class Calculator : ICalculator
+{
+	public ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken) => new(a + b);
+}
+```
+
+### Generated client proxy prototype
+
+The prototype source generator emits a proxy when the contract is also annotated with `[GenerateJsonRpcProxy]`.
+
+```csharp
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+public partial interface ICalculator
+{
+	ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken);
+}
+```
+
+Attach the generated proxy to a running `JsonRpc` instance:
+
+```csharp
+JsonRpc rpc = new(channel);
+rpc.Start();
+
+ICalculator client = rpc.Attach<ICalculator>();
+int sum = await client.AddAsync(1, 2, CancellationToken.None);
+```
+
+The proxy resolves the provider once in its constructor and caches the type shapes it needs for method arguments and results.
+
+`Attach<T>` also accepts an optional immutable options record for future proxy settings:
+
+```csharp
+ICalculator client = rpc.Attach<ICalculator>(new JsonRpcProxyOptions());
+```
+
+The current prototype supports `ValueTask<T>`, `Task<T>`, `ValueTask`, `Task`, and `void` notification methods.
+
+Positional argument packing is the default. To request named packing for an entire contract, set the attribute property explicitly:
+
+```csharp
+[GenerateJsonRpcProxy(UseNamedArguments = true)]
+public partial interface ICalculator
+{
+	ValueTask<int> SubtractAsync(int a, int b, CancellationToken cancellationToken);
+}
+```

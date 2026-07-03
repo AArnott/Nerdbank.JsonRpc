@@ -2,7 +2,6 @@
 
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
-    <TargetFrameworks Condition="'$(OS)' == 'Windows_NT'">$(TargetFrameworks);net472</TargetFrameworks>
     <OutputType>Exe</OutputType>
     <IsTestProject>true</IsTestProject>
     <RootNamespace />
@@ -10,11 +9,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Nerdbank.JsonRpc\Nerdbank.JsonRpc.csproj" />
-    <ProjectReference Include="..\..\src\Nerdbank.JsonRpc.SourceGeneration\Nerdbank.JsonRpc.SourceGeneration.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\src\Nerdbank.JsonRpc.SourceGeneration\Nerdbank.JsonRpc.SourceGeneration.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.SourceGenerators.Testing.XUnit" />
     <PackageReference Include="Nerdbank.Streams" />
     <PackageReference Include="xunit.v3.mtp-v2" />
   </ItemGroup>

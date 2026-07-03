@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Collections.Concurrent;
+using System.Reflection;
 using System.Threading.Channels;
 using Microsoft;
 using Microsoft.VisualStudio.Threading;
@@ -71,6 +72,46 @@ public partial class JsonRpc : IDisposableObservable
 		{
 			this.handlers.TryAdd(name, (target, invoker));
 		}
+	}
+
+	/// <summary>
+	/// Attaches a generated client proxy for an RPC contract interface to this JSON-RPC connection.
+	/// </summary>
+	/// <typeparam name="T">The RPC contract interface to proxy.</typeparam>
+	/// <param name="options">Options reserved for future proxy attachment behavior.</param>
+	/// <returns>A generated proxy instance that implements <typeparamref name="T"/>.</returns>
+	public T Attach<T>(JsonRpcProxyOptions? options = null) => (T)this.Attach(typeof(T), options);
+
+	/// <summary>
+	/// Attaches a generated client proxy for an RPC contract interface to this JSON-RPC connection.
+	/// </summary>
+	/// <param name="interfaceType">The RPC contract interface to proxy.</param>
+	/// <param name="options">Options reserved for future proxy attachment behavior.</param>
+	/// <returns>A generated proxy instance that implements <paramref name="interfaceType"/>.</returns>
+	public object Attach(Type interfaceType, JsonRpcProxyOptions? options = null)
+	{
+		Requires.NotNull(interfaceType);
+		Requires.Argument(interfaceType.IsInterface, nameof(interfaceType), "The requested proxy type must be an interface.");
+
+		JsonRpcProxyImplementationAttribute? implementation = interfaceType.GetCustomAttribute<JsonRpcProxyImplementationAttribute>();
+		if (implementation is null)
+		{
+			throw new NotSupportedException($"No generated JSON-RPC proxy was found for interface '{interfaceType.FullName}'. Add GenerateJsonRpcProxyAttribute to the interface or request an annotated composite interface.");
+		}
+
+		Type proxyType = implementation.ProxyType;
+		if (!interfaceType.IsAssignableFrom(proxyType))
+		{
+			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not implement requested interface '{interfaceType.FullName}'.");
+		}
+
+		ConstructorInfo? constructor = proxyType.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null, types: [typeof(JsonRpc)], modifiers: null);
+		if (constructor is null)
+		{
+			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not have a constructor that accepts a JsonRpc instance.");
+		}
+
+		return constructor.Invoke([this]);
 	}
 
 #if NET
@@ -156,6 +197,95 @@ public partial class JsonRpc : IDisposableObservable
 		};
 
 		this.PostMessage(request);
+	}
+
+	/// <summary>
+	/// Sends a notification with arguments that have already been serialized to MessagePack.
+	/// </summary>
+	/// <param name="method">The name of the remote method to invoke.</param>
+	/// <param name="arguments">The pre-serialized arguments payload.</param>
+	/// <param name="cancellationToken">A token whose cancellation is observed before the notification is posted.</param>
+	public void Notify(string method, RawMessagePack arguments, CancellationToken cancellationToken)
+	{
+		cancellationToken.ThrowIfCancellationRequested();
+
+		JsonRpcRequest request = new()
+		{
+			Id = null,
+			Method = method,
+			Arguments = arguments,
+		};
+
+		this.PostMessage(request);
+	}
+
+	/// <summary>
+	/// Sends a request with arguments that have already been serialized to MessagePack.
+	/// </summary>
+	/// <param name="method">The name of the remote method to invoke.</param>
+	/// <param name="arguments">The pre-serialized arguments payload.</param>
+	/// <param name="cancellationToken">A token whose cancellation should be propagated to the remote endpoint.</param>
+	/// <returns>A task that completes when the remote endpoint sends its response.</returns>
+	public ValueTask RequestAsync(string method, RawMessagePack arguments, CancellationToken cancellationToken)
+	{
+		JsonRpcRequest request = new()
+		{
+			Id = this.GetNextRequestId(),
+			Method = method,
+			Arguments = arguments,
+		};
+
+		return HelperAsync();
+		async ValueTask HelperAsync()
+		{
+			JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
+			switch (response)
+			{
+				case JsonRpcResult:
+					return;
+				case JsonRpcError error:
+					throw new JsonRpcException(error.Error);
+				default:
+					throw new InvalidOperationException("Received an unknown response type.");
+			}
+		}
+	}
+
+	/// <summary>
+	/// Sends a request with arguments that have already been serialized to MessagePack.
+	/// </summary>
+	/// <typeparam name="TResult">The expected result type.</typeparam>
+	/// <param name="method">The name of the remote method to invoke.</param>
+	/// <param name="arguments">The pre-serialized arguments payload.</param>
+	/// <param name="resultShape">The type shape describing <typeparamref name="TResult"/>.</param>
+	/// <param name="cancellationToken">A token whose cancellation should be propagated to the remote endpoint.</param>
+	/// <returns>A task that completes with the result returned by the remote endpoint.</returns>
+	public ValueTask<TResult> RequestAsync<TResult>(string method, RawMessagePack arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
+	{
+		Requires.NotNull(resultShape);
+
+		JsonRpcRequest request = new()
+		{
+			Id = this.GetNextRequestId(),
+			Method = method,
+			Arguments = arguments,
+		};
+
+		return HelperAsync();
+		async ValueTask<TResult> HelperAsync()
+		{
+			JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
+			switch (response)
+			{
+				case JsonRpcResult result:
+					TResult returnValue = this.Serializer.Deserialize(result.Result, resultShape, cancellationToken)!;
+					return returnValue;
+				case JsonRpcError error:
+					throw new JsonRpcException(error.Error);
+				default:
+					throw new InvalidOperationException("Received an unknown response type.");
+			}
+		}
 	}
 
 	public void Start()
