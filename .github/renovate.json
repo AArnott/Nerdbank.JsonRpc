@@ -16,6 +16,11 @@
 			"groupName": "Microsoft Testing Platform"
 		},
 		{
+			"matchJsonata": ["sharedVariableName='RoslynVersionForAnalyzers'"],
+			"matchUpdateTypes": ["major", "minor"],
+			"enabled": false
+		},
+		{
 			"matchDatasources": ["dotnet-version", "docker"],
 			"matchDepNames": ["dotnet-sdk", "mcr.microsoft.com/dotnet/sdk"],
 			"groupName": "Dockerfile and global.json updates"
