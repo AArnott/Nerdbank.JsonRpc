@@ -13,6 +13,7 @@ namespace Nerdbank.JsonRpc;
 public partial class JsonRpc : IDisposableObservable
 {
 	private const string SpecialCancelMethodName = "$/cancelRequest";
+	private const string ProgressMethodName = "$/progress";
 
 	private readonly ConcurrentDictionary<RequestId, PendingInboundRequest> pendingInboundRequests = [];
 	private readonly TaskCompletionSource<bool> completionSource = new();
@@ -21,6 +22,7 @@ public partial class JsonRpc : IDisposableObservable
 	private readonly ConcurrentDictionary<RequestId, TaskCompletionSource<JsonRpcResponse>> pendingOutboundRequests = new();
 	private readonly Action<object?> cancelOutboundRequestDelegate;
 	private readonly Channel<JsonRpcMessage> channel;
+	private readonly ProgressTracker progressTracker;
 	private Task? readerTask;
 	private int nextRequestId;
 
@@ -30,6 +32,7 @@ public partial class JsonRpc : IDisposableObservable
 		this.cancelOutboundRequestDelegate = this.CancelOutboundRequest;
 
 		this.AddRpcTarget(new SpecialMethodsTarget(this));
+		this.progressTracker = new(this);
 		this.channel = channel;
 	}
 
@@ -148,7 +151,7 @@ public partial class JsonRpc : IDisposableObservable
 		return HelperAsync();
 		async ValueTask<TResult> HelperAsync()
 		{
-			JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
+			JsonRpcResponse response = await this.RequestAsync(request, progressTokens: null, cancellationToken).ConfigureAwait(false);
 			switch (response)
 			{
 				case JsonRpcResult result:
@@ -174,7 +177,7 @@ public partial class JsonRpc : IDisposableObservable
 		return HelperAsync();
 		async ValueTask HelperAsync()
 		{
-			JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
+			JsonRpcResponse response = await this.RequestAsync(request, progressTokens: null, cancellationToken).ConfigureAwait(false);
 			switch (response)
 			{
 				case JsonRpcResult:
@@ -198,6 +201,15 @@ public partial class JsonRpc : IDisposableObservable
 
 		this.PostMessage(request);
 	}
+
+	/// <summary>
+	/// Registers a progress callback and returns the token to send as its RPC argument.
+	/// </summary>
+	/// <typeparam name="T">The type of progress values.</typeparam>
+	/// <param name="progress">The callback to receive progress values.</param>
+	/// <param name="valueShape">The type shape for <typeparamref name="T"/>.</param>
+	/// <returns>The token to serialize in place of <paramref name="progress"/>.</returns>
+	public long RegisterProgress<T>(IProgress<T> progress, ITypeShape<T> valueShape) => this.progressTracker.Register(progress, valueShape);
 
 	/// <summary>
 	/// Sends a notification with arguments that have already been serialized to MessagePack.
@@ -227,6 +239,17 @@ public partial class JsonRpc : IDisposableObservable
 	/// <param name="cancellationToken">A token whose cancellation should be propagated to the remote endpoint.</param>
 	/// <returns>A task that completes when the remote endpoint sends its response.</returns>
 	public ValueTask RequestAsync(string method, RawMessagePack arguments, CancellationToken cancellationToken)
+		=> this.RequestAsync(method, arguments, progressTokens: null, cancellationToken);
+
+	/// <summary>
+	/// Sends a request with pre-serialized arguments and progress tokens to associate with its response.
+	/// </summary>
+	/// <param name="method">The name of the remote method to invoke.</param>
+	/// <param name="arguments">The pre-serialized arguments payload.</param>
+	/// <param name="progressTokens">Progress tokens serialized into <paramref name="arguments"/>.</param>
+	/// <param name="cancellationToken">A token whose cancellation should be propagated to the remote endpoint.</param>
+	/// <returns>A task that completes when the remote endpoint sends its response.</returns>
+	public ValueTask RequestAsync(string method, RawMessagePack arguments, IReadOnlyList<long>? progressTokens, CancellationToken cancellationToken)
 	{
 		JsonRpcRequest request = new()
 		{
@@ -238,7 +261,7 @@ public partial class JsonRpc : IDisposableObservable
 		return HelperAsync();
 		async ValueTask HelperAsync()
 		{
-			JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
+			JsonRpcResponse response = await this.RequestAsync(request, progressTokens, cancellationToken).ConfigureAwait(false);
 			switch (response)
 			{
 				case JsonRpcResult:
@@ -261,6 +284,19 @@ public partial class JsonRpc : IDisposableObservable
 	/// <param name="cancellationToken">A token whose cancellation should be propagated to the remote endpoint.</param>
 	/// <returns>A task that completes with the result returned by the remote endpoint.</returns>
 	public ValueTask<TResult> RequestAsync<TResult>(string method, RawMessagePack arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
+		=> this.RequestAsync(method, arguments, resultShape, progressTokens: null, cancellationToken);
+
+	/// <summary>
+	/// Sends a request with pre-serialized arguments and progress tokens to associate with its response.
+	/// </summary>
+	/// <typeparam name="TResult">The expected result type.</typeparam>
+	/// <param name="method">The name of the remote method to invoke.</param>
+	/// <param name="arguments">The pre-serialized arguments payload.</param>
+	/// <param name="resultShape">The type shape describing <typeparamref name="TResult"/>.</param>
+	/// <param name="progressTokens">Progress tokens serialized into <paramref name="arguments"/>.</param>
+	/// <param name="cancellationToken">A token whose cancellation should be propagated to the remote endpoint.</param>
+	/// <returns>A task that completes with the result returned by the remote endpoint.</returns>
+	public ValueTask<TResult> RequestAsync<TResult>(string method, RawMessagePack arguments, ITypeShape<TResult> resultShape, IReadOnlyList<long>? progressTokens, CancellationToken cancellationToken)
 	{
 		Requires.NotNull(resultShape);
 
@@ -274,7 +310,7 @@ public partial class JsonRpc : IDisposableObservable
 		return HelperAsync();
 		async ValueTask<TResult> HelperAsync()
 		{
-			JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
+			JsonRpcResponse response = await this.RequestAsync(request, progressTokens, cancellationToken).ConfigureAwait(false);
 			switch (response)
 			{
 				case JsonRpcResult result:
@@ -381,6 +417,7 @@ public partial class JsonRpc : IDisposableObservable
 
 	private void ProcessResponse(JsonRpcResponse response)
 	{
+		this.progressTracker.CompleteRequest(response.Id);
 		if (this.pendingOutboundRequests.TryRemove(response.Id, out TaskCompletionSource<JsonRpcResponse>? tcs))
 		{
 			tcs.SetResult(response);
@@ -396,7 +433,15 @@ public partial class JsonRpc : IDisposableObservable
 		switch (message)
 		{
 			case JsonRpcRequest request:
-				this.Dispatch(request);
+				if (request.Method == ProgressMethodName)
+				{
+					this.ProcessProgressNotification(request);
+				}
+				else
+				{
+					this.Dispatch(request);
+				}
+
 				break;
 			case JsonRpcResponse response:
 				this.ProcessResponse(response);
@@ -404,7 +449,7 @@ public partial class JsonRpc : IDisposableObservable
 		}
 	}
 
-	private async ValueTask<JsonRpcResponse> RequestAsync(JsonRpcRequest request, CancellationToken cancellationToken)
+	private async ValueTask<JsonRpcResponse> RequestAsync(JsonRpcRequest request, IReadOnlyList<long>? progressTokens, CancellationToken cancellationToken)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
 		Requires.Argument(request.Id.HasValue, nameof(request), "Request must have an ID for tracking the response.");
@@ -412,12 +457,32 @@ public partial class JsonRpc : IDisposableObservable
 
 		TaskCompletionSource<JsonRpcResponse> responseTcs = new();
 		Assumes.True(this.pendingOutboundRequests.TryAdd(request.Id.Value, responseTcs));
+		this.progressTracker.AssociateWithRequest(request.Id.Value, progressTokens);
 		this.PostMessage(request);
 
 		using (cancellationToken.Register(this.cancelOutboundRequestDelegate, request))
 		{
 			JsonRpcResponse response = await responseTcs.Task.ConfigureAwait(false);
 			return response;
+		}
+	}
+
+	private void ProcessProgressNotification(JsonRpcRequest request)
+	{
+		MessagePackReader reader = new(request.Arguments);
+		switch (reader.NextMessagePackType)
+		{
+			case MessagePackType.Array when reader.ReadArrayHeader() == 2:
+				this.progressTracker.Report(reader.ReadInt64(), reader.ReadRaw(this.Serializer.StartingContext));
+				break;
+			case MessagePackType.Map when reader.ReadMapHeader() == 2 && reader.ReadString() == "token":
+				long token = reader.ReadInt64();
+				if (reader.ReadString() == "value")
+				{
+					this.progressTracker.Report(token, reader.ReadRaw(this.Serializer.StartingContext));
+				}
+
+				break;
 		}
 	}
 

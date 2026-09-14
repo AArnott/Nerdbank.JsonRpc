@@ -259,6 +259,8 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	{
 		StringBuilder builder = new();
 		ImmutableArray<ShapeFieldInfo> shapeFields = GetShapeFields(info.Methods);
+		builder.AppendLine("#nullable enable");
+		builder.AppendLine();
 		if (!info.Symbol.ContainingNamespace.IsGlobalNamespace)
 		{
 			builder.Append("namespace ").Append(info.Symbol.ContainingNamespace.ToDisplayString()).AppendLine(";");
@@ -333,7 +335,8 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		{
 			foreach (IParameterSymbol parameter in method.PayloadParameters)
 			{
-				AddShapeField(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), seenTypeNames, shapeFields);
+				ITypeSymbol shapeType = IsProgress(parameter) ? ((INamedTypeSymbol)parameter.Type).TypeArguments[0] : parameter.Type;
+				AddShapeField(shapeType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), seenTypeNames, shapeFields);
 			}
 
 			if (method.ResultTypeName is not null)
@@ -356,7 +359,8 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	private static string RenderMethod(MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields)
 	{
 		StringBuilder builder = new();
-		string parameters = string.Join(", ", method.Symbol.Parameters.Select(static p => $"{p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} {EscapeIdentifier(p.Name)}"));
+		SymbolDisplayFormat nullableFormat = SymbolDisplayFormat.FullyQualifiedFormat.WithMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+		string parameters = string.Join(", ", method.Symbol.Parameters.Select(p => $"{p.Type.ToDisplayString(nullableFormat)} {EscapeIdentifier(p.Name)}"));
 		string cancellationToken = method.HasCancellationToken ? EscapeIdentifier(method.Symbol.Parameters[^1].Name) : "global::System.Threading.CancellationToken.None";
 
 		builder.Append("\tpublic ").Append(method.Symbol.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append(' ').Append(EscapeIdentifier(method.Symbol.Name)).Append('(').Append(parameters).AppendLine(")");
@@ -364,6 +368,12 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		if (method.Kind is not ProxyMethodKind.Unsupported)
 		{
+			bool hasProgressParameter = method.PayloadParameters.Any(IsProgress);
+			if (hasProgressParameter)
+			{
+				builder.AppendLine("\t\tglobal::System.Collections.Generic.List<long>? progressTokens = null;");
+			}
+
 			builder.AppendLine("\t\tusing global::Nerdbank.Streams.Sequence<byte> argumentsBuffer = new();");
 			builder.AppendLine("\t\tglobal::Nerdbank.MessagePack.MessagePackWriter argumentsWriter = new(argumentsBuffer);");
 			builder.Append("\t\targumentsWriter.Write").Append(method.ArgumentMatch == ProxyArgumentMatch.Positional ? "Array" : "Map").Append("Header(").Append(method.PayloadParameters.Length).AppendLine(");");
@@ -376,9 +386,26 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 					AppendQuoted(builder, parameter.Name).AppendLine(");");
 				}
 
-				builder.Append("\t\tthis.jsonRpc.Serializer.Serialize(ref argumentsWriter, ").Append(EscapeIdentifier(parameter.Name)).Append(", ");
-				builder.Append("this.").Append(GetShapeFieldName(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), shapeFields)).Append(", ");
-				builder.Append(cancellationToken).AppendLine(");");
+				if (IsProgress(parameter))
+				{
+					builder.Append("\t\tif (").Append(EscapeIdentifier(parameter.Name)).AppendLine(" is null)");
+					builder.AppendLine("\t\t{");
+					builder.AppendLine("\t\t\targumentsWriter.WriteNil();");
+					builder.AppendLine("\t\t}");
+					builder.AppendLine("\t\telse");
+					builder.AppendLine("\t\t{");
+					builder.Append("\t\t\tlong progressToken = this.jsonRpc.RegisterProgress(").Append(EscapeIdentifier(parameter.Name)).Append(", this.");
+					builder.Append(GetShapeFieldName(((INamedTypeSymbol)parameter.Type).TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), shapeFields)).AppendLine(");");
+					builder.AppendLine("\t\t\t(progressTokens ??= []).Add(progressToken);");
+					builder.AppendLine("\t\t\targumentsWriter.Write(progressToken);");
+					builder.AppendLine("\t\t}");
+				}
+				else
+				{
+					builder.Append("\t\tthis.jsonRpc.Serializer.Serialize(ref argumentsWriter, ").Append(EscapeIdentifier(parameter.Name)).Append(", ");
+					builder.Append("this.").Append(GetShapeFieldName(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), shapeFields)).Append(", ");
+					builder.Append(cancellationToken).AppendLine(");");
+				}
 			}
 
 			builder.AppendLine("\t\targumentsWriter.Flush();");
@@ -398,23 +425,23 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
 					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
 					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
-					builder.Append(cancellationToken).AppendLine(");");
+					builder.Append(hasProgressParameter ? "progressTokens, " : string.Empty).Append(cancellationToken).AppendLine(");");
 					break;
 				case ProxyMethodKind.TaskOfT:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
 					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
 					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
-					builder.Append(cancellationToken).AppendLine(").AsTask();");
+					builder.Append(hasProgressParameter ? "progressTokens, " : string.Empty).Append(cancellationToken).AppendLine(").AsTask();");
 					break;
 				case ProxyMethodKind.ValueTask:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
 					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
-					builder.Append(cancellationToken).AppendLine(");");
+					builder.Append(hasProgressParameter ? "progressTokens, " : string.Empty).Append(cancellationToken).AppendLine(");");
 					break;
 				case ProxyMethodKind.Task:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
 					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
-					builder.Append(cancellationToken).AppendLine(").AsTask();");
+					builder.Append(hasProgressParameter ? "progressTokens, " : string.Empty).Append(cancellationToken).AppendLine(").AsTask();");
 					break;
 				case ProxyMethodKind.Notification:
 					builder.Append("\t\tthis.jsonRpc.Notify(");
@@ -448,6 +475,9 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		throw new InvalidOperationException($"No cached shape field found for type '{typeName}'.");
 	}
+
+	private static bool IsProgress(IParameterSymbol parameter)
+		=> parameter.Type is INamedTypeSymbol { IsGenericType: true } namedType && namedType.ConstructedFrom.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.IProgress<T>";
 
 	private static StringBuilder AppendQuoted(StringBuilder builder, string value)
 		=> builder.Append('"').Append(value.Replace("\\", "\\\\").Replace("\"", "\\\"")).Append('"');

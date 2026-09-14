@@ -11,6 +11,8 @@ internal partial interface ICalculator
 
 	Task<int> MultiplyAsync(int a, int b, CancellationToken cancellationToken);
 
+	Task<int> CountAsync(IProgress<int>? progress, CancellationToken cancellationToken);
+
 	ValueTask PingAsync(CancellationToken cancellationToken);
 
 	Task PingTaskAsync(CancellationToken cancellationToken);
@@ -37,6 +39,8 @@ internal sealed class Calculator : ICalculator
 	public ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken) => new(a + b);
 
 	public Task<int> MultiplyAsync(int a, int b, CancellationToken cancellationToken) => Task.FromResult(a * b);
+
+	public Task<int> CountAsync(IProgress<int>? progress, CancellationToken cancellationToken) => Task.FromResult(0);
 
 	public ValueTask PingAsync(CancellationToken cancellationToken)
 	{

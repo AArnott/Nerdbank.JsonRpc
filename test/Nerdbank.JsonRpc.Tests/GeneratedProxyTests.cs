@@ -163,6 +163,44 @@ public class GeneratedProxyTests
 	}
 
 	[Fact]
+	public async Task GeneratedProxy_ReportsProgress()
+	{
+		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(transport);
+		clientRpc.Start();
+		ICalculator client = clientRpc.Attach<ICalculator>();
+		List<int> reports = [];
+		TaskCompletionSource<int> reportReceived = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		Task<int> resultTask = client.CountAsync(new Progress<int>(value =>
+		{
+			reports.Add(value);
+			reportReceived.TrySetResult(value);
+		}), cts.Token);
+		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(cts.Token));
+		Assert.Equal(nameof(ICalculator.CountAsync), request.Method);
+		Assert.NotNull(request.Id);
+
+		MessagePackReader requestReader = new(request.Arguments);
+		Assert.Equal(MessagePackType.Array, requestReader.NextMessagePackType);
+		Assert.Equal(1, requestReader.ReadArrayHeader());
+		long token = requestReader.ReadInt64();
+
+		await remote.Writer.WriteAsync(this.CreateProgressNotification(token, 2, clientRpc, cts.Token), cts.Token);
+		await reportReceived.Task.WaitAsync(cts.Token);
+		Assert.Equal([2], reports);
+
+		JsonRpcResult response = new()
+		{
+			Id = request.Id.Value,
+			Result = (RawMessagePack)clientRpc.Serializer.Serialize(3, ShapeProvider.Default.Int32, cts.Token),
+		};
+		await remote.Writer.WriteAsync(response, cts.Token);
+		Assert.Equal(3, await resultTask.WithCancellation(cts.Token));
+	}
+
+	[Fact]
 	public void GeneratedProxy_AttachRequiresGeneratedProxyMetadata()
 	{
 		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
@@ -180,5 +218,26 @@ public class GeneratedProxyTests
 
 		ArgumentException ex = Assert.Throws<ArgumentException>(() => clientRpc.Attach(typeof(string)));
 		Assert.Contains("interface", ex.Message, StringComparison.OrdinalIgnoreCase);
+	}
+
+	private JsonRpcRequest CreateProgressNotification(long token, int value, JsonRpc jsonRpc, CancellationToken cancellationToken)
+	{
+		using Sequence<byte> buffer = new();
+		MessagePackWriter writer = new(buffer);
+		writer.WriteMapHeader(2);
+		writer.Write("token");
+		writer.Write(token);
+		writer.Write("value");
+		jsonRpc.Serializer.Serialize(ref writer, value, ShapeProvider.Default.Int32, cancellationToken);
+		writer.Flush();
+		byte[] serializedArguments = new byte[checked((int)buffer.AsReadOnlySequence.Length)];
+		int copiedLength = 0;
+		foreach (ReadOnlyMemory<byte> segment in buffer.AsReadOnlySequence)
+		{
+			segment.Span.CopyTo(serializedArguments.AsSpan(copiedLength));
+			copiedLength += segment.Length;
+		}
+
+		return new JsonRpcRequest { Method = "$/progress", Arguments = (RawMessagePack)serializedArguments };
 	}
 }
