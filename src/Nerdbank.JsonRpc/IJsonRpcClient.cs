@@ -1,0 +1,52 @@
+// Copyright (c) Andrew Arnott. All rights reserved.
+// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+
+using System.ComponentModel;
+using Nerdbank.MessagePack;
+
+namespace Nerdbank.JsonRpc;
+
+/// <summary>
+/// Provides the client operations used by generated JSON-RPC proxy implementations.
+/// </summary>
+/// <remarks>
+/// This interface is public so source generated code in consuming assemblies can reference it.
+/// Most application code should use <see cref="JsonRpc"/> or <see cref="JsonRpcBatch"/> directly.
+/// </remarks>
+[EditorBrowsable(EditorBrowsableState.Advanced)]
+public interface IJsonRpcClient
+{
+	/// <summary>
+	/// Gets the serializer used to encode arguments and decode results.
+	/// </summary>
+	MessagePackSerializer Serializer { get; }
+
+	/// <summary>
+	/// Sends a request with arguments that have already been serialized to MessagePack.
+	/// </summary>
+	/// <param name="method">The name of the remote method to invoke.</param>
+	/// <param name="arguments">The pre-serialized arguments payload.</param>
+	/// <param name="cancellationToken">A token whose cancellation should be propagated to the remote endpoint.</param>
+	/// <returns>A task that completes when the remote endpoint sends its response.</returns>
+	ValueTask RequestAsync(string method, RawMessagePack arguments, CancellationToken cancellationToken);
+
+	/// <summary>
+	/// Sends a request with arguments that have already been serialized to MessagePack.
+	/// </summary>
+	/// <typeparam name="TResult">The expected result type.</typeparam>
+	/// <param name="method">The name of the remote method to invoke.</param>
+	/// <param name="arguments">The pre-serialized arguments payload.</param>
+	/// <param name="resultShape">The type shape describing <typeparamref name="TResult"/>.</param>
+	/// <param name="cancellationToken">A token whose cancellation should be propagated to the remote endpoint.</param>
+	/// <returns>A task that completes with the result returned by the remote endpoint.</returns>
+	ValueTask<TResult> RequestAsync<TResult>(string method, RawMessagePack arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken);
+
+	/// <summary>
+	/// Sends a notification with arguments that have already been serialized to MessagePack.
+	/// </summary>
+	/// <param name="method">The name of the remote method to invoke.</param>
+	/// <param name="arguments">The pre-serialized arguments payload.</param>
+	/// <param name="cancellationToken">A token whose cancellation is observed before the notification is posted.</param>
+	/// <returns>A task that completes when the notification has been accepted by the outbound channel.</returns>
+	ValueTask NotifyAsync(string method, RawMessagePack arguments, CancellationToken cancellationToken);
+}

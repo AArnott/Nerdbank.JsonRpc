@@ -36,3 +36,11 @@ The current prototype supports `ValueTask<T>`, `Task<T>`, `ValueTask`, `Task`, a
 Positional argument packing is the default. To request named packing for an entire contract, set the attribute property explicitly:
 
 [!code-csharp[](../../samples/cs/GettingStarted.cs#named-arguments)]
+
+### Sending a batch
+
+Use `CreateBatch()` when several calls should be sent as one JSON-RPC payload. Request tasks are created immediately and complete independently after `SendAsync` queues the batch and matching responses arrive.
+
+[!code-csharp[](../../samples/cs/GettingStarted.cs#sending-batch)]
+
+A batch is one-shot: after `SendAsync`, additional calls and duplicate sends fail. Calls are independent rather than transactional, and responses are matched by request ID rather than array position.

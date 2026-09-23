@@ -134,7 +134,7 @@ public partial class JsonRpcClientTests : TestBase
 	[Fact]
 	public async Task Notify()
 	{
-		this.jsonRpc.Notify("Add", new AddNamedArguments { A = 2, B = 3 }, this.TimeoutToken);
+		await this.jsonRpc.NotifyAsync("Add", new AddNamedArguments { A = 2, B = 3 }, this.TimeoutToken);
 		JsonRpcRequest requestMessage = Assert.IsAssignableFrom<JsonRpcRequest>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Null(requestMessage.Id);
 		Assert.Equal("Add", requestMessage.Method);
@@ -142,12 +142,12 @@ public partial class JsonRpcClientTests : TestBase
 	}
 
 	[Fact]
-	public void NotifyWithRawArgumentsHonorsCancellation()
+	public async Task NotifyWithRawArgumentsHonorsCancellation()
 	{
 		using CancellationTokenSource cts = new();
 		cts.Cancel();
 
-		Assert.Throws<OperationCanceledException>(() => this.jsonRpc.Notify("Add", NilMsgPack, cts.Token));
+		await Assert.ThrowsAsync<OperationCanceledException>(() => this.jsonRpc.NotifyAsync("Add", NilMsgPack, cts.Token).AsTask());
 		Assert.False(this.channel.Reader.TryRead(out _));
 	}
 

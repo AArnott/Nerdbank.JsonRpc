@@ -273,7 +273,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		builder.Append("internal sealed class ").Append(info.ProxyName).Append(" : ").Append(info.InterfaceName).AppendLine();
 		builder.AppendLine("{");
-		builder.AppendLine("\tprivate readonly global::Nerdbank.JsonRpc.JsonRpc jsonRpc;");
+		builder.AppendLine("\tprivate readonly global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc;");
 		builder.AppendLine();
 
 		foreach (ShapeFieldInfo shapeField in shapeFields)
@@ -290,7 +290,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.AppendLine();
 		}
 
-		builder.Append("\tinternal ").Append(info.ProxyName).Append("(global::Nerdbank.JsonRpc.JsonRpc jsonRpc)").AppendLine();
+		builder.Append("\tinternal ").Append(info.ProxyName).Append("(global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc)").AppendLine();
 		builder.AppendLine("\t{");
 		builder.AppendLine("\t\tthis.jsonRpc = jsonRpc;");
 		if (shapeFields.Length > 0)
@@ -417,9 +417,9 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 					builder.Append(cancellationToken).AppendLine(").AsTask();");
 					break;
 				case ProxyMethodKind.Notification:
-					builder.Append("\t\tthis.jsonRpc.Notify(");
+					builder.Append("\t\tthis.jsonRpc.NotifyAsync(");
 					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
-					builder.Append(cancellationToken).AppendLine(");");
+					builder.Append(cancellationToken).AppendLine(").Preserve();");
 					builder.AppendLine("\t\treturn;");
 					break;
 			}

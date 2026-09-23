@@ -5,6 +5,7 @@ using System.Threading.Channels;
 using Nerdbank.JsonRpc;
 using PolyType;
 using static GettingStarted.CompilationSupport;
+using IBatchedCalculator = GettingStarted.GeneratedClientProxy.ICalculator;
 
 namespace GettingStarted.ServerSetup
 {
@@ -90,6 +91,28 @@ namespace GettingStarted.NamedArguments
     #endregion
 }
 
+namespace GettingStarted.SendingBatch
+{
+    public static class Example
+    {
+        public static async Task RunAsync()
+        {
+            #region sending-batch
+            JsonRpcBatch batch = rpc.CreateBatch();
+            IBatchedCalculator batchedClient = batch.Attach<IBatchedCalculator>();
+
+            ValueTask<int> first = batchedClient.AddAsync(1, 2, CancellationToken.None);
+            ValueTask<int> second = batchedClient.AddAsync(3, 4, CancellationToken.None);
+
+            await batch.SendAsync(CancellationToken.None);
+
+            int firstSum = await first;
+            int secondSum = await second;
+            #endregion
+        }
+    }
+}
+
 namespace GettingStarted
 {
     internal static class CompilationSupport
@@ -98,7 +121,3 @@ namespace GettingStarted
         internal static JsonRpc rpc = null!;
     }
 }
-
-
-
-

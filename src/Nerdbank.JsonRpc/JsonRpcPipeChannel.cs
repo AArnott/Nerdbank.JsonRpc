@@ -71,6 +71,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 			JsonRpcRequest request => Serializer.SerializeAsync(writer, request, cancellationToken),
 			JsonRpcResult result => Serializer.SerializeAsync(writer, result, cancellationToken),
 			JsonRpcError error => Serializer.SerializeAsync(writer, error, cancellationToken),
+			JsonRpcMessageBatch batch => Serializer.SerializeAsync<JsonRpcMessage>(writer, batch, cancellationToken),
 			_ => throw new ArgumentException($"Unrecognized JSON-RPC message type: {message.GetType().FullName}", nameof(message)),
 		};
 	}
@@ -106,8 +107,15 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 
 	private static string FormatLoggedMessage(JsonRpcMessage message, Exception? exception)
 	{
-		byte[] msgpack = Serializer.Serialize(message, CancellationToken.None);
-		return Serializer.ConvertToJson(msgpack);
+		try
+		{
+			byte[] msgpack = Serializer.Serialize(message, CancellationToken.None);
+			return Serializer.ConvertToJson(msgpack);
+		}
+		catch (ArgumentException) when (message is JsonRpcInvalidMessage or JsonRpcMessageBatch)
+		{
+			return message is JsonRpcInvalidMessage invalid ? $"Invalid JSON-RPC message: {invalid.Message}" : "JSON-RPC batch contains an invalid message.";
+		}
 	}
 
 	private async Task HandleInboundMessagesAsync(PipeReader reader, CancellationToken cancellationToken)
