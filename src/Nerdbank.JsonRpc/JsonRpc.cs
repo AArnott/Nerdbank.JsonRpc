@@ -436,6 +436,15 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 			return;
 		}
 
+		foreach (JsonRpcMessage message in messages)
+		{
+			if (message is JsonRpcMessageBatch)
+			{
+				this.PostMessage(this.CreateProtocolError(new JsonRpcInvalidMessage(JsonRpcErrorCode.InvalidRequest, "A JSON-RPC batch entry must be a message object, not another batch.")));
+				return;
+			}
+		}
+
 		List<Task<JsonRpcResponse?>> requestTasks = [];
 		List<JsonRpcResponse> immediateResponses = [];
 
@@ -451,9 +460,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 					break;
 				case JsonRpcInvalidMessage invalid:
 					immediateResponses.Add(this.CreateProtocolError(invalid));
-					break;
-				case JsonRpcMessageBatch:
-					immediateResponses.Add(this.CreateProtocolError(new JsonRpcInvalidMessage(JsonRpcErrorCode.InvalidRequest, "A JSON-RPC batch entry must be a message object, not another batch.")));
 					break;
 			}
 		}

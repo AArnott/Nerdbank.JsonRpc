@@ -44,8 +44,7 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 
 		await alice.Writer.WriteAsync(sent, this.TimeoutToken);
 
-		JsonRpcMessageBatch recv = Assert.IsAssignableFrom<JsonRpcMessageBatch>(await bob.Reader.ReadAsync(this.TimeoutToken));
-		JsonRpcMessage invalid = Assert.Single(recv.Messages);
+		JsonRpcMessage invalid = await bob.Reader.ReadAsync(this.TimeoutToken);
 		Assert.Equal("JsonRpcInvalidMessage", invalid.GetType().Name);
 	}
 

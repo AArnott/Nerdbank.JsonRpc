@@ -201,8 +201,7 @@ public partial class JsonRpcBatchTests : TestBase
 			]);
 		await channel.Writer.WriteAsync(requestBatch, this.TimeoutToken);
 
-		JsonRpcMessageBatch responseBatch = Assert.IsType<JsonRpcMessageBatch>(await channel.Reader.ReadAsync(this.TimeoutToken));
-		JsonRpcError error = Assert.IsType<JsonRpcError>(Assert.Single(responseBatch.Messages));
+		JsonRpcError error = Assert.IsType<JsonRpcError>(await channel.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(JsonRpcErrorCode.InvalidRequest, error.Error.Code);
 	}
 
