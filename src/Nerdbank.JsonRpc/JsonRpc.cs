@@ -223,19 +223,12 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		}
 
 		ConstructorInfo? constructor = proxyType.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null, types: [typeof(IJsonRpcClient)], modifiers: null);
-		object[] constructorArguments = [client];
-		if (constructor is null && client is JsonRpc jsonRpc)
-		{
-			constructor = proxyType.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null, types: [typeof(JsonRpc)], modifiers: null);
-			constructorArguments = [jsonRpc];
-		}
-
 		if (constructor is null)
 		{
 			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not have a constructor that accepts an IJsonRpcClient instance.");
 		}
 
-		return constructor.Invoke(constructorArguments);
+		return constructor.Invoke([client]);
 	}
 
 	internal RequestId GetNextRequestId() => Interlocked.Increment(ref this.nextRequestId);

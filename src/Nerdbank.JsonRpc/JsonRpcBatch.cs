@@ -19,6 +19,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 	private readonly List<Entry> entries = [];
 	private readonly object syncObject = new();
 	private bool sent;
+	private bool payloadQueued;
 	private bool disposed;
 
 	internal JsonRpcBatch(JsonRpc owner)
@@ -271,6 +272,18 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 
 			await this.owner.PostMessageAsync(new JsonRpcMessageBatch([.. messages]), cancellationToken).ConfigureAwait(false);
 
+			List<Entry> deferredCancellationEntries;
+			lock (this.syncObject)
+			{
+				this.payloadQueued = true;
+				deferredCancellationEntries = this.GetCancellationEntries(snapshot, markCanceled: false);
+			}
+
+			if (deferredCancellationEntries.Count > 0)
+			{
+				_ = this.SendCancellationBatchAsync(deferredCancellationEntries, throwOnFailure: false).AsTask();
+			}
+
 			foreach (Entry entry in snapshot)
 			{
 				if (entry.ResponseCompletionSource is null)
@@ -341,21 +354,13 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 			return;
 		}
 
-		List<JsonRpcMessage> cancellationRequests = [];
-		foreach (Entry entry in snapshot)
-		{
-			if (entry.TryMarkCancelingSentRequest())
-			{
-				cancellationRequests.Add(this.owner.CreateCancellationNotification(entry.Request, CancellationToken.None));
-			}
-		}
-
-		if (cancellationRequests.Count == 0)
+		List<Entry> cancellationEntries = this.GetCancellationEntries(snapshot, markCanceled: true);
+		if (cancellationEntries.Count == 0)
 		{
 			return;
 		}
 
-		await this.owner.PostMessageAsync(new JsonRpcMessageBatch([.. cancellationRequests])).ConfigureAwait(false);
+		await this.SendCancellationBatchAsync(cancellationEntries, throwOnFailure: true).ConfigureAwait(false);
 
 		return;
 	}
@@ -457,6 +462,46 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 		Verify.Operation(!this.sent, "This JSON-RPC batch has already been sent.");
 	}
 
+	private List<Entry> GetCancellationEntries(List<Entry> entries, bool markCanceled)
+	{
+		List<Entry> cancellationEntries = [];
+		foreach (Entry entry in entries)
+		{
+			if (entry.TryMarkCancelingSentRequest(markCanceled))
+			{
+				cancellationEntries.Add(entry);
+			}
+		}
+
+		return cancellationEntries;
+	}
+
+	private async ValueTask SendCancellationBatchAsync(List<Entry> cancellationEntries, bool throwOnFailure)
+	{
+		List<JsonRpcMessage> cancellationRequests = [];
+		foreach (Entry entry in cancellationEntries)
+		{
+			cancellationRequests.Add(this.owner.CreateCancellationNotification(entry.Request, CancellationToken.None));
+		}
+
+		try
+		{
+			await this.owner.PostMessageAsync(new JsonRpcMessageBatch([.. cancellationRequests])).ConfigureAwait(false);
+		}
+		catch (Exception ex)
+		{
+			foreach (Entry entry in cancellationEntries)
+			{
+				entry.Fault(ex);
+			}
+
+			if (throwOnFailure)
+			{
+				throw;
+			}
+		}
+	}
+
 	private void OnEntryCanceled(Entry entry)
 	{
 		if (entry.MarkCanceledBeforeSend())
@@ -464,10 +509,15 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 			return;
 		}
 
-		if (entry.ResponseCompletionSource is not null)
+		lock (this.syncObject)
 		{
-			this.owner.CancelOutboundRequest(entry.Request);
+			if (!this.payloadQueued || !entry.TryMarkCancelingSentRequest(markCanceled: false))
+			{
+				return;
+			}
 		}
+
+		this.owner.CancelOutboundRequest(entry.Request);
 	}
 
 	private sealed class Entry
@@ -477,6 +527,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 		private readonly object syncObject = new();
 		private bool sent;
 		private bool canceled;
+		private bool cancellationSubmitted;
 
 		internal Entry(
 			JsonRpcBatch owner,
@@ -553,18 +604,39 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 			return true;
 		}
 
-		internal bool TryMarkCancelingSentRequest()
+		internal bool TryMarkCancelingSentRequest(bool markCanceled)
 		{
 			lock (this.syncObject)
 			{
-				if (this.ResponseCompletionSource is null || !this.sent || this.ResponseCompletionSource.Task.IsCompleted || this.canceled)
+				if (this.ResponseCompletionSource is null || !this.sent || this.ResponseCompletionSource.Task.IsCompleted || this.cancellationSubmitted)
 				{
 					return false;
 				}
 
-				this.canceled = true;
+				if (!this.canceled)
+				{
+					if (!markCanceled)
+					{
+						return false;
+					}
+
+					this.canceled = true;
+				}
+
+				this.cancellationSubmitted = true;
 				return true;
 			}
+		}
+
+		internal void Fault(Exception ex)
+		{
+			if (this.Request.Id.HasValue)
+			{
+				this.owner.owner.TryUnregisterOutboundRequest(this.Request.Id.Value);
+			}
+
+			this.ResponseCompletionSource?.TrySetException(ex);
+			this.Dispose();
 		}
 
 		internal void Dispose()

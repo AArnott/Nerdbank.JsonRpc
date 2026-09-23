@@ -69,18 +69,6 @@ public class GeneratedProxyTests
 	}
 
 	[Fact]
-	public void AttachSupportsLegacyJsonRpcConstructorProxy()
-	{
-		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
-		JsonRpc clientRpc = new(transport);
-		clientRpc.Start();
-
-		LegacyJsonRpcConstructorProxy client = Assert.IsType<LegacyJsonRpcConstructorProxy>(clientRpc.Attach<ILegacyJsonRpcConstructorProxy>());
-
-		Assert.Same(clientRpc, client.JsonRpc);
-	}
-
-	[Fact]
 	public async Task GeneratedProxy_CanPackArgumentsPositionally()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();

@@ -151,6 +151,19 @@ public partial class JsonRpcBatchTests : TestBase
 	}
 
 	[Fact]
+	public async Task ClientBatch_CancelAllWriteFailureFaultsPendingRequests()
+	{
+		JsonRpc jsonRpc = new(new FailingSecondWriteChannel());
+		jsonRpc.Start();
+		JsonRpcBatch batch = jsonRpc.CreateBatch();
+		Task requestTask = batch.RequestAsync("LongRunning", NilMsgPack, this.TimeoutToken).AsTask();
+		await batch.SendAsync(this.TimeoutToken);
+
+		await Assert.ThrowsAsync<InvalidOperationException>(() => batch.CancelAllAsync().AsTask());
+		await Assert.ThrowsAsync<InvalidOperationException>(() => requestTask.WithCancellation(this.TimeoutToken));
+	}
+
+	[Fact]
 	public async Task ClientBatch_CancellationAfterSendUsesCancelRequest()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
@@ -302,4 +315,32 @@ public partial class JsonRpcBatchTests : TestBase
 
 	[GenerateShapeFor<int>]
 	private partial class Witness;
+
+	private sealed class FailingSecondWriteChannel : Channel<JsonRpcMessage>
+	{
+		internal FailingSecondWriteChannel()
+		{
+			Channel<JsonRpcMessage> inbound = Channel.CreateUnbounded<JsonRpcMessage>();
+			this.Reader = inbound.Reader;
+			this.Writer = new FailingSecondWriteChannelWriter();
+		}
+	}
+
+	private sealed class FailingSecondWriteChannelWriter : ChannelWriter<JsonRpcMessage>
+	{
+		private int writeCount;
+
+		public override bool TryComplete(Exception? error = null) => true;
+
+		public override bool TryWrite(JsonRpcMessage item) => Interlocked.Increment(ref this.writeCount) == 1;
+
+		public override ValueTask<bool> WaitToWriteAsync(CancellationToken cancellationToken = default) => new(true);
+
+		public override ValueTask WriteAsync(JsonRpcMessage item, CancellationToken cancellationToken = default)
+		{
+			return Interlocked.Increment(ref this.writeCount) == 1
+				? default
+				: new ValueTask(Task.FromException(new InvalidOperationException("The outbound channel is closed.")));
+		}
+	}
 }
