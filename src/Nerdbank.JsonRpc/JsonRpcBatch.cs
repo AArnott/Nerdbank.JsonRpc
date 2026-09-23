@@ -528,7 +528,19 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 			}
 		}
 
-		this.owner.CancelOutboundRequest(entry.Request);
+		_ = this.SendCancellationNotificationAsync(entry).AsTask();
+	}
+
+	private async ValueTask SendCancellationNotificationAsync(Entry entry)
+	{
+		try
+		{
+			await this.owner.PostMessageAsync(this.owner.CreateCancellationNotification(entry.Request, CancellationToken.None)).ConfigureAwait(false);
+		}
+		catch (Exception ex)
+		{
+			entry.Fault(ex);
+		}
 	}
 
 	private sealed class Entry
@@ -604,11 +616,13 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 					return true;
 				}
 
-				this.canceled = true;
 				if (this.sent)
 				{
+					this.canceled = true;
 					return false;
 				}
+
+				this.canceled = true;
 			}
 
 			this.ResponseCompletionSource?.TrySetCanceled(CancellationToken.None);

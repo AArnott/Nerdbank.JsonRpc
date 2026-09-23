@@ -192,6 +192,21 @@ public partial class JsonRpcBatchTests : TestBase
 	}
 
 	[Fact]
+	public async Task ClientBatch_CancellationAfterSendWriteFailureFaultsPendingRequest()
+	{
+		JsonRpc jsonRpc = new(new FailingSecondWriteChannel());
+		jsonRpc.Start();
+		JsonRpcBatch batch = jsonRpc.CreateBatch();
+		using CancellationTokenSource cts = new();
+		Task requestTask = batch.RequestAsync("LongRunning", NilMsgPack, cts.Token).AsTask();
+		await batch.SendAsync(this.TimeoutToken);
+
+		cts.Cancel();
+
+		await Assert.ThrowsAsync<InvalidOperationException>(() => requestTask.WithCancellation(this.TimeoutToken));
+	}
+
+	[Fact]
 	public async Task ServerBatch_EmptyBatchReturnsInvalidRequest()
 	{
 		(_, Channel<JsonRpcMessage> channel) = CreateStartedServerPair();
