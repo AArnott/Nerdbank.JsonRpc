@@ -96,6 +96,20 @@ public partial class JsonRpcBatchTests : TestBase
 	}
 
 	[Fact]
+	public async Task ClientBatch_SendBeforeStartThrows()
+	{
+		(_, Channel<JsonRpcMessage> jsonRpcChannel) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc jsonRpc = new(jsonRpcChannel);
+		JsonRpcBatch batch = jsonRpc.CreateBatch();
+		Task requestTask = batch.RequestAsync("Ping", NilMsgPack, this.TimeoutToken).AsTask();
+
+		InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() => batch.SendAsync(this.TimeoutToken).AsTask());
+
+		Assert.Contains(JsonRpcState.NotStarted.ToString(), ex.Message, StringComparison.Ordinal);
+		await Assert.ThrowsAsync<InvalidOperationException>(() => requestTask.WithCancellation(this.TimeoutToken));
+	}
+
+	[Fact]
 	public async Task ClientBatch_CancelAllAfterSendUsesBatchedCancelRequests()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
@@ -171,6 +185,24 @@ public partial class JsonRpcBatchTests : TestBase
 		await channel.Writer.WriteAsync(new JsonRpcMessageBatch([]), this.TimeoutToken);
 
 		JsonRpcError error = Assert.IsType<JsonRpcError>(await channel.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal(JsonRpcErrorCode.InvalidRequest, error.Error.Code);
+	}
+
+	[Fact]
+	public async Task ServerBatch_NestedBatchEntryReturnsInvalidRequest()
+	{
+		(_, Channel<JsonRpcMessage> channel) = CreateStartedServerPair();
+		JsonRpcMessageBatch requestBatch = new(
+			[
+				new JsonRpcMessageBatch(
+					[
+						new JsonRpcRequest { Id = 1, Method = nameof(MockServer.GetMagicNumber) },
+					]),
+			]);
+		await channel.Writer.WriteAsync(requestBatch, this.TimeoutToken);
+
+		JsonRpcMessageBatch responseBatch = Assert.IsType<JsonRpcMessageBatch>(await channel.Reader.ReadAsync(this.TimeoutToken));
+		JsonRpcError error = Assert.IsType<JsonRpcError>(Assert.Single(responseBatch.Messages));
 		Assert.Equal(JsonRpcErrorCode.InvalidRequest, error.Error.Code);
 	}
 

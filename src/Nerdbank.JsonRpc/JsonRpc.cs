@@ -110,6 +110,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		where TResultProvider : IShapeable<TResult>
 		=> this.RequestAsync(method, arguments, TArg.GetTypeShape(), TResultProvider.GetTypeShape(), cancellationToken);
 
+	public void Notify<TArg>(string method, in TArg arguments, CancellationToken cancellationToken)
+		where TArg : IShapeable<TArg> => this.Notify(method, arguments, TArg.GetTypeShape(), cancellationToken);
+
 	public ValueTask NotifyAsync<TArg>(string method, in TArg arguments, CancellationToken cancellationToken)
 		where TArg : IShapeable<TArg> => this.NotifyAsync(method, arguments, TArg.GetTypeShape(), cancellationToken);
 #endif
@@ -136,6 +139,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		};
 
 		return this.AwaitVoidResponseAsync(this.RequestAsync(request, cancellationToken));
+	}
+
+	public void Notify<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
+	{
+		this.FaultOnFailure(this.NotifyAsync(method, arguments, argShape, cancellationToken).AsTask());
 	}
 
 	public ValueTask NotifyAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
@@ -176,6 +184,17 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		};
 
 		return this.AwaitTypedResponseAsync(request, resultShape, this.RequestAsync(request, cancellationToken), cancellationToken);
+	}
+
+	/// <summary>
+	/// Sends a notification with arguments that have already been serialized to MessagePack.
+	/// </summary>
+	/// <param name="method">The name of the remote method to invoke.</param>
+	/// <param name="arguments">The pre-serialized arguments payload.</param>
+	/// <param name="cancellationToken">A token whose cancellation is observed before the notification is posted.</param>
+	public void Notify(string method, RawMessagePack arguments, CancellationToken cancellationToken)
+	{
+		this.FaultOnFailure(this.NotifyAsync(method, arguments, cancellationToken).AsTask());
 	}
 
 	/// <inheritdoc/>
@@ -223,12 +242,19 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		}
 
 		ConstructorInfo? constructor = proxyType.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null, types: [typeof(IJsonRpcClient)], modifiers: null);
+		object[] constructorArguments = [client];
+		if (constructor is null && client is JsonRpc jsonRpc)
+		{
+			constructor = proxyType.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null, types: [typeof(JsonRpc)], modifiers: null);
+			constructorArguments = [jsonRpc];
+		}
+
 		if (constructor is null)
 		{
 			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not have a constructor that accepts an IJsonRpcClient instance.");
 		}
 
-		return constructor.Invoke([client]);
+		return constructor.Invoke(constructorArguments);
 	}
 
 	internal RequestId GetNextRequestId() => Interlocked.Increment(ref this.nextRequestId);
@@ -425,6 +451,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 					break;
 				case JsonRpcInvalidMessage invalid:
 					immediateResponses.Add(this.CreateProtocolError(invalid));
+					break;
+				case JsonRpcMessageBatch:
+					immediateResponses.Add(this.CreateProtocolError(new JsonRpcInvalidMessage(JsonRpcErrorCode.InvalidRequest, "A JSON-RPC batch entry must be a message object, not another batch.")));
 					break;
 			}
 		}

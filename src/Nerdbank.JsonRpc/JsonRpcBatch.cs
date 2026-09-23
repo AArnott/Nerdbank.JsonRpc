@@ -233,20 +233,21 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 	public async ValueTask SendAsync(CancellationToken cancellationToken = default)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
-		List<Entry> snapshot;
-		lock (this.syncObject)
-		{
-			this.ThrowIfDisposedOrSent();
-			this.sent = true;
-			snapshot = [.. this.entries];
-		}
-
+		List<Entry> snapshot = [];
 		List<JsonRpcMessage> messages = [];
 		try
 		{
+			lock (this.syncObject)
+			{
+				this.ThrowIfDisposedOrSent();
+				this.sent = true;
+				snapshot = [.. this.entries];
+			}
+
+			Verify.Operation(this.owner.State == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.owner.State}.");
 			foreach (Entry entry in snapshot)
 			{
-				if (entry.IsCanceled)
+				if (!entry.TryMarkSent())
 				{
 					entry.CancelUnsent();
 					continue;
@@ -260,8 +261,6 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 					{
 						throw new InvalidOperationException($"A request with ID {entry.Request.Id.Value} is already pending.");
 					}
-
-					entry.MarkSent();
 				}
 			}
 
@@ -475,8 +474,9 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 	{
 		private readonly JsonRpcBatch owner;
 		private readonly CancellationTokenRegistration cancellationRegistration;
-		private int sent;
-		private int canceled;
+		private readonly object syncObject = new();
+		private bool sent;
+		private bool canceled;
 
 		internal Entry(
 			JsonRpcBatch owner,
@@ -489,7 +489,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 			this.ResponseCompletionSource = responseCompletionSource;
 			if (cancellationToken.IsCancellationRequested)
 			{
-				this.canceled = 1;
+				this.canceled = true;
 				this.ResponseCompletionSource?.TrySetCanceled(CancellationToken.None);
 			}
 			else
@@ -508,42 +508,63 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 
 		internal TaskCompletionSource<JsonRpcResponse>? ResponseCompletionSource { get; }
 
-		internal bool IsCanceled => Volatile.Read(ref this.canceled) != 0;
-
 		internal void CancelUnsent()
 		{
-			Interlocked.Exchange(ref this.canceled, 1);
+			lock (this.syncObject)
+			{
+				this.canceled = true;
+			}
+
 			this.ResponseCompletionSource?.TrySetCanceled(CancellationToken.None);
 			this.Dispose();
 		}
 
-		internal void MarkSent()
+		internal bool TryMarkSent()
 		{
-			Volatile.Write(ref this.sent, 1);
+			lock (this.syncObject)
+			{
+				if (this.canceled)
+				{
+					return false;
+				}
+
+				this.sent = true;
+				return true;
+			}
 		}
 
 		internal bool MarkCanceledBeforeSend()
 		{
-			if (Interlocked.Exchange(ref this.canceled, 1) != 0)
+			lock (this.syncObject)
 			{
-				return true;
+				if (this.canceled)
+				{
+					return true;
+				}
+
+				this.canceled = true;
+				if (this.sent)
+				{
+					return false;
+				}
 			}
 
-			if (Volatile.Read(ref this.sent) == 0)
-			{
-				this.ResponseCompletionSource?.TrySetCanceled(CancellationToken.None);
-				return true;
-			}
-
-			return false;
+			this.ResponseCompletionSource?.TrySetCanceled(CancellationToken.None);
+			return true;
 		}
 
 		internal bool TryMarkCancelingSentRequest()
 		{
-			return this.ResponseCompletionSource is not null
-				&& Volatile.Read(ref this.sent) != 0
-				&& !this.ResponseCompletionSource.Task.IsCompleted
-				&& Interlocked.Exchange(ref this.canceled, 1) == 0;
+			lock (this.syncObject)
+			{
+				if (this.ResponseCompletionSource is null || !this.sent || this.ResponseCompletionSource.Task.IsCompleted || this.canceled)
+				{
+					return false;
+				}
+
+				this.canceled = true;
+				return true;
+			}
 		}
 
 		internal void Dispose()

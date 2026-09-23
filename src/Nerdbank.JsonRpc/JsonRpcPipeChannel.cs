@@ -107,8 +107,15 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 
 	private static string FormatLoggedMessage(JsonRpcMessage message, Exception? exception)
 	{
-		byte[] msgpack = Serializer.Serialize(message, CancellationToken.None);
-		return Serializer.ConvertToJson(msgpack);
+		try
+		{
+			byte[] msgpack = Serializer.Serialize(message, CancellationToken.None);
+			return Serializer.ConvertToJson(msgpack);
+		}
+		catch (ArgumentException) when (message is JsonRpcInvalidMessage or JsonRpcMessageBatch)
+		{
+			return message is JsonRpcInvalidMessage invalid ? $"Invalid JSON-RPC message: {invalid.Message}" : "JSON-RPC batch contains an invalid message.";
+		}
 	}
 
 	private async Task HandleInboundMessagesAsync(PipeReader reader, CancellationToken cancellationToken)

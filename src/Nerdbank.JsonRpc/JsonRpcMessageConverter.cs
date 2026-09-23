@@ -66,8 +66,11 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessage>
 			MessagePackReader elementReader = reader;
 			try
 			{
-				messages.Add(context.GetConverter<JsonRpcMessage>().Read(ref reader, context)
-					?? new JsonRpcInvalidMessage(JsonRpcErrorCode.InvalidRequest, "A JSON-RPC batch entry cannot be nil."));
+				JsonRpcMessage message = context.GetConverter<JsonRpcMessage>().Read(ref reader, context)
+					?? new JsonRpcInvalidMessage(JsonRpcErrorCode.InvalidRequest, "A JSON-RPC batch entry cannot be nil.");
+				messages.Add(message is JsonRpcMessageBatch
+					? new JsonRpcInvalidMessage(JsonRpcErrorCode.InvalidRequest, "A JSON-RPC batch entry must be a message object, not another batch.")
+					: message);
 			}
 			catch (Exception ex) when (ex is MessagePackSerializationException or ProtocolViolationException or InvalidOperationException or ArgumentException)
 			{
