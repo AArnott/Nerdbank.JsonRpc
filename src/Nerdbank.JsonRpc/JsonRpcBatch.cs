@@ -330,6 +330,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 	{
 		List<Entry> snapshot;
 		bool alreadySent;
+		bool payloadQueued;
 		lock (this.syncObject)
 		{
 			if (this.disposed)
@@ -338,20 +339,30 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 			}
 
 			alreadySent = this.sent;
+			payloadQueued = this.payloadQueued;
 			snapshot = [.. this.entries];
-		}
-
-		if (!alreadySent)
-		{
-			foreach (Entry entry in snapshot)
+			if (!alreadySent)
 			{
-				if (entry.ResponseCompletionSource is not null)
+				foreach (Entry entry in snapshot)
 				{
-					entry.CancelUnsent();
+					if (entry.ResponseCompletionSource is not null)
+					{
+						entry.CancelUnsent();
+					}
 				}
+
+				return;
 			}
 
-			return;
+			if (!payloadQueued)
+			{
+				foreach (Entry entry in snapshot)
+				{
+					entry.MarkCanceledAfterSend();
+				}
+
+				return;
+			}
 		}
 
 		List<Entry> cancellationEntries = this.GetCancellationEntries(snapshot, markCanceled: true);
@@ -602,6 +613,17 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 
 			this.ResponseCompletionSource?.TrySetCanceled(CancellationToken.None);
 			return true;
+		}
+
+		internal void MarkCanceledAfterSend()
+		{
+			lock (this.syncObject)
+			{
+				if (this.ResponseCompletionSource is not null && this.sent && !this.ResponseCompletionSource.Task.IsCompleted)
+				{
+					this.canceled = true;
+				}
+			}
 		}
 
 		internal bool TryMarkCancelingSentRequest(bool markCanceled)
