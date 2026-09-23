@@ -1,0 +1,17 @@
+[*.cs]
+
+indent_style = space
+
+dotnet_diagnostic.SA1123.severity = none
+dotnet_diagnostic.SA1124.severity = none
+dotnet_diagnostic.SA1304.severity = none
+dotnet_diagnostic.SA1307.severity = none
+dotnet_diagnostic.SA1311.severity = none
+dotnet_diagnostic.SA1401.severity = none
+dotnet_diagnostic.SA1402.severity = none
+dotnet_diagnostic.SA1403.severity = none
+dotnet_diagnostic.SA1600.severity = none
+dotnet_diagnostic.SA1601.severity = none
+dotnet_diagnostic.SA1633.severity = none
+dotnet_diagnostic.SA1518.severity = none
+dotnet_diagnostic.CS1591.severity = none

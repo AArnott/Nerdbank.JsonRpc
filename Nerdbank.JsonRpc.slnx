@@ -21,6 +21,9 @@
     <File Path="test/Directory.Build.props" />
     <File Path="test/Directory.Build.targets" />
   </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/cs/Samples.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/Nerdbank.JsonRpc.SourceGeneration/Nerdbank.JsonRpc.SourceGeneration.csproj" />
     <Project Path="src/Nerdbank.JsonRpc/Nerdbank.JsonRpc.csproj" />
@@ -31,3 +34,4 @@
     <Project Path="test/Nerdbank.JsonRpc.Tests/Nerdbank.JsonRpc.Tests.csproj" />
   </Folder>
 </Solution>
+
