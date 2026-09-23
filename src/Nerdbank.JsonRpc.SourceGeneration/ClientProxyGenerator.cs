@@ -417,9 +417,9 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 					builder.Append(cancellationToken).AppendLine(").AsTask();");
 					break;
 				case ProxyMethodKind.Notification:
-					builder.Append("\t\tglobal::Microsoft.VisualStudio.Threading.TplExtensions.Forget(this.jsonRpc.NotifyAsync(");
+					builder.Append("\t\tthis.jsonRpc.NotifyAsync(");
 					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
-					builder.Append(cancellationToken).AppendLine("));");
+					builder.Append(cancellationToken).AppendLine(").Preserve();");
 					builder.AppendLine("\t\treturn;");
 					break;
 			}
