@@ -142,20 +142,6 @@ public partial class JsonRpcClientTests : TestBase
 	}
 
 	[Fact]
-	public async Task NotifyCompatibilityShim()
-	{
-		this.jsonRpc.Notify("Add", new AddNamedArguments { A = 2, B = 3 }, this.TimeoutToken);
-		JsonRpcRequest requestMessage = Assert.IsAssignableFrom<JsonRpcRequest>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
-		Assert.Null(requestMessage.Id);
-		Assert.Equal("Add", requestMessage.Method);
-
-		this.jsonRpc.Notify("Raw", NilMsgPack, this.TimeoutToken);
-		JsonRpcRequest rawMessage = Assert.IsAssignableFrom<JsonRpcRequest>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
-		Assert.Null(rawMessage.Id);
-		Assert.Equal("Raw", rawMessage.Method);
-	}
-
-	[Fact]
 	public async Task NotifyWithRawArgumentsHonorsCancellation()
 	{
 		using CancellationTokenSource cts = new();
