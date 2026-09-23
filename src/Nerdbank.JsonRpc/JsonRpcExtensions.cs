@@ -1,9 +1,10 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft;
+using Nerdbank.MessagePack;
 using PolyType.Abstractions;
 
 namespace Nerdbank.JsonRpc;
@@ -37,8 +38,8 @@ public static class JsonRpcExtensions
 	[EditorBrowsable(EditorBrowsableState.Never)]
 	[Obsolete("Use the instance method instead. If using the extension method syntax, check that your type argument actually has a [GenerateShape] attribute or otherwise implements IShapeable<T> to avoid a runtime failure.", error: true)]
 #endif
-	public static void Notify<TArg>(this JsonRpc self, string method, in TArg arguments, CancellationToken cancellationToken)
-		=> Requires.NotNull(self).Notify(method, arguments, TypeShapeResolver.ResolveDynamicOrThrow<TArg>(), cancellationToken);
+	public static ValueTask NotifyAsync<TArg>(this JsonRpc self, string method, in TArg arguments, CancellationToken cancellationToken)
+		=> Requires.NotNull(self).NotifyAsync(method, arguments, TypeShapeResolver.ResolveDynamicOrThrow<TArg>(), cancellationToken);
 
 #if NET8_0
 	[RequiresDynamicCode(ResolveDynamicMessage)]

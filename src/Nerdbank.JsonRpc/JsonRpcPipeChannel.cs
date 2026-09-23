@@ -71,6 +71,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 			JsonRpcRequest request => Serializer.SerializeAsync(writer, request, cancellationToken),
 			JsonRpcResult result => Serializer.SerializeAsync(writer, result, cancellationToken),
 			JsonRpcError error => Serializer.SerializeAsync(writer, error, cancellationToken),
+			JsonRpcMessageBatch batch => Serializer.SerializeAsync<JsonRpcMessage>(writer, batch, cancellationToken),
 			_ => throw new ArgumentException($"Unrecognized JSON-RPC message type: {message.GetType().FullName}", nameof(message)),
 		};
 	}
