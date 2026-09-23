@@ -1,0 +1,14 @@
+[*.cs]
+
+indent_style = space
+
+# Samples intentionally combine multiple documentation excerpts in one source file.
+dotnet_diagnostic.SA1402.severity = none
+dotnet_diagnostic.SA1403.severity = none
+dotnet_diagnostic.SA1633.severity = none
+dotnet_diagnostic.SA1518.severity = none
+dotnet_diagnostic.CS1591.severity = none
+
+# Regions delimit the excerpts embedded by DocFX.
+dotnet_diagnostic.SA1123.severity = none
+dotnet_diagnostic.SA1124.severity = none
