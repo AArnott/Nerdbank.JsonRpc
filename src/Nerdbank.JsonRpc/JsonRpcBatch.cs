@@ -358,7 +358,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 			{
 				foreach (Entry entry in snapshot)
 				{
-					entry.MarkCanceledAfterSend();
+					entry.MarkCanceledDuringSubmission();
 				}
 
 				return;
@@ -615,11 +615,11 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 			return true;
 		}
 
-		internal void MarkCanceledAfterSend()
+		internal void MarkCanceledDuringSubmission()
 		{
 			lock (this.syncObject)
 			{
-				if (this.ResponseCompletionSource is not null && this.sent && !this.ResponseCompletionSource.Task.IsCompleted)
+				if (this.ResponseCompletionSource is not null && !this.ResponseCompletionSource.Task.IsCompleted)
 				{
 					this.canceled = true;
 				}
