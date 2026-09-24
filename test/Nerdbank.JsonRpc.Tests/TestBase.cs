@@ -32,6 +32,7 @@ public abstract class TestBase
 	public static ILoggerFactory LoggerFactory { get; } = Microsoft.Extensions.Logging.LoggerFactory.Create(
 		builder =>
 		{
+			builder.AddProvider(new TestLoggerProvider());
 			builder.SetMinimumLevel(LogLevel.Trace);
 		});
 
