@@ -30,7 +30,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 	public JsonRpcSerializer Serializer => this.owner.Serializer;
 
 	/// <inheritdoc/>
-	public JsonRpcArgumentsBuilder CreateArguments(bool named) => new(this.Serializer, named);
+	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count) => new(this.Serializer, named, count);
 
 	/// <summary>
 	/// Attaches a generated client proxy for an RPC contract interface to this batch.

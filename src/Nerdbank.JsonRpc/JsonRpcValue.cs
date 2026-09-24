@@ -80,4 +80,10 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 
 		return hash.ToHashCode();
 	}
+
+	/// <summary>Wraps an exclusively owned encoded byte array without copying it.</summary>
+	/// <param name="bytes">The caller-owned byte array.</param>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <returns>The owned value.</returns>
+	internal static JsonRpcValue FromOwnedBytes(byte[] bytes, JsonRpcEncoding encoding) => new(bytes, encoding);
 }

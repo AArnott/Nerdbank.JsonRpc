@@ -22,8 +22,9 @@ public interface IJsonRpcClient
 
 	/// <summary>Creates a serializer-neutral builder for named or positional arguments.</summary>
 	/// <param name="named">Whether to use named arguments.</param>
+	/// <param name="count">The exact number of arguments to write.</param>
 	/// <returns>An argument builder using this client's serializer.</returns>
-	JsonRpcArgumentsBuilder CreateArguments(bool named);
+	JsonRpcArgumentsBuilder CreateArguments(bool named, int count);
 
 	/// <summary>
 	/// Sends a request with arguments that have already been serialized to MessagePack.

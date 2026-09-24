@@ -5,6 +5,7 @@ using System.Buffers;
 using System.IO.Pipelines;
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.VisualStudio.Threading;
 using Nerdbank.Streams;
@@ -174,6 +175,110 @@ public class JsonCodecTests : TestBase
 	public void RawJsonAcceptsCompleteValueWithWhitespace(string json)
 	{
 		Assert.Equal(json, Encoding.UTF8.GetString(JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(json)).Bytes.ToArray()));
+	}
+
+	[Theory]
+	[InlineData(JsonRpcEncoding.Json, false)]
+	[InlineData(JsonRpcEncoding.Json, true)]
+	[InlineData(JsonRpcEncoding.MessagePack, false)]
+	[InlineData(JsonRpcEncoding.MessagePack, true)]
+	public void ArgumentBuilderStreamsCompleteParameters(JsonRpcEncoding encoding, bool named)
+	{
+		JsonRpcSerializer serializer = encoding == JsonRpcEncoding.Json
+			? new JsonSerializerPlugin(new Nerdbank.Json.JsonSerializer { WriteIndented = true })
+			: new MessagePackSerializerPlugin(new Nerdbank.MessagePack.MessagePackSerializer());
+		using JsonRpc rpc = new(System.Threading.Channels.Channel.CreateUnbounded<JsonRpcMessage>()) { Serializer = serializer };
+		const string Name = "a\"\\\n";
+		JsonRpcValue result;
+		using (JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named, 2))
+		{
+			builder.Add(named ? Name : null, 13, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
+			builder.Add(named ? "second" : null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
+			result = builder.Build();
+		}
+
+		Assert.Equal(encoding, result.Encoding);
+		if (encoding == JsonRpcEncoding.Json)
+		{
+			using JsonDocument document = JsonDocument.Parse(result.Bytes);
+			JsonElement root = document.RootElement;
+			Assert.Equal(13, named ? root.GetProperty(Name).GetInt32() : root[0].GetInt32());
+			Assert.Equal(42, named ? root.GetProperty("second").GetInt32() : root[1].GetInt32());
+		}
+		else
+		{
+			MessagePackReader reader = new(result.AsMessagePack());
+			Assert.Equal(2, named ? reader.ReadMapHeader() : reader.ReadArrayHeader());
+			if (named)
+			{
+				Assert.Equal(Name, reader.ReadString());
+			}
+
+			Assert.Equal(13, reader.ReadInt32());
+			if (named)
+			{
+				Assert.Equal("second", reader.ReadString());
+			}
+
+			Assert.Equal(42, reader.ReadInt32());
+			Assert.True(reader.End);
+		}
+	}
+
+	[Theory]
+	[InlineData(JsonRpcEncoding.Json)]
+	[InlineData(JsonRpcEncoding.MessagePack)]
+	public void ArgumentBuilderRequiresExactCountAndIsSingleUse(JsonRpcEncoding encoding)
+	{
+		JsonRpcSerializer serializer = encoding == JsonRpcEncoding.Json
+			? new JsonSerializerPlugin(new Nerdbank.Json.JsonSerializer())
+			: new MessagePackSerializerPlugin(new Nerdbank.MessagePack.MessagePackSerializer());
+		using JsonRpc rpc = new(System.Threading.Channels.Channel.CreateUnbounded<JsonRpcMessage>()) { Serializer = serializer };
+		Assert.Throws<ArgumentOutOfRangeException>(() => CreateNegativeCount(rpc));
+		Assert.Throws<InvalidOperationException>(() => BuildIncomplete(rpc));
+		Assert.Throws<InvalidOperationException>(() => AddTooMany(rpc));
+		Assert.Throws<InvalidOperationException>(() => BuildTwice(rpc));
+		Assert.Throws<ArgumentNullException>(() => AddUnnamedToNamed(rpc));
+		Assert.ThrowsAny<OperationCanceledException>(() => AddCanceled(rpc));
+
+		static void CreateNegativeCount(JsonRpc rpc)
+		{
+			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(false, -1);
+		}
+
+		static void BuildIncomplete(JsonRpc rpc)
+		{
+			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(false, 1);
+			builder.Build();
+		}
+
+		static void AddTooMany(JsonRpc rpc)
+		{
+			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(false, 1);
+			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, TestContext.Current.CancellationToken);
+			builder.Add(null, 13, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, TestContext.Current.CancellationToken);
+		}
+
+		static void BuildTwice(JsonRpc rpc)
+		{
+			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(false, 0);
+			Assert.True(builder.Build().HasValue);
+			builder.Build();
+		}
+
+		static void AddUnnamedToNamed(JsonRpc rpc)
+		{
+			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(true, 1);
+			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, TestContext.Current.CancellationToken);
+		}
+
+		static void AddCanceled(JsonRpc rpc)
+		{
+			using CancellationTokenSource source = new();
+			source.Cancel();
+			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(false, 1);
+			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, source.Token);
+		}
 	}
 
 	[Theory]

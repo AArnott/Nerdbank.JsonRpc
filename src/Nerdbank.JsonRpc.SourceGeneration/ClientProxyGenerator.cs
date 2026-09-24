@@ -364,7 +364,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		if (method.Kind is not ProxyMethodKind.Unsupported)
 		{
-			builder.Append("\t\tglobal::Nerdbank.JsonRpc.JsonRpcArgumentsBuilder argumentsBuilder = this.jsonRpc.CreateArguments(").Append(method.ArgumentMatch == ProxyArgumentMatch.Named ? "true" : "false").AppendLine(");");
+			builder.Append("\t\tusing global::Nerdbank.JsonRpc.JsonRpcArgumentsBuilder argumentsBuilder = this.jsonRpc.CreateArguments(").Append(method.ArgumentMatch == ProxyArgumentMatch.Named ? "true" : "false").Append(", ").Append(method.PayloadParameters.Length).AppendLine(");");
 			foreach (IParameterSymbol parameter in method.PayloadParameters)
 			{
 				builder.Append("\t\targumentsBuilder.Add(");

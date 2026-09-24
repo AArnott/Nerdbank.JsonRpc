@@ -32,6 +32,18 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	public override T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => this.Serializer.Deserialize(RequireJson(value), shape, cancellationToken)!;
 
 	/// <inheritdoc/>
+	internal override void SerializeTo<T>(IBufferWriter<byte> buffer, in T value, ITypeShape<T> shape, CancellationToken cancellationToken)
+		=> this.Serializer.Serialize(buffer, value, shape, cancellationToken);
+
+	/// <inheritdoc/>
+	internal override void WriteArgumentName(IBufferWriter<byte> buffer, string name)
+	{
+		Nerdbank.Json.JsonWriter writer = new(buffer);
+		writer.WriteStringValue(name);
+		writer.Flush();
+	}
+
+	/// <inheritdoc/>
 	internal override bool UsesSameSerializer(JsonRpcSerializer other) => other is JsonSerializerPlugin plugin && ReferenceEquals(this.Serializer, plugin.Serializer);
 
 	/// <inheritdoc/>

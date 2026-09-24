@@ -2,29 +2,58 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
-using System.Text.Json;
 using Nerdbank.MessagePack;
 using Nerdbank.Streams;
 
 namespace Nerdbank.JsonRpc;
 
-/// <summary>Builds positional or named request parameters using the selected serializer.</summary>
-public sealed class JsonRpcArgumentsBuilder
+/// <summary>Writes positional or named request parameters directly to the selected serializer's output buffer.</summary>
+public ref struct JsonRpcArgumentsBuilder
 {
 	private readonly JsonRpcSerializer serializer;
 	private readonly bool named;
-	private readonly List<(string? Name, JsonRpcValue Value)> values = new();
+	private readonly int count;
+	private readonly Sequence<byte> buffer;
+	private int written;
+	private bool built;
+	private bool failed;
 
-	/// <summary>Initializes a new instance of the <see cref="JsonRpcArgumentsBuilder"/> class.</summary>
+	/// <summary>Initializes a new instance of the <see cref="JsonRpcArgumentsBuilder"/> struct.</summary>
 	/// <param name="serializer">The selected serializer.</param>
 	/// <param name="named">Whether to encode named parameters.</param>
-	internal JsonRpcArgumentsBuilder(JsonRpcSerializer serializer, bool named)
+	/// <param name="count">The exact number of parameters to write.</param>
+	internal JsonRpcArgumentsBuilder(JsonRpcSerializer serializer, bool named, int count)
 	{
-		this.serializer = serializer;
+		this.serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
+		if (count < 0)
+		{
+			throw new ArgumentOutOfRangeException(nameof(count));
+		}
+
 		this.named = named;
+		this.count = count;
+		this.buffer = new();
+		if (serializer.Encoding == JsonRpcEncoding.Json)
+		{
+			this.WriteByte(named ? (byte)'{' : (byte)'[');
+		}
+		else
+		{
+			MessagePackWriter writer = new(this.buffer);
+			if (named)
+			{
+				writer.WriteMapHeader(count);
+			}
+			else
+			{
+				writer.WriteArrayHeader(count);
+			}
+
+			writer.Flush();
+		}
 	}
 
-	/// <summary>Adds a typed parameter.</summary>
+	/// <summary>Serializes a parameter directly into the output buffer.</summary>
 	/// <typeparam name="T">The parameter type.</typeparam>
 	/// <param name="name">The name for a named parameter, or null for positional parameters.</param>
 	/// <param name="value">The parameter value.</param>
@@ -32,75 +61,75 @@ public sealed class JsonRpcArgumentsBuilder
 	/// <param name="cancellationToken">A cancellation token.</param>
 	public void Add<T>(string? name, in T value, ITypeShape<T> shape, CancellationToken cancellationToken = default)
 	{
+		this.ThrowIfUnavailable();
+		if (this.written == this.count)
+		{
+			throw new InvalidOperationException("The declared number of parameters has already been written.");
+		}
+
 		if (this.named && name is null)
 		{
 			throw new ArgumentNullException(nameof(name));
 		}
 
-		this.values.Add((name, this.serializer.Serialize(value, shape, cancellationToken)));
+		this.failed = true;
+		if (this.serializer.Encoding == JsonRpcEncoding.Json && this.written > 0)
+		{
+			this.WriteByte((byte)',');
+		}
+
+		if (this.named)
+		{
+			this.serializer.WriteArgumentName(this.buffer, name!);
+			if (this.serializer.Encoding == JsonRpcEncoding.Json)
+			{
+				this.WriteByte((byte)':');
+			}
+		}
+
+		this.serializer.SerializeTo(this.buffer, value, shape, cancellationToken);
+		this.written++;
+		this.failed = false;
 	}
 
-	/// <summary>Builds an owned JSON-RPC params value.</summary>
+	/// <summary>Builds an owned JSON-RPC params value after every declared parameter has been added.</summary>
 	/// <returns>An encoded array or object.</returns>
 	public JsonRpcValue Build()
 	{
-		using Sequence<byte> buffer = new();
+		this.ThrowIfUnavailable();
+		if (this.written != this.count)
+		{
+			throw new InvalidOperationException("The declared number of parameters has not been written.");
+		}
+
 		if (this.serializer.Encoding == JsonRpcEncoding.Json)
 		{
-			using Utf8JsonWriter writer = new(buffer);
-			if (this.named)
-			{
-				writer.WriteStartObject();
-			}
-			else
-			{
-				writer.WriteStartArray();
-			}
-
-			foreach ((string? name, JsonRpcValue value) in this.values)
-			{
-				if (this.named)
-				{
-					writer.WritePropertyName(name!);
-				}
-
-				writer.WriteRawValue(value.OwnedBytes.Span, skipInputValidation: false);
-			}
-
-			if (this.named)
-			{
-				writer.WriteEndObject();
-			}
-			else
-			{
-				writer.WriteEndArray();
-			}
-
-			writer.Flush();
-			return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
+			this.WriteByte(this.named ? (byte)'}' : (byte)']');
 		}
 
-		MessagePackWriter mpWriter = new(buffer);
-		if (this.named)
+		this.built = true;
+		return JsonRpcValue.FromOwnedBytes(this.buffer.AsReadOnlySequence.ToArray(), this.serializer.Encoding);
+	}
+
+	/// <summary>Releases buffers owned by this builder.</summary>
+	public void Dispose()
+	{
+		this.failed = true;
+		this.buffer?.Dispose();
+	}
+
+	private void ThrowIfUnavailable()
+	{
+		if (this.buffer is null || this.built || this.failed)
 		{
-			mpWriter.WriteMapHeader(this.values.Count);
+			throw new InvalidOperationException("This argument builder cannot be used again.");
 		}
-		else
-		{
-			mpWriter.WriteArrayHeader(this.values.Count);
-		}
+	}
 
-		foreach ((string? name, JsonRpcValue value) in this.values)
-		{
-			if (this.named)
-			{
-				mpWriter.Write(name);
-			}
-
-			mpWriter.WriteRaw(value.OwnedBytes.Span);
-		}
-
-		mpWriter.Flush();
-		return JsonRpcValue.FromMessagePack((RawMessagePack)buffer.AsReadOnlySequence.ToArray());
+	private void WriteByte(byte value)
+	{
+		Span<byte> span = this.buffer.GetSpan(1);
+		span[0] = value;
+		this.buffer.Advance(1);
 	}
 }

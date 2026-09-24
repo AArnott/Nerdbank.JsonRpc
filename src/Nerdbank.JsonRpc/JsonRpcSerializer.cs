@@ -1,6 +1,7 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.Buffers;
 using Nerdbank.MessagePack;
 
 namespace Nerdbank.JsonRpc;
@@ -39,6 +40,19 @@ public abstract class JsonRpcSerializer
 	/// <param name="cancellationToken">A cancellation token.</param>
 	/// <returns>The deserialized value.</returns>
 	public abstract T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, CancellationToken cancellationToken = default);
+
+	/// <summary>Serializes a parameter into an existing argument buffer.</summary>
+	/// <typeparam name="T">The parameter type.</typeparam>
+	/// <param name="buffer">The output buffer.</param>
+	/// <param name="value">The parameter value.</param>
+	/// <param name="shape">The parameter type shape.</param>
+	/// <param name="cancellationToken">A cancellation token.</param>
+	internal abstract void SerializeTo<T>(IBufferWriter<byte> buffer, in T value, ITypeShape<T> shape, CancellationToken cancellationToken);
+
+	/// <summary>Writes an encoded argument name into an existing buffer.</summary>
+	/// <param name="buffer">The output buffer.</param>
+	/// <param name="name">The argument name.</param>
+	internal abstract void WriteArgumentName(IBufferWriter<byte> buffer, string name);
 
 	/// <summary>Checks whether two plugin wrappers retain the same concrete serializer.</summary>
 	/// <param name="other">The transport's serializer plugin.</param>
