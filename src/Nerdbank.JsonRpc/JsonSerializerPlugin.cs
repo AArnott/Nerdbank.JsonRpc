@@ -44,9 +44,6 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	}
 
 	/// <inheritdoc/>
-	internal override bool UsesSameSerializer(JsonRpcSerializer other) => other is JsonSerializerPlugin plugin && ReferenceEquals(this.Serializer, plugin.Serializer);
-
-	/// <inheritdoc/>
 	internal override bool IsParameterCollection(JsonRpcValue value)
 	{
 		using JsonDocument document = JsonDocument.Parse(RequireJson(value));

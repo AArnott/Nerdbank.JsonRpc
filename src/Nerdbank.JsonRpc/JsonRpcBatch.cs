@@ -27,7 +27,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 	}
 
 	/// <inheritdoc/>
-	public JsonRpcSerializer Serializer => this.owner.Serializer;
+	public JsonRpcSerializer Serializer => this.owner.Channel.Serializer;
 
 	/// <inheritdoc/>
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this.Serializer, named, count, cancellationToken);
@@ -127,7 +127,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 		{
 			Id = this.owner.GetNextRequestId(),
 			Method = method,
-			Arguments = this.owner.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = this.owner.Channel.Serializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
 		return this.owner.AwaitTypedResponseAsync(request, resultShape, this.AddRequestAsync(request, cancellationToken), cancellationToken);
@@ -149,7 +149,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 		{
 			Id = this.owner.GetNextRequestId(),
 			Method = method,
-			Arguments = this.owner.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = this.owner.Channel.Serializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
 		return this.owner.AwaitVoidResponseAsync(this.AddRequestAsync(request, cancellationToken));
@@ -171,7 +171,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 		{
 			Id = null,
 			Method = method,
-			Arguments = this.owner.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = this.owner.Channel.Serializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
 		this.AddNotification(request, cancellationToken);
@@ -458,7 +458,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 
 	private void AddEntry(Entry entry)
 	{
-		this.owner.Serializer.ValidateMessage(entry.Request);
+		this.owner.Channel.Serializer.ValidateMessage(entry.Request);
 		lock (this.syncObject)
 		{
 			this.ThrowIfDisposedOrSent();

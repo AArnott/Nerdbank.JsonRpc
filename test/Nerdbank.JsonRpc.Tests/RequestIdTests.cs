@@ -91,5 +91,5 @@ public class RequestIdTests
 
 	private static void AssertRoundTrip(RequestId requestId) => Assert.Equal(requestId, Roundtrip(requestId));
 
-	private static RequestId Roundtrip(RequestId requestId) => ((MessagePackSerializerPlugin)JsonRpc.DefaultSerializer).Serializer.Deserialize<RequestId>(((MessagePackSerializerPlugin)JsonRpc.DefaultSerializer).Serializer.Serialize(requestId));
+	private static RequestId Roundtrip(RequestId requestId) => JsonRpcMessagePackChannel.DefaultSerializer.Deserialize<RequestId>(JsonRpcMessagePackChannel.DefaultSerializer.Serialize(requestId));
 }

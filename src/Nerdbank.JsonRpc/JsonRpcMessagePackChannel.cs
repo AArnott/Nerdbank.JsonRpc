@@ -16,26 +16,46 @@ namespace Nerdbank.JsonRpc;
 /// </summary>
 public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 {
-	private static readonly MessagePackSerializer Serializer = new() { InternStrings = true };
+	private readonly MessagePackSerializer messagePackSerializer;
 
-	/// <summary>Initializes a new instance of the <see cref="JsonRpcMessagePackChannel"/> class.</summary>
+	/// <summary>Initializes a new instance of the <see cref="JsonRpcMessagePackChannel"/> class with the default serializer.</summary>
 	/// <param name="pipe">The connected duplex pipe.</param>
 	/// <param name="logger">The transport logger.</param>
 	/// <param name="inboundCapacity">The inbound queue limit, or null for an unbounded queue.</param>
 	/// <param name="outboundCapacity">The outbound queue limit, or null for an unbounded queue.</param>
 	public JsonRpcMessagePackChannel(IDuplexPipe pipe, ILogger logger, int? inboundCapacity = 100, int? outboundCapacity = null)
-		: base(pipe, CreateInboundChannel(inboundCapacity), CreateOutboundChannel(outboundCapacity), logger)
+		: this(pipe, logger, DefaultSerializer, inboundCapacity, outboundCapacity)
 	{
 	}
+
+	/// <summary>Initializes a new instance of the <see cref="JsonRpcMessagePackChannel"/> class with a configured serializer.</summary>
+	/// <param name="pipe">The connected duplex pipe.</param>
+	/// <param name="logger">The transport logger.</param>
+	/// <param name="serializer">The serializer for MessagePack application values and envelopes.</param>
+	/// <param name="inboundCapacity">The inbound queue limit, or null for an unbounded queue.</param>
+	/// <param name="outboundCapacity">The outbound queue limit, or null for an unbounded queue.</param>
+	public JsonRpcMessagePackChannel(IDuplexPipe pipe, ILogger logger, MessagePackSerializer serializer, int? inboundCapacity = 100, int? outboundCapacity = null)
+		: base(pipe, CreateInboundChannel(inboundCapacity), CreateOutboundChannel(outboundCapacity), logger, startImmediately: false)
+	{
+		this.messagePackSerializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
+		this.Serializer = new MessagePackSerializerPlugin(this.messagePackSerializer);
+		this.StartTransport();
+	}
+
+	/// <summary>Gets the default serializer for MessagePack channels.</summary>
+	public static MessagePackSerializer DefaultSerializer { get; } = new() { InternStrings = true };
 
 	/// <inheritdoc/>
 	public override JsonRpcEncoding Encoding => JsonRpcEncoding.MessagePack;
 
 	/// <inheritdoc/>
+	public override JsonRpcSerializer Serializer { get; }
+
+	/// <inheritdoc/>
 	protected override async IAsyncEnumerable<JsonRpcMessage> ReceiveMessagesAsync(PipeReader reader, [EnumeratorCancellation] CancellationToken cancellationToken)
 	{
 		Requires.NotNull(reader);
-		await foreach (JsonRpcMessagePackEnvelope envelope in Serializer.DeserializeEnumerableAsync<JsonRpcMessagePackEnvelope>(reader, cancellationToken))
+		await foreach (JsonRpcMessagePackEnvelope envelope in this.messagePackSerializer.DeserializeEnumerableAsync<JsonRpcMessagePackEnvelope>(reader, cancellationToken))
 		{
 			yield return envelope.Message;
 		}
@@ -44,6 +64,6 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 	/// <inheritdoc/>
 	protected override ValueTask SendMessageAsync(PipeWriter writer, JsonRpcMessage message, CancellationToken cancellationToken)
 	{
-		return Serializer.SerializeAsync(writer, new JsonRpcMessagePackEnvelope(message), cancellationToken);
+		return this.messagePackSerializer.SerializeAsync(writer, new JsonRpcMessagePackEnvelope(message), cancellationToken);
 	}
 }

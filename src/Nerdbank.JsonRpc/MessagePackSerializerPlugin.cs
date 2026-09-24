@@ -38,9 +38,6 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	}
 
 	/// <inheritdoc/>
-	internal override bool UsesSameSerializer(JsonRpcSerializer other) => other is MessagePackSerializerPlugin plugin && ReferenceEquals(this.Serializer, plugin.Serializer);
-
-	/// <inheritdoc/>
 	internal override bool IsParameterCollection(JsonRpcValue value)
 	{
 		MessagePackType type = new MessagePackReader(value.AsMessagePack()).NextMessagePackType;

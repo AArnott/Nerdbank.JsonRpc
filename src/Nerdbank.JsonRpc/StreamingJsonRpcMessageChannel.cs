@@ -3,6 +3,7 @@
 
 using System.IO.Pipelines;
 using Microsoft.Extensions.Logging;
+using Nerdbank.MessagePack;
 
 namespace Nerdbank.JsonRpc;
 
@@ -18,6 +19,17 @@ public class StreamingJsonRpcMessageChannel : JsonRpcMessagePackChannel
 	/// <param name="outboundCapacity">The outbound queue limit, or null for an unbounded queue.</param>
 	public StreamingJsonRpcMessageChannel(IDuplexPipe pipe, ILogger logger, int? inboundCapacity = 100, int? outboundCapacity = null)
 		: base(pipe, logger, inboundCapacity, outboundCapacity)
+	{
+	}
+
+	/// <summary>Initializes a new instance of the <see cref="StreamingJsonRpcMessageChannel"/> class with a configured serializer.</summary>
+	/// <param name="pipe">The connected duplex pipe.</param>
+	/// <param name="logger">The transport logger.</param>
+	/// <param name="serializer">The serializer used for messages.</param>
+	/// <param name="inboundCapacity">The inbound queue limit, or null for an unbounded queue.</param>
+	/// <param name="outboundCapacity">The outbound queue limit, or null for an unbounded queue.</param>
+	public StreamingJsonRpcMessageChannel(IDuplexPipe pipe, ILogger logger, MessagePackSerializer serializer, int? inboundCapacity = 100, int? outboundCapacity = null)
+		: base(pipe, logger, serializer, inboundCapacity, outboundCapacity)
 	{
 	}
 }

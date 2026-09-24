@@ -36,7 +36,7 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 	public JsonRpcJsonChannel(IDuplexPipe pipe, JsonSerializerPlugin serializer, JsonRpcJsonFraming framing, ILogger logger, int? inboundCapacity = 100, int? outboundCapacity = null)
 		: base(pipe, CreateInboundChannel(inboundCapacity), CreateOutboundChannel(outboundCapacity), logger, startImmediately: false)
 	{
-		this.SerializerPlugin = serializer ?? throw new ArgumentNullException(nameof(serializer));
+		this.Serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
 		this.framing = framing;
 		if (!Enum.IsDefined(typeof(JsonRpcJsonFraming), framing))
 		{
@@ -60,7 +60,7 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 	public override JsonRpcEncoding Encoding => JsonRpcEncoding.Json;
 
 	/// <inheritdoc/>
-	public override JsonRpcSerializer SerializerPlugin { get; }
+	public override JsonRpcSerializer Serializer { get; }
 
 	/// <inheritdoc/>
 	protected override async IAsyncEnumerable<JsonRpcMessage> ReceiveMessagesAsync(PipeReader reader, [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -101,7 +101,7 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 	protected override ValueTask SendMessageAsync(PipeWriter writer, JsonRpcMessage message, CancellationToken cancellationToken)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
-		this.SerializerPlugin.ValidateMessage(message);
+		this.Serializer.ValidateMessage(message);
 		byte[] payload = JsonRpcJsonCodec.Write(message);
 		if (payload.Length > MaximumFrameSize)
 		{

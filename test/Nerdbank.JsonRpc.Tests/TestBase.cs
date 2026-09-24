@@ -53,7 +53,7 @@ public abstract class TestBase : IDisposable
 
 		string description = message switch
 		{
-			JsonRpcRequest { Arguments.HasValue: true } request => $"{request.Method}: {((MessagePackSerializerPlugin)jsonRpc.Serializer).Serializer.ConvertToJson(request.Arguments.AsMessagePack())}",
+			JsonRpcRequest { Arguments.HasValue: true } request => $"{request.Method}: {((MessagePackSerializerPlugin)((IJsonRpcClient)jsonRpc).Serializer).Serializer.ConvertToJson(request.Arguments.AsMessagePack())}",
 			JsonRpcRequest request => request.Method,
 			_ => message.GetType().Name,
 		};

@@ -1,9 +1,11 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-using System.Threading.Channels;
+using System.IO.Pipelines;
 using BenchmarkDotNet.Attributes;
+using Microsoft.Extensions.Logging.Abstractions;
 using Nerdbank.MessagePack;
+using Nerdbank.Streams;
 
 namespace Benchmarks;
 
@@ -12,6 +14,7 @@ namespace Benchmarks;
 public class ArgumentBuilderBenchmarks
 {
 	private JsonRpc rpc = null!;
+	private JsonRpcPipeChannel channel = null!;
 
 	/// <summary>Gets or sets the codec.</summary>
 	[Params(JsonRpcEncoding.Json, JsonRpcEncoding.MessagePack)]
@@ -30,11 +33,23 @@ public class ArgumentBuilderBenchmarks
 	public void Setup()
 	{
 		JsonRpcSerializer serializer = this.Encoding == JsonRpcEncoding.Json ? new JsonSerializerPlugin(new Nerdbank.Json.JsonSerializer()) : new MessagePackSerializerPlugin(new MessagePackSerializer());
-		this.rpc = new JsonRpc(Channel.CreateUnbounded<JsonRpcMessage>()) { Serializer = serializer };
+		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
+		this.channel = this.Encoding == JsonRpcEncoding.Json
+			? new JsonRpcJsonChannel(local, (JsonSerializerPlugin)serializer, JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance)
+			: new JsonRpcMessagePackChannel(local, NullLogger.Instance, serializer: ((MessagePackSerializerPlugin)serializer).Serializer);
+		this.rpc = new JsonRpc(this.channel);
 		if (!this.Build().HasValue)
 		{
 			throw new InvalidOperationException("The result must be present.");
 		}
+	}
+
+	/// <summary>Releases the benchmark transport.</summary>
+	[GlobalCleanup]
+	public async Task Cleanup()
+	{
+		this.rpc.Dispose();
+		await this.channel.DisposeAsync();
 	}
 
 	/// <summary>Builds a set of arguments.</summary>

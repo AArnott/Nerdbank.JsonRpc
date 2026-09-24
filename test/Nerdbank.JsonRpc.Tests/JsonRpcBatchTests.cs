@@ -38,7 +38,7 @@ public partial class JsonRpcBatchTests : TestBase
 				new JsonRpcResult
 				{
 					Id = sumRequest.Id.Value,
-					Result = (RawMessagePack)((MessagePackSerializerPlugin)jsonRpc.Serializer).Serializer.Serialize<int, Witness>(5, this.TimeoutToken),
+					Result = (RawMessagePack)((MessagePackSerializerPlugin)((IJsonRpcClient)jsonRpc).Serializer).Serializer.Serialize<int, Witness>(5, this.TimeoutToken),
 				},
 			]);
 		await channel.Writer.WriteAsync(responseBatch, this.TimeoutToken);
@@ -119,7 +119,7 @@ public partial class JsonRpcBatchTests : TestBase
 	public async Task ClientBatch_SendBeforeStartThrows()
 	{
 		(_, Channel<JsonRpcMessage> jsonRpcChannel) = MockChannel<JsonRpcMessage>.CreatePair();
-		JsonRpc jsonRpc = new(jsonRpcChannel);
+		JsonRpc jsonRpc = new(new MockJsonRpcPipeChannel(jsonRpcChannel));
 		JsonRpcBatch batch = jsonRpc.CreateBatch();
 		Task requestTask = batch.RequestAsync("Ping", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
 
@@ -173,7 +173,7 @@ public partial class JsonRpcBatchTests : TestBase
 	[Fact]
 	public async Task ClientBatch_CancelAllWriteFailureFaultsPendingRequests()
 	{
-		JsonRpc jsonRpc = new(new FailingSecondWriteChannel());
+		JsonRpc jsonRpc = new(new MockJsonRpcPipeChannel(new FailingSecondWriteChannel(), writeDirectly: true));
 		jsonRpc.Start();
 		JsonRpcBatch batch = jsonRpc.CreateBatch();
 		Task requestTask = batch.RequestAsync("LongRunning", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
@@ -214,7 +214,7 @@ public partial class JsonRpcBatchTests : TestBase
 	[Fact]
 	public async Task ClientBatch_CancellationAfterSendWriteFailureFaultsPendingRequest()
 	{
-		JsonRpc jsonRpc = new(new FailingSecondWriteChannel());
+		JsonRpc jsonRpc = new(new MockJsonRpcPipeChannel(new FailingSecondWriteChannel(), writeDirectly: true));
 		jsonRpc.Start();
 		JsonRpcBatch batch = jsonRpc.CreateBatch();
 		using CancellationTokenSource cts = new();
@@ -310,8 +310,8 @@ public partial class JsonRpcBatchTests : TestBase
 		JsonRpcResult second = Assert.IsType<JsonRpcResult>(responseBatch.Messages[1]);
 		Assert.Equal((RequestId)1, first.Id);
 		Assert.Equal((RequestId)2, second.Id);
-		Assert.Equal(5, ((MessagePackSerializerPlugin)jsonRpc.Serializer).Serializer.Deserialize<int, Witness>(first.Result.AsMessagePack(), this.TimeoutToken));
-		Assert.Equal(42, ((MessagePackSerializerPlugin)jsonRpc.Serializer).Serializer.Deserialize<int, Witness>(second.Result.AsMessagePack(), this.TimeoutToken));
+		Assert.Equal(5, ((MessagePackSerializerPlugin)((IJsonRpcClient)jsonRpc).Serializer).Serializer.Deserialize<int, Witness>(first.Result.AsMessagePack(), this.TimeoutToken));
+		Assert.Equal(42, ((MessagePackSerializerPlugin)((IJsonRpcClient)jsonRpc).Serializer).Serializer.Deserialize<int, Witness>(second.Result.AsMessagePack(), this.TimeoutToken));
 	}
 
 	[Fact]
@@ -344,8 +344,8 @@ public partial class JsonRpcBatchTests : TestBase
 
 		JsonRpcMessageBatch responseBatch = new(
 			[
-				new JsonRpcResult { Id = secondRequest.Id!.Value, Result = (RawMessagePack)((MessagePackSerializerPlugin)jsonRpc.Serializer).Serializer.Serialize<int, Witness>(2, this.TimeoutToken) },
-				new JsonRpcResult { Id = firstRequest.Id!.Value, Result = (RawMessagePack)((MessagePackSerializerPlugin)jsonRpc.Serializer).Serializer.Serialize<int, Witness>(1, this.TimeoutToken) },
+				new JsonRpcResult { Id = secondRequest.Id!.Value, Result = (RawMessagePack)((MessagePackSerializerPlugin)((IJsonRpcClient)jsonRpc).Serializer).Serializer.Serialize<int, Witness>(2, this.TimeoutToken) },
+				new JsonRpcResult { Id = firstRequest.Id!.Value, Result = (RawMessagePack)((MessagePackSerializerPlugin)((IJsonRpcClient)jsonRpc).Serializer).Serializer.Serialize<int, Witness>(1, this.TimeoutToken) },
 			]);
 		await channel.Writer.WriteAsync(responseBatch, this.TimeoutToken);
 
@@ -356,7 +356,7 @@ public partial class JsonRpcBatchTests : TestBase
 	private static (JsonRpc Rpc, Channel<JsonRpcMessage> Channel) CreateStartedRpcPair()
 	{
 		(Channel<JsonRpcMessage> channel, Channel<JsonRpcMessage> jsonRpcChannel) = MockChannel<JsonRpcMessage>.CreatePair();
-		JsonRpc jsonRpc = new(jsonRpcChannel);
+		JsonRpc jsonRpc = new(new MockJsonRpcPipeChannel(jsonRpcChannel));
 		jsonRpc.Start();
 		return (jsonRpc, channel);
 	}

@@ -26,40 +26,34 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	private readonly ConcurrentDictionary<string, (object? Target, MethodInvoker Invoker)> handlers = new();
 	private readonly ConcurrentDictionary<RequestId, TaskCompletionSource<JsonRpcResponse>> pendingOutboundRequests = new();
 	private readonly Action<object?> cancelOutboundRequestDelegate;
-	private readonly Channel<JsonRpcMessage> channel;
-	private JsonRpcSerializer? serializer;
+	private readonly JsonRpcPipeChannel channel;
 	private Task? readerTask;
 	private int nextRequestId;
 
 	/// <summary>
-	/// Initializes a new instance of the <see cref="JsonRpc"/> class over a message channel.
+	/// Initializes a new instance of the <see cref="JsonRpc"/> class over a pipe channel.
 	/// </summary>
 	/// <param name="channel">The channel used to exchange messages.</param>
 	/// <param name="logger">An optional logger for request and protocol failures.</param>
-	public JsonRpc(Channel<JsonRpcMessage> channel, ILogger? logger = null)
+	public JsonRpc(JsonRpcPipeChannel channel, ILogger? logger = null)
 	{
+		this.channel = channel ?? throw new ArgumentNullException(nameof(channel));
+		JsonRpcSerializer serializer = channel.Serializer ?? throw new ArgumentException("The channel must supply a serializer.", nameof(channel));
+		if (channel.Encoding != serializer.Encoding)
+		{
+			throw new ArgumentException("The channel encoding must match its serializer.", nameof(channel));
+		}
+
 		this.logger = logger ?? NullLogger.Instance;
 
 		// Store a delegate we can reuse to avoid allocations.
 		this.cancelOutboundRequestDelegate = this.CancelOutboundRequest;
 
 		this.AddRpcTarget(new SpecialMethodsTarget(this));
-		this.channel = channel;
 	}
 
-	/// <summary>
-	/// Gets the default serializer used for JSON-RPC messages.
-	/// </summary>
-	public static JsonRpcSerializer DefaultSerializer => DefaultSerializerHolder.Instance;
-
-	/// <summary>
-	/// Gets the serializer used for application values. Defaults to the channel's serializer plugin when available, or the default MessagePack serializer otherwise.
-	/// </summary>
-	public JsonRpcSerializer Serializer
-	{
-		get => this.serializer ??= (this.channel as JsonRpcPipeChannel)?.SerializerPlugin ?? DefaultSerializer;
-		init => this.serializer = value ?? throw new ArgumentNullException(nameof(value));
-	}
+	/// <inheritdoc/>
+	JsonRpcSerializer IJsonRpcClient.Serializer => this.channel.Serializer;
 
 	public JsonRpcState State =>
 		this.Completion.IsFaulted ? JsonRpcState.Faulted :
@@ -73,8 +67,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 
 	internal CancellationToken DisposalToken => this.disposalSource.Token;
 
+	/// <summary>Gets the channel used by this connection.</summary>
+	internal JsonRpcPipeChannel Channel => this.channel;
+
 	/// <inheritdoc/>
-	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this.Serializer, named, count, cancellationToken);
+	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this.channel.Serializer, named, count, cancellationToken);
 
 #if NET
 	public void AddRpcTarget<T>(T target)
@@ -138,7 +135,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		{
 			Id = this.GetNextRequestId(),
 			Method = method,
-			Arguments = this.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = this.channel.Serializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
 		return this.AwaitTypedResponseAsync<TResult>(request, resultShape, this.RequestAsync(request, cancellationToken), cancellationToken);
@@ -150,7 +147,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		{
 			Id = this.GetNextRequestId(),
 			Method = method,
-			Arguments = this.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = this.channel.Serializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
 		return this.AwaitVoidResponseAsync(this.RequestAsync(request, cancellationToken));
@@ -162,7 +159,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		{
 			Id = null,
 			Method = method,
-			Arguments = this.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = this.channel.Serializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
 		return this.PostMessageAsync(request, cancellationToken);
@@ -213,11 +210,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 
 	public void Start()
 	{
-		if (this.channel is JsonRpcPipeChannel pipeChannel && (pipeChannel.Encoding != this.Serializer.Encoding || (pipeChannel.SerializerPlugin is { } plugin && !this.Serializer.UsesSameSerializer(plugin))))
-		{
-			throw new InvalidOperationException("The channel encoding must match the JSON-RPC serializer.");
-		}
-
 		this.readerTask = this.ReadAsync(this.channel.Reader);
 	}
 
@@ -306,13 +298,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		return new JsonRpcRequest
 		{
 			Method = SpecialCancelMethodName,
-			Arguments = this.Serializer.SerializeCancellation(request.Id.Value, cancellationToken),
+			Arguments = this.channel.Serializer.SerializeCancellation(request.Id.Value, cancellationToken),
 		};
 	}
 
 	internal ValueTask PostMessageAsync(JsonRpcMessage message, CancellationToken cancellationToken = default)
 	{
-		this.Serializer.ValidateMessage(message);
+		this.channel.Serializer.ValidateMessage(message);
 		return this.channel.Writer.WriteAsync(message, cancellationToken);
 	}
 
@@ -354,7 +346,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		switch (response)
 		{
 			case JsonRpcResult result:
-				TResult returnValue = this.Serializer.Deserialize(result.Result, resultShape, cancellationToken)!;
+				TResult returnValue = this.channel.Serializer.Deserialize(result.Result, resultShape, cancellationToken)!;
 				return returnValue;
 			case JsonRpcError error:
 				throw new JsonRpcException(error.Error);
@@ -652,10 +644,5 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 				tracker.CancellationTokenSource?.Cancel();
 			}
 		}
-	}
-
-	private static class DefaultSerializerHolder
-	{
-		internal static readonly JsonRpcSerializer Instance = new MessagePackSerializerPlugin(new MessagePackSerializer { InternStrings = true });
 	}
 }

@@ -25,8 +25,8 @@ public class JsonCodecTests : TestBase
 		await using JsonRpcJsonChannel serverChannel = new(serverPipe, serverPlugin, framing, LoggerFactory.CreateLogger("server"));
 		using JsonRpc client = new(clientChannel);
 		using JsonRpc server = new(serverChannel);
-		Assert.Same(clientPlugin, client.Serializer);
-		Assert.Same(serverPlugin, server.Serializer);
+		Assert.Same(clientPlugin, ((IJsonRpcClient)client).Serializer);
+		Assert.Same(serverPlugin, ((IJsonRpcClient)server).Serializer);
 		Calculator calculator = new();
 		server.AddRpcTarget<ICalculator>(calculator);
 		server.AddRpcTarget<INamedCalculator>(new NamedCalculator(), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.INamedCalculator);
@@ -98,7 +98,7 @@ public class JsonCodecTests : TestBase
 		JsonSerializerPlugin plugin = new(new Nerdbank.Json.JsonSerializer());
 		await using JsonRpcJsonChannel clientChannel = new(clientPipe, plugin, framing, LoggerFactory.CreateLogger("client"));
 		await using JsonRpcJsonChannel serverChannel = new(serverPipe, new JsonSerializerPlugin(new Nerdbank.Json.JsonSerializer()), framing, LoggerFactory.CreateLogger("server"));
-		using JsonRpc client = new(clientChannel) { Serializer = plugin };
+		using JsonRpc client = new(clientChannel);
 		client.Start();
 		ITypeShape<int> intShape = PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32;
 		Task<int> first = client.RequestAsync("first", JsonRpcValue.FromJson("[]"u8.ToArray()), intShape, this.TimeoutToken).AsTask();
@@ -116,13 +116,14 @@ public class JsonCodecTests : TestBase
 	}
 
 	[Fact]
-	public async Task JsonChannelRejectsExplicitSerializerMismatch()
+	public async Task JsonChannelSharesConfiguredSerializerWithRpc()
 	{
 		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
-		JsonSerializerPlugin channelPlugin = new(new Nerdbank.Json.JsonSerializer());
-		await using JsonRpcJsonChannel channel = new(local, channelPlugin, JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("local"));
-		using JsonRpc rpc = new(channel) { Serializer = new Nerdbank.Json.JsonSerializer() };
-		Assert.Throws<InvalidOperationException>(() => rpc.Start());
+		JsonSerializerPlugin plugin = new(new Nerdbank.Json.JsonSerializer());
+		await using JsonRpcJsonChannel channel = new(local, plugin, JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("local"));
+		using JsonRpc rpc = new(channel);
+		Assert.Same(plugin, channel.Serializer);
+		Assert.Same(plugin, ((IJsonRpcClient)rpc).Serializer);
 	}
 
 	[Fact]
@@ -143,11 +144,11 @@ public class JsonCodecTests : TestBase
 		JsonSerializerPlugin plugin = new(new Nerdbank.Json.JsonSerializer());
 		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
 		JsonRpcJsonChannel channel = new(local, plugin, JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("local"));
-		using JsonRpc rpc = new(channel) { Serializer = plugin };
+		using JsonRpc rpc = new(channel);
 		rpc.Start();
 		ArgumentException jsonMismatch = Assert.Throws<ArgumentException>(() => rpc.NotifyAsync("method", JsonRpcValue.FromMessagePack(NilMsgPack), this.TimeoutToken));
 		Assert.Contains("expected Json, actual MessagePack", jsonMismatch.Message);
-		using JsonRpc messagePackRpc = new(Channel.CreateUnbounded<JsonRpcMessage>());
+		using JsonRpc messagePackRpc = new(new MockJsonRpcPipeChannel(Channel.CreateUnbounded<JsonRpcMessage>()));
 		ArgumentException messagePackMismatch = Assert.Throws<ArgumentException>(() => messagePackRpc.NotifyAsync("method", JsonRpcValue.FromJson("[]"u8.ToArray()), this.TimeoutToken));
 		Assert.Contains("expected MessagePack, actual Json", messagePackMismatch.Message);
 		Assert.Throws<ArgumentException>(() => rpc.NotifyAsync("method", JsonRpcValue.FromJson("42"u8.ToArray()), this.TimeoutToken));
@@ -262,7 +263,7 @@ public class JsonCodecTests : TestBase
 		JsonRpcSerializer serializer = encoding == JsonRpcEncoding.Json
 			? new JsonSerializerPlugin(new Nerdbank.Json.JsonSerializer { WriteIndented = true })
 			: new MessagePackSerializerPlugin(new Nerdbank.MessagePack.MessagePackSerializer());
-		using JsonRpc rpc = new(System.Threading.Channels.Channel.CreateUnbounded<JsonRpcMessage>()) { Serializer = serializer };
+		using JsonRpc rpc = new(new MockJsonRpcPipeChannel(System.Threading.Channels.Channel.CreateUnbounded<JsonRpcMessage>(), serializer));
 		const string Name = "a\"\\\n";
 		JsonRpcValue result;
 		using (JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named, 2, this.TimeoutToken))
@@ -308,7 +309,7 @@ public class JsonCodecTests : TestBase
 		JsonRpcSerializer serializer = encoding == JsonRpcEncoding.Json
 			? new JsonSerializerPlugin(new Nerdbank.Json.JsonSerializer())
 			: new MessagePackSerializerPlugin(new Nerdbank.MessagePack.MessagePackSerializer());
-		using JsonRpc rpc = new(System.Threading.Channels.Channel.CreateUnbounded<JsonRpcMessage>()) { Serializer = serializer };
+		using JsonRpc rpc = new(new MockJsonRpcPipeChannel(System.Threading.Channels.Channel.CreateUnbounded<JsonRpcMessage>(), serializer));
 		Assert.Throws<ArgumentOutOfRangeException>(() => CreateNegativeCount(rpc));
 		Assert.Throws<InvalidOperationException>(() => BuildIncomplete(rpc));
 		Assert.Throws<InvalidOperationException>(() => AddTooMany(rpc));
@@ -376,7 +377,7 @@ public class JsonCodecTests : TestBase
 		await using JsonRpcJsonChannel clientChannel = new(clientPipe, configured, framing, LoggerFactory.CreateLogger("client"));
 		await using JsonRpcJsonChannel serverChannel = new(serverPipe, new Nerdbank.Json.JsonSerializer(), framing, LoggerFactory.CreateLogger("server"));
 		using JsonRpc client = new(clientChannel);
-		Assert.Same(configured, Assert.IsType<JsonSerializerPlugin>(client.Serializer).Serializer);
+		Assert.Same(configured, Assert.IsType<JsonSerializerPlugin>(((IJsonRpcClient)client).Serializer).Serializer);
 		client.Start();
 
 		JsonRpcBatch batch = client.CreateBatch();
@@ -402,8 +403,8 @@ public class JsonCodecTests : TestBase
 		JsonSerializerPlugin serverPlugin = new(new Nerdbank.Json.JsonSerializer());
 		await using JsonRpcJsonChannel clientChannel = new(clientPipe, clientPlugin, framing, LoggerFactory.CreateLogger("client"));
 		await using JsonRpcJsonChannel serverChannel = new(serverPipe, serverPlugin, framing, LoggerFactory.CreateLogger("server"));
-		using JsonRpc client = new(clientChannel) { Serializer = clientPlugin };
-		using JsonRpc server = new(serverChannel) { Serializer = serverPlugin };
+		using JsonRpc client = new(clientChannel);
+		using JsonRpc server = new(serverChannel);
 		CancellableTarget target = new();
 		server.AddRpcTarget<ICancellableTarget>(target, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.ICancellableTarget);
 		server.Start();
@@ -428,7 +429,7 @@ public class JsonCodecTests : TestBase
 		JsonSerializerPlugin serverPlugin = new(new Nerdbank.Json.JsonSerializer());
 		await using JsonRpcJsonChannel clientChannel = new(clientPipe, clientPlugin, framing, LoggerFactory.CreateLogger("client"));
 		await using JsonRpcJsonChannel serverChannel = new(serverPipe, serverPlugin, framing, LoggerFactory.CreateLogger("server"));
-		using JsonRpc server = new(serverChannel) { Serializer = serverPlugin };
+		using JsonRpc server = new(serverChannel);
 		server.AddRpcTarget<ICalculator>(new Calculator(), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.ICalculator);
 		server.Start();
 
@@ -523,7 +524,7 @@ public class JsonCodecTests : TestBase
 		(IDuplexPipe clientPipe, IDuplexPipe peerPipe) = FullDuplexStream.CreatePipePair();
 		JsonSerializerPlugin plugin = new(new Nerdbank.Json.JsonSerializer());
 		await using JsonRpcJsonChannel channel = new(clientPipe, plugin, framing, LoggerFactory.CreateLogger("client"));
-		using JsonRpc client = new(channel) { Serializer = plugin };
+		using JsonRpc client = new(channel);
 		client.Start();
 		Task<int> pending = client.RequestAsync<int>("method", JsonRpcValue.FromJson("[]"u8.ToArray()), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken).AsTask();
 		byte[] invalid = Encoding.UTF8.GetBytes("{\"jsonrpc\":\"2.0\",\"result\":4} ");

@@ -11,7 +11,7 @@ public class GeneratedProxyBatchTests
 	public async Task GeneratedProxy_BatchUsesAttachmentOptions()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
-		using JsonRpc rpc = new(transport);
+		using JsonRpc rpc = new(new MockJsonRpcPipeChannel(transport));
 		rpc.Start();
 		using JsonRpcBatch batch = rpc.CreateBatch();
 		IPositionalCalculator positional = batch.Attach<IPositionalCalculator>();
@@ -38,8 +38,8 @@ public class GeneratedProxyBatchTests
 
 		JsonRpcMessageBatch responses = new(
 			[
-				new JsonRpcResult { Id = first.Id!.Value, Result = rpc.Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) },
-				new JsonRpcResult { Id = second.Id!.Value, Result = rpc.Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) },
+				new JsonRpcResult { Id = first.Id!.Value, Result = ((IJsonRpcClient)rpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) },
+				new JsonRpcResult { Id = second.Id!.Value, Result = ((IJsonRpcClient)rpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) },
 			]);
 		await remote.Writer.WriteAsync(responses, cts.Token);
 		Assert.Equal(5, await firstResult.WithCancellation(cts.Token));
@@ -50,7 +50,7 @@ public class GeneratedProxyBatchTests
 	public async Task GeneratedProxy_AttachesToBatch()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
-		JsonRpc clientRpc = new(transport);
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
 		clientRpc.Start();
 		JsonRpcBatch batch = clientRpc.CreateBatch();
 		ICalculator client = batch.Attach<ICalculator>();
@@ -73,7 +73,7 @@ public class GeneratedProxyBatchTests
 				new JsonRpcResult
 				{
 					Id = request.Id!.Value,
-					Result = (RawMessagePack)clientRpc.Serializer.Serialize(7, ShapeProvider.Default.Int32, cts.Token),
+					Result = (RawMessagePack)((IJsonRpcClient)clientRpc).Serializer.Serialize(7, ShapeProvider.Default.Int32, cts.Token),
 				},
 			]);
 		await remote.Writer.WriteAsync(responseBatch, cts.Token);

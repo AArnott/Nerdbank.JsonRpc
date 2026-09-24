@@ -72,7 +72,7 @@ public class GeneratedProxyTests
 	public async Task GeneratedProxy_CanPackArgumentsPositionally()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
-		JsonRpc clientRpc = new(transport);
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
 		clientRpc.Start();
 		IPositionalCalculator client = clientRpc.Attach<IPositionalCalculator>(new JsonRpcProxyOptions());
 
@@ -92,7 +92,7 @@ public class GeneratedProxyTests
 		JsonRpcResult response = new()
 		{
 			Id = request.Id!.Value,
-			Result = (RawMessagePack)clientRpc.Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token),
+			Result = (RawMessagePack)((IJsonRpcClient)clientRpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token),
 		};
 		await remote.Writer.WriteAsync(response, cts.Token);
 
@@ -103,7 +103,7 @@ public class GeneratedProxyTests
 	public async Task GeneratedProxy_EscapesKeywordParameterNames()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
-		JsonRpc clientRpc = new(transport);
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
 		clientRpc.Start();
 		IPositionalCalculator client = clientRpc.Attach<IPositionalCalculator>();
 
@@ -122,7 +122,7 @@ public class GeneratedProxyTests
 		JsonRpcResult response = new()
 		{
 			Id = request.Id!.Value,
-			Result = (RawMessagePack)clientRpc.Serializer.Serialize(9, ShapeProvider.Default.Int32, cts.Token),
+			Result = (RawMessagePack)((IJsonRpcClient)clientRpc).Serializer.Serialize(9, ShapeProvider.Default.Int32, cts.Token),
 		};
 		await remote.Writer.WriteAsync(response, cts.Token);
 
@@ -133,7 +133,7 @@ public class GeneratedProxyTests
 	public async Task GeneratedProxy_CanPackArgumentsByNameWhenRequested()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
-		JsonRpc clientRpc = new(transport);
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
 		clientRpc.Start();
 		INamedCalculator client = clientRpc.Attach<INamedCalculator>(new JsonRpcProxyOptions { UseNamedArguments = true });
 
@@ -155,7 +155,7 @@ public class GeneratedProxyTests
 		JsonRpcResult response = new()
 		{
 			Id = request.Id!.Value,
-			Result = (RawMessagePack)clientRpc.Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token),
+			Result = (RawMessagePack)((IJsonRpcClient)clientRpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token),
 		};
 		await remote.Writer.WriteAsync(response, cts.Token);
 
@@ -166,7 +166,7 @@ public class GeneratedProxyTests
 	public async Task GeneratedProxy_SameContractCanUseBothArgumentModes()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
-		using JsonRpc rpc = new(transport);
+		using JsonRpc rpc = new(new MockJsonRpcPipeChannel(transport));
 		rpc.Start();
 		IPositionalCalculator positional = rpc.Attach<IPositionalCalculator>();
 		IPositionalCalculator named = rpc.Attach<IPositionalCalculator>(new JsonRpcProxyOptions { UseNamedArguments = true });
@@ -187,8 +187,8 @@ public class GeneratedProxyTests
 		Assert.Equal("b", secondReader.ReadString());
 		Assert.Equal(3, secondReader.ReadInt32());
 
-		await remote.Writer.WriteAsync(new JsonRpcResult { Id = first.Id!.Value, Result = rpc.Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) }, cts.Token);
-		await remote.Writer.WriteAsync(new JsonRpcResult { Id = second.Id!.Value, Result = rpc.Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) }, cts.Token);
+		await remote.Writer.WriteAsync(new JsonRpcResult { Id = first.Id!.Value, Result = ((IJsonRpcClient)rpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) }, cts.Token);
+		await remote.Writer.WriteAsync(new JsonRpcResult { Id = second.Id!.Value, Result = ((IJsonRpcClient)rpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) }, cts.Token);
 		Assert.Equal(5, await positionalResult.WithCancellation(cts.Token));
 		Assert.Equal(5, await namedResult.WithCancellation(cts.Token));
 	}
@@ -197,7 +197,7 @@ public class GeneratedProxyTests
 	public void GeneratedProxy_AttachRequiresGeneratedProxyMetadata()
 	{
 		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
-		JsonRpc clientRpc = new(transport);
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
 
 		NotSupportedException ex = Assert.Throws<NotSupportedException>(() => clientRpc.Attach<INotGeneratedProxy>());
 		Assert.Contains(nameof(INotGeneratedProxy), ex.Message);
@@ -207,7 +207,7 @@ public class GeneratedProxyTests
 	public void GeneratedProxy_AttachRequiresInterfaceType()
 	{
 		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
-		JsonRpc clientRpc = new(transport);
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
 
 		ArgumentException ex = Assert.Throws<ArgumentException>(() => clientRpc.Attach(typeof(string)));
 		Assert.Contains("interface", ex.Message, StringComparison.OrdinalIgnoreCase);

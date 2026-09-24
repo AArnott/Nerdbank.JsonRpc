@@ -50,8 +50,8 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	/// <summary>Gets the encoding used by this transport.</summary>
 	public abstract JsonRpcEncoding Encoding { get; }
 
-	/// <summary>Gets the plugin bound to the transport, if it requires a particular instance.</summary>
-	public virtual JsonRpcSerializer? SerializerPlugin => null;
+	/// <summary>Gets the serializer selected by this channel for application values.</summary>
+	public abstract JsonRpcSerializer Serializer { get; }
 
 	protected ILogger Logger { get; }
 

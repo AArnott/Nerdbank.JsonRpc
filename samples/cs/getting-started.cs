@@ -1,7 +1,6 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-using System.Threading.Channels;
 using Nerdbank.JsonRpc;
 using PolyType;
 
@@ -31,7 +30,7 @@ public sealed class Calculator : IServerCalculator
 
 public sealed class Example
 {
-    public async Task RunAsync(Channel<JsonRpcMessage> channel)
+    public async Task RunAsync(JsonRpcPipeChannel channel)
     {
         #region attach-proxy
         JsonRpc rpc = new(channel);

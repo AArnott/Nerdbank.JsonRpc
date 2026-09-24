@@ -54,11 +54,6 @@ public abstract class JsonRpcSerializer
 	/// <param name="name">The argument name.</param>
 	internal abstract void WriteArgumentName(IBufferWriter<byte> buffer, string name);
 
-	/// <summary>Checks whether two plugin wrappers retain the same concrete serializer.</summary>
-	/// <param name="other">The transport's serializer plugin.</param>
-	/// <returns>Whether both plugins retain the same instance.</returns>
-	internal abstract bool UsesSameSerializer(JsonRpcSerializer other);
-
 	/// <summary>Rejects a mismatched or invalid application value before queuing a message.</summary>
 	/// <param name="message">The message to check.</param>
 	internal void ValidateMessage(JsonRpcMessage message)
