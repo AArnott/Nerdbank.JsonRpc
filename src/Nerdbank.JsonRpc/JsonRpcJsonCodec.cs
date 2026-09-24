@@ -52,13 +52,13 @@ internal static class JsonRpcJsonCodec
 	internal static RequestId ReadId(JsonElement id) => id.ValueKind == JsonValueKind.Number && !IsIntegerToken(id)
 		? throw new ProtocolViolationException("JSON-RPC id must be an integer token.")
 		: id.ValueKind switch
-	{
-		JsonValueKind.Null => default,
-		JsonValueKind.String => new RequestId(id.GetString()!),
-		JsonValueKind.Number when id.TryGetInt64(out long signed) => new RequestId(signed),
-		JsonValueKind.Number when id.TryGetUInt64(out ulong unsigned) => new RequestId(unsigned),
-		_ => throw new ProtocolViolationException("JSON-RPC id must be a string, integer, or null (signed 64-bit or unsigned 64-bit range)."),
-	};
+		{
+			JsonValueKind.Null => default,
+			JsonValueKind.String => new RequestId(id.GetString()!),
+			JsonValueKind.Number when id.TryGetInt64(out long signed) => new RequestId(signed),
+			JsonValueKind.Number when id.TryGetUInt64(out ulong unsigned) => new RequestId(unsigned),
+			_ => throw new ProtocolViolationException("JSON-RPC id must be a string, integer, or null (signed 64-bit or unsigned 64-bit range)."),
+		};
 
 	/// <summary>Writes the protocol ID without coercing its JSON token kind.</summary>
 	/// <param name="writer">The JSON writer.</param>
