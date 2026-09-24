@@ -8,7 +8,7 @@ For JSON, configure a <xref:Nerdbank.Json.JsonSerializer>, pass it to a <xref:Ne
 
 [!code-csharp[](../../samples/cs/encodings.cs#json-encoding)]
 
-To customize MessagePack instead, assign a configured <xref:Nerdbank.MessagePack.MessagePackSerializer> to <xref:Nerdbank.JsonRpc.JsonRpc.Serializer> before starting. Both concrete serializers are wrapped automatically by <xref:Nerdbank.JsonRpc.JsonSerializerPlugin> or <xref:Nerdbank.JsonRpc.MessagePackSerializerPlugin>; the wrappers retain the exact configured instances. Use a <xref:Nerdbank.JsonRpc.StreamingJsonRpcMessageChannel> for pipe-based MessagePack transport.
+To customize MessagePack instead, assign a configured <xref:Nerdbank.MessagePack.MessagePackSerializer> to <xref:Nerdbank.JsonRpc.JsonRpc.Serializer> before starting. Both concrete serializers are wrapped automatically by <xref:Nerdbank.JsonRpc.JsonSerializerPlugin> or <xref:Nerdbank.JsonRpc.MessagePackSerializerPlugin>; the wrappers retain the exact configured instances. Use <xref:Nerdbank.JsonRpc.JsonRpcMessagePackChannel> for pipe-based MessagePack transport: it streams self-delimiting MessagePack values without additional framing. The original <xref:Nerdbank.JsonRpc.StreamingJsonRpcMessageChannel> name remains available for compatibility.
 
 ## JSON framing
 

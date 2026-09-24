@@ -1,42 +1,23 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO.Pipelines;
-using System.Net;
-using System.Runtime.CompilerServices;
-using Microsoft;
 using Microsoft.Extensions.Logging;
-using Nerdbank.MessagePack;
 
 namespace Nerdbank.JsonRpc;
 
-/// <summary>
-/// Provides a JSON-RPC message channel that streams messages over a duplex pipe
-/// without any headers or framing added.
-/// </summary>
-public class StreamingJsonRpcMessageChannel : JsonRpcPipeChannel
+/// <summary>Provides the original name for the MessagePack JSON-RPC pipe channel.</summary>
+/// <remarks>Use <see cref="JsonRpcMessagePackChannel"/> for new code.</remarks>
+[Obsolete("Use JsonRpcMessagePackChannel to make the MessagePack encoding explicit.")]
+public class StreamingJsonRpcMessageChannel : JsonRpcMessagePackChannel
 {
+	/// <summary>Initializes a new instance of the <see cref="StreamingJsonRpcMessageChannel"/> class.</summary>
+	/// <param name="pipe">The connected duplex pipe.</param>
+	/// <param name="logger">The transport logger.</param>
+	/// <param name="inboundCapacity">The inbound queue limit, or null for an unbounded queue.</param>
+	/// <param name="outboundCapacity">The outbound queue limit, or null for an unbounded queue.</param>
 	public StreamingJsonRpcMessageChannel(IDuplexPipe pipe, ILogger logger, int? inboundCapacity = 100, int? outboundCapacity = null)
-		: base(pipe, CreateInboundChannel(inboundCapacity), CreateOutboundChannel(outboundCapacity), logger)
+		: base(pipe, logger, inboundCapacity, outboundCapacity)
 	{
-	}
-
-	protected override async IAsyncEnumerable<JsonRpcMessage> ReceiveMessagesAsync(PipeReader reader, [EnumeratorCancellation] CancellationToken cancellationToken)
-	{
-		Requires.NotNull(reader);
-		await foreach (JsonRpcMessage? msg in Serializer.DeserializeEnumerableAsync<JsonRpcMessage>(reader, cancellationToken))
-		{
-			if (msg is null)
-			{
-				throw new ProtocolViolationException("Unexpected null value where a JSON-RPC message was expected.");
-			}
-
-			yield return msg;
-		}
-	}
-
-	protected override ValueTask SendMessageAsync(PipeWriter writer, JsonRpcMessage message, CancellationToken cancellationToken)
-	{
-		return SerializeAsync(writer, message, cancellationToken);
 	}
 }

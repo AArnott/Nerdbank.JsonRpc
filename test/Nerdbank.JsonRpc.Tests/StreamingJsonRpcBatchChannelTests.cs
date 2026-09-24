@@ -13,8 +13,8 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 	public async Task ExplicitNilIdIsNotANotification()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
-		StreamingJsonRpcMessageChannel alice = new(alicePipe, NullLogger.Instance);
-		StreamingJsonRpcMessageChannel bob = new(bobPipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel alice = new(alicePipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel bob = new(bobPipe, NullLogger.Instance);
 		await alice.Writer.WriteAsync(new JsonRpcRequest { Id = default(RequestId), Method = "testMethod" }, this.TimeoutToken);
 
 		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await bob.Reader.ReadAsync(this.TimeoutToken));
@@ -26,8 +26,8 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 	public async Task SendAndReceiveBatchPayload()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
-		StreamingJsonRpcMessageChannel alice = new(alicePipe, NullLogger.Instance);
-		StreamingJsonRpcMessageChannel bob = new(bobPipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel alice = new(alicePipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel bob = new(bobPipe, NullLogger.Instance);
 		JsonRpcMessageBatch sent = new(
 		[
 			new JsonRpcRequest { Id = 1, Method = "testMethod" },
@@ -46,8 +46,8 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 	public async Task ReceiveNestedBatchPayloadClosesChannel()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
-		StreamingJsonRpcMessageChannel alice = new(alicePipe, NullLogger.Instance);
-		StreamingJsonRpcMessageChannel bob = new(bobPipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel alice = new(alicePipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel bob = new(bobPipe, NullLogger.Instance);
 		JsonRpcMessageBatch sent = new(
 		[
 			new JsonRpcMessageBatch(
@@ -65,7 +65,7 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 	public async Task NilParamsClosesChannel()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
-		StreamingJsonRpcMessageChannel bob = new(bobPipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel bob = new(bobPipe, NullLogger.Instance);
 
 		MessagePackWriter writer = new(alicePipe.Output);
 		writer.WriteMapHeader(3);
@@ -85,7 +85,7 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 	public async Task InvalidPayloadClosesChannel()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
-		StreamingJsonRpcMessageChannel bob = new(bobPipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel bob = new(bobPipe, NullLogger.Instance);
 
 		MessagePackWriter writer = new(alicePipe.Output);
 		writer.Write(42);

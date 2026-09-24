@@ -16,8 +16,8 @@ public abstract partial class JsonRpcTests : TestBase
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 
-		StreamingJsonRpcMessageChannel clientChannel = new(clientPipe, LoggerFactory.CreateLogger("client"));
-		StreamingJsonRpcMessageChannel serverChannel = new(serverPipe, LoggerFactory.CreateLogger("server"));
+		JsonRpcMessagePackChannel clientChannel = new(clientPipe, LoggerFactory.CreateLogger("client"));
+		JsonRpcMessagePackChannel serverChannel = new(serverPipe, LoggerFactory.CreateLogger("server"));
 
 		this.clientRpc = new(clientChannel);
 		this.clientRpc.Start();

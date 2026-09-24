@@ -1,12 +1,10 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO.Pipelines;
-using System.Net;
 using System.Threading.Channels;
 using Microsoft;
 using Microsoft.Extensions.Logging;
-using Nerdbank.MessagePack;
 
 namespace Nerdbank.JsonRpc;
 
@@ -15,16 +13,11 @@ namespace Nerdbank.JsonRpc;
 /// exchange between endpoints.
 /// </summary>
 /// <remarks>
-/// Abstract methods allow a derived class to define how messages are serialized and deserialized over the pipe,
-/// and to control any framing around those messages.
+/// Derived classes select the encoding and implement serialization, deserialization, and any framing.
+/// This base class manages the pipe and message queues without choosing a wire format.
 /// </remarks>
 public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDisposable
 {
-	protected static readonly MessagePackSerializer Serializer = new()
-	{
-		InternStrings = true,
-	};
-
 	private static readonly EventId MessageSent = new(1, "Message sent");
 	private static readonly EventId MessageReceived = new(2, "Message received");
 
@@ -55,7 +48,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	}
 
 	/// <summary>Gets the encoding used by this transport.</summary>
-	public virtual JsonRpcEncoding Encoding => JsonRpcEncoding.MessagePack;
+	public abstract JsonRpcEncoding Encoding { get; }
 
 	/// <summary>Gets the plugin bound to the transport, if it requires a particular instance.</summary>
 	public virtual JsonRpcSerializer? SerializerPlugin => null;
@@ -74,35 +67,6 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 #pragma warning disable VSTHRD003 // Avoid awaiting foreign Tasks - No main thread dependency.
 		await Task.WhenAll(this.inboundTaskProcessor, this.outboundTaskProcessor).ConfigureAwait(false);
 #pragma warning restore VSTHRD003 // Avoid awaiting foreign Tasks
-	}
-
-	protected static ValueTask SerializeAsync(PipeWriter writer, JsonRpcMessage message, CancellationToken cancellationToken)
-	{
-		return message switch
-		{
-			JsonRpcRequest request => Serializer.SerializeAsync(writer, request, cancellationToken),
-			JsonRpcResult result => Serializer.SerializeAsync(writer, result, cancellationToken),
-			JsonRpcError error => Serializer.SerializeAsync(writer, error, cancellationToken),
-			JsonRpcMessageBatch batch => Serializer.SerializeAsync<JsonRpcMessage>(writer, batch, cancellationToken),
-			_ => throw new ArgumentException($"Unrecognized JSON-RPC message type: {message.GetType().FullName}", nameof(message)),
-		};
-	}
-
-	protected static async ValueTask<JsonRpcMessage?> DeserializeAsync(PipeReader reader, CancellationToken cancellationToken)
-	{
-		Requires.NotNull(reader);
-
-		// Read just to verify that we're not at the end of the stream.
-		// Then undo the read and ask the deserializer to take over.
-		ReadResult readResult = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-		if (readResult.Buffer.IsEmpty && readResult.IsCompleted)
-		{
-			return null;
-		}
-
-		reader.AdvanceTo(readResult.Buffer.Start);
-
-		return await Serializer.DeserializeAsync<JsonRpcMessage>(reader, cancellationToken).ConfigureAwait(false) ?? throw new ProtocolViolationException("Unexpected null value was received instead of JSON-RPC message.");
 	}
 
 	protected static Channel<JsonRpcMessage> CreateInboundChannel(int? capacity) => capacity is null
