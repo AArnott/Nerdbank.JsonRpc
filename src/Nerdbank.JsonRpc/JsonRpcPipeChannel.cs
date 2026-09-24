@@ -29,12 +29,13 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	private static readonly EventId MessageReceived = new(2, "Message received");
 
 	private readonly CancellationTokenSource disposalSource = new();
+	private readonly TaskCompletionSource<bool> transportReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
 	private readonly Task inboundTaskProcessor;
 	private readonly Task outboundTaskProcessor;
 	private readonly ChannelWriter<JsonRpcMessage> inboundMessageWriter;
 	private readonly ChannelReader<JsonRpcMessage> outboundMessageReader;
 
-	protected JsonRpcPipeChannel(IDuplexPipe pipe, Channel<JsonRpcMessage> inboundChannel, Channel<JsonRpcMessage> outboundChannel, ILogger logger)
+	protected JsonRpcPipeChannel(IDuplexPipe pipe, Channel<JsonRpcMessage> inboundChannel, Channel<JsonRpcMessage> outboundChannel, ILogger logger, bool startImmediately = true)
 	{
 		Requires.NotNull(pipe);
 		Requires.NotNull(inboundChannel);
@@ -47,7 +48,17 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 
 		this.inboundTaskProcessor = this.HandleInboundMessagesAsync(pipe.Input, this.disposalSource.Token);
 		this.outboundTaskProcessor = this.HandleOutboundMessagesAsync(pipe.Output, this.disposalSource.Token);
+		if (startImmediately)
+		{
+			this.StartTransport();
+		}
 	}
+
+	/// <summary>Gets the encoding used by this transport.</summary>
+	public virtual JsonRpcEncoding Encoding => JsonRpcEncoding.MessagePack;
+
+	/// <summary>Gets the plugin bound to the transport, if it requires a particular instance.</summary>
+	public virtual JsonRpcSerializer? SerializerPlugin => null;
 
 	protected ILogger Logger { get; }
 
@@ -58,6 +69,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 #else
 		this.disposalSource.Cancel();
 #endif
+		this.StartTransport();
 
 #pragma warning disable VSTHRD003 // Avoid awaiting foreign Tasks - No main thread dependency.
 		await Task.WhenAll(this.inboundTaskProcessor, this.outboundTaskProcessor).ConfigureAwait(false);
@@ -101,6 +113,9 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 		? Channel.CreateUnbounded<JsonRpcMessage>(new UnboundedChannelOptions { SingleReader = true })
 		: Channel.CreateBounded<JsonRpcMessage>(new BoundedChannelOptions(capacity.Value) { SingleReader = true });
 
+	/// <summary>Starts transport processing after a derived channel has initialized its framing.</summary>
+	protected void StartTransport() => this.transportReady.TrySetResult(true);
+
 	protected abstract IAsyncEnumerable<JsonRpcMessage> ReceiveMessagesAsync(PipeReader reader, CancellationToken cancellationToken);
 
 	protected abstract ValueTask SendMessageAsync(PipeWriter writer, JsonRpcMessage message, CancellationToken cancellationToken);
@@ -112,6 +127,9 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	{
 		try
 		{
+#pragma warning disable VSTHRD003 // Waiting for this channel's own transport initialization gate.
+			await this.transportReady.Task.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
 			await foreach (JsonRpcMessage message in this.ReceiveMessagesAsync(reader, cancellationToken))
 			{
 				this.Logger.Log(LogLevel.Information, MessageReceived, message, null, FormatLoggedMessage);
@@ -140,6 +158,9 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 		Requires.NotNull(writer);
 		try
 		{
+#pragma warning disable VSTHRD003 // Waiting for this channel's own transport initialization gate.
+			await this.transportReady.Task.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
 			while (!this.outboundMessageReader.Completion.IsCompleted)
 			{
 				JsonRpcMessage message = await this.outboundMessageReader.ReadAsync(cancellationToken).ConfigureAwait(false);

@@ -9,7 +9,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Microsoft.VisualStudio.Threading" />
+    <PackageReference Include="Nerdbank.Json" />
     <PackageReference Include="Nerdbank.MessagePack" />
+    <PackageReference Include="Nerdbank.Streams" />
   </ItemGroup>
   <ItemGroup Condition="'$(TargetFrameworkIdentifier)'!='.NETCoreApp'">
     <PackageReference Include="System.Threading.Channels" />

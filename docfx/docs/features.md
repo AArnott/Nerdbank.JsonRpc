@@ -2,15 +2,33 @@
 
 ## Core protocol
 
-Nerdbank.JsonRpc implements the JSON-RPC request/response and notification model over MessagePack with strongly typed server dispatch.
+Nerdbank.JsonRpc implements the JSON-RPC request/response and notification model over MessagePack or UTF-8 JSON with strongly typed server dispatch. MessagePack remains the default encoding.
 
 Current highlights:
 
 - Typed request and notification APIs on `JsonRpc`
 - Server target registration based on PolyType method shapes
 - Cancellation propagation using `$/cancelRequest`
-- Pipe-based message transport via <xref:Nerdbank.JsonRpc.StreamingJsonRpcMessageChannel>
+- Pipe-based MessagePack transport via <xref:Nerdbank.JsonRpc.StreamingJsonRpcMessageChannel>, or JSON transport via <xref:Nerdbank.JsonRpc.JsonRpcJsonChannel>
 - One-shot JSON-RPC batch payloads with per-request result/error completion
+
+
+## Selecting an encoding
+
+MessagePack is the default. To use JSON, configure a `Nerdbank.Json.JsonSerializer`, pass it to the JSON pipe channel, and assign **the same instance** to `JsonRpc.Serializer` before calling `Start`:
+
+```csharp
+var configured = new Nerdbank.Json.JsonSerializer();
+var channel = new JsonRpcJsonChannel(pipe, configured, JsonRpcJsonFraming.ContentLength, logger);
+var rpc = new JsonRpc(channel) { Serializer = configured };
+rpc.Start();
+```
+
+`JsonRpcJsonFraming.NewlineDelimited` sends one compact JSON object or batch per line; `ContentLength` sends `Content-Length: <UTF-8 byte count>\r\n\r\n` followed by exactly that many bytes. Both peers must agree on the framing; neither endpoint sniffs the input or switches codecs mid-connection. An empty frame, oversized frame (more than 8 MiB), malformed header, or incomplete frame faults the connection. To customize MessagePack instead, assign your `MessagePackSerializer` to `JsonRpc.Serializer` before starting; it is wrapped automatically. The wrappers (`JsonSerializerPlugin` and `MessagePackSerializerPlugin`) retain the exact configured serializer instances.
+
+Application payloads (`JsonRpcRequest.Arguments`, `JsonRpcResult.Result`, and optional `JsonRpcErrorDetails.Data`) use `JsonRpcValue`: an owned, encoding-tagged, **already serialized** value. Create one with `JsonRpcValue.FromJson(utf8)` or `JsonRpcValue.FromMessagePack(raw)`; `AsMessagePack()` rejects JSON, and `Bytes` returns a copy. A default value means omitted `params` (or absent error data); an encoded JSON `null` or MessagePack nil is *present*. A result must always have a value. Sending a value tagged for the wrong codec is rejected, not transcoded. Existing code using `RawMessagePack` can use the MessagePack bridge explicitly. Typed calls and generated proxies use the selected serializer and PolyType shapes automatically; generated proxies send arrays by default or objects when `UseNamedArguments = true`.
+
+NuGet references both serializer packages. On a MessagePack-only deployment, `Nerdbank.Json.dll` can be excluded without loading it. Currently Nerdbank.Json itself loads Nerdbank.MessagePack, so the inverse deployment exclusion is not supported.
 
 
 ## Batching
@@ -34,9 +52,9 @@ Servers do not need special target methods or registration changes to support ba
 
 ## Protocol failures and request IDs
 
-The MessagePack transport rejects an invalid JSON-RPC envelope or batch, logs the error, and faults the connection and every pending request (including requests queued in a batch). It does not try to match a malformed response to a request without a trustworthy `id`. A valid response with a value that cannot be converted to the expected return type instead fails only that request; other calls can continue. A valid request whose arguments cannot be converted receives an `InvalidParams` error with its original `id`; a notification receives no reply. Application exception details are not returned to peers.
+Both transports reject an invalid JSON-RPC envelope or batch, log the error, and fault the connection and every pending request (including requests queued in a batch). Neither transport tries to match a malformed response to a request without a trustworthy `id`. A valid response with a value that cannot be converted to the expected return type instead fails only that request; other calls can continue. A valid request whose arguments cannot be converted receives an `InvalidParams` error with its original `id`; a notification receives no reply. Application exception details are not returned to peers.
 
-Outbound request IDs are increasing integers. Inbound requests may use integer, string, or explicitly nil IDs; responses echo the same kind and value. Only an *omitted* `id` denotes a notification. Sequential requests may reuse an explicitly nil ID once the earlier request has completed.
+Outbound request IDs are increasing integers. Inbound requests may use integer, string, or explicitly null/nil IDs; responses echo the same kind and value. Only an *omitted* `id` denotes a notification. Sequential requests may reuse an explicitly null/nil ID once the earlier request has completed. JSON numeric IDs are supported in the signed 64-bit and unsigned 64-bit integer ranges; fractional and exponent-form IDs are rejected rather than coerced.
 
 ## Generated client proxies
 
@@ -52,7 +70,7 @@ Supported generated method shapes currently include:
 - `Task`
 - `void` notifications
 
-Argument packing defaults to positional MessagePack arrays. If a contract needs named arguments instead, apply `[GenerateJsonRpcProxy(UseNamedArguments = true)]` to emit a map keyed by parameter name.
+Argument packing defaults to positional arrays in the selected encoding. If a contract needs named arguments instead, apply `[GenerateJsonRpcProxy(UseNamedArguments = true)]` to emit an object/map keyed by parameter name.
 
 The consumer flow is:
 

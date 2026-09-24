@@ -8,6 +8,14 @@ namespace Nerdbank.JsonRpc;
 [GenerateShape]
 public partial class JsonRpcResult : JsonRpcResponse
 {
-	[PropertyShape(Name = "result")]
-	public required RawMessagePack Result { get; init; } = MsgPackValues.EmptyMap;
+	[PropertyShape(Ignore = true)]
+	public JsonRpcValue Result { get; init; }
+
+	/// <summary>Gets the MessagePack representation used by the MessagePack envelope converter.</summary>
+	[PropertyShape(IsRequired = true, Name = "result")]
+	public RawMessagePack MessagePackResult
+	{
+		get => this.Result.AsMessagePack();
+		init => this.Result = JsonRpcValue.FromMessagePack(value);
+	}
 }

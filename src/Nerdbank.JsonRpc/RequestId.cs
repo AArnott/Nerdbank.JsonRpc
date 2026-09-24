@@ -66,6 +66,18 @@ public partial struct RequestId : IEquatable<RequestId>
 		}
 	}
 
+	/// <summary>Gets a value indicating whether this ID is a string token.</summary>
+	internal bool IsString => this.utf8Value.HasValue;
+
+	/// <summary>Gets the signed integer token, when present.</summary>
+	internal long? SignedValue => this.numberValue;
+
+	/// <summary>Gets the unsigned integer token, when present.</summary>
+	internal ulong? UnsignedValue => this.unsignedValue;
+
+	/// <summary>Gets a value indicating whether this ID is explicitly null.</summary>
+	internal bool IsNull => !this.utf8Value.HasValue && !this.numberValue.HasValue && !this.unsignedValue.HasValue;
+
 	private readonly ReadOnlySpan<byte> Utf8Value => (this.utf8Value ?? default).Span;
 
 	public static implicit operator RequestId(ReadOnlyMemory<byte> value) => new RequestId(value);

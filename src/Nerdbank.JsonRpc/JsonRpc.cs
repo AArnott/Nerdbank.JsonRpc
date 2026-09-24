@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Collections.Concurrent;
@@ -26,6 +26,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	private readonly ConcurrentDictionary<RequestId, TaskCompletionSource<JsonRpcResponse>> pendingOutboundRequests = new();
 	private readonly Action<object?> cancelOutboundRequestDelegate;
 	private readonly Channel<JsonRpcMessage> channel;
+	private JsonRpcSerializer? serializer;
 	private Task? readerTask;
 	private int nextRequestId;
 
@@ -48,15 +49,16 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	/// <summary>
 	/// Gets the default serializer used for JSON-RPC messages.
 	/// </summary>
-	public static MessagePackSerializer DefaultSerializer { get; } = new MessagePackSerializer
-	{
-		InternStrings = true,
-	};
+	public static JsonRpcSerializer DefaultSerializer => DefaultSerializerHolder.Instance;
 
 	/// <summary>
 	/// Gets the serializer used for JSON-RPC messages by this instance.
 	/// </summary>
-	public MessagePackSerializer Serializer { get; init; } = DefaultSerializer;
+	public JsonRpcSerializer Serializer
+	{
+		get => this.serializer ??= DefaultSerializer;
+		init => this.serializer = value ?? throw new ArgumentNullException(nameof(value));
+	}
 
 	public JsonRpcState State =>
 		this.Completion.IsFaulted ? JsonRpcState.Faulted :
@@ -69,6 +71,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	public bool IsDisposed => this.disposalSource.IsCancellationRequested;
 
 	internal CancellationToken DisposalToken => this.disposalSource.Token;
+
+	/// <inheritdoc/>
+	public JsonRpcArgumentsBuilder CreateArguments(bool named) => new(this.Serializer, named);
 
 #if NET
 	public void AddRpcTarget<T>(T target)
@@ -132,7 +137,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		{
 			Id = this.GetNextRequestId(),
 			Method = method,
-			Arguments = (RawMessagePack)this.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = this.Serializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
 		return this.AwaitTypedResponseAsync<TResult>(request, resultShape, this.RequestAsync(request, cancellationToken), cancellationToken);
@@ -144,7 +149,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		{
 			Id = this.GetNextRequestId(),
 			Method = method,
-			Arguments = (RawMessagePack)this.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = this.Serializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
 		return this.AwaitVoidResponseAsync(this.RequestAsync(request, cancellationToken));
@@ -156,14 +161,14 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		{
 			Id = null,
 			Method = method,
-			Arguments = (RawMessagePack)this.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = this.Serializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
 		return this.PostMessageAsync(request, cancellationToken);
 	}
 
 	/// <inheritdoc/>
-	public ValueTask RequestAsync(string method, RawMessagePack arguments, CancellationToken cancellationToken)
+	public ValueTask RequestAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		JsonRpcRequest request = new()
 		{
@@ -176,7 +181,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	}
 
 	/// <inheritdoc/>
-	public ValueTask<TResult> RequestAsync<TResult>(string method, RawMessagePack arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
+	public ValueTask<TResult> RequestAsync<TResult>(string method, JsonRpcValue arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
 		Requires.NotNull(resultShape);
 
@@ -191,7 +196,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	}
 
 	/// <inheritdoc/>
-	public ValueTask NotifyAsync(string method, RawMessagePack arguments, CancellationToken cancellationToken)
+	public ValueTask NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
 
@@ -207,6 +212,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 
 	public void Start()
 	{
+		if (this.channel is JsonRpcPipeChannel pipeChannel && (pipeChannel.Encoding != this.Serializer.Encoding || (pipeChannel.SerializerPlugin is { } plugin && !this.Serializer.UsesSameSerializer(plugin))))
+		{
+			throw new InvalidOperationException("The channel encoding must match the JSON-RPC serializer.");
+		}
+
 		this.readerTask = this.ReadAsync(this.channel.Reader);
 	}
 
@@ -295,11 +305,15 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		return new JsonRpcRequest
 		{
 			Method = SpecialCancelMethodName,
-			Arguments = (RawMessagePack)this.Serializer.Serialize(new CancelRequestParams(request.Id.Value), cancellationToken),
+			Arguments = this.Serializer.SerializeCancellation(request.Id.Value, cancellationToken),
 		};
 	}
 
-	internal ValueTask PostMessageAsync(JsonRpcMessage message, CancellationToken cancellationToken = default) => this.channel.Writer.WriteAsync(message, cancellationToken);
+	internal ValueTask PostMessageAsync(JsonRpcMessage message, CancellationToken cancellationToken = default)
+	{
+		this.Serializer.ValidateMessage(message);
+		return this.channel.Writer.WriteAsync(message, cancellationToken);
+	}
 
 	internal void PostMessage(JsonRpcMessage message) => this.FaultOnFailure(this.PostMessageAsync(message).AsTask());
 
@@ -637,5 +651,10 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 				tracker.CancellationTokenSource?.Cancel();
 			}
 		}
+	}
+
+	private static class DefaultSerializerHolder
+	{
+		internal static readonly JsonRpcSerializer Instance = new MessagePackSerializerPlugin(new MessagePackSerializer { InternStrings = true });
 	}
 }

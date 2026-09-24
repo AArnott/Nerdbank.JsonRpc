@@ -2,7 +2,6 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using Microsoft;
-using Nerdbank.MessagePack;
 
 namespace Nerdbank.JsonRpc;
 
@@ -28,7 +27,10 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 	}
 
 	/// <inheritdoc/>
-	public MessagePackSerializer Serializer => this.owner.Serializer;
+	public JsonRpcSerializer Serializer => this.owner.Serializer;
+
+	/// <inheritdoc/>
+	public JsonRpcArgumentsBuilder CreateArguments(bool named) => new(this.Serializer, named);
 
 	/// <summary>
 	/// Attaches a generated client proxy for an RPC contract interface to this batch.
@@ -125,7 +127,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 		{
 			Id = this.owner.GetNextRequestId(),
 			Method = method,
-			Arguments = (RawMessagePack)this.owner.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = this.owner.Serializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
 		return this.owner.AwaitTypedResponseAsync(request, resultShape, this.AddRequestAsync(request, cancellationToken), cancellationToken);
@@ -147,7 +149,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 		{
 			Id = this.owner.GetNextRequestId(),
 			Method = method,
-			Arguments = (RawMessagePack)this.owner.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = this.owner.Serializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
 		return this.owner.AwaitVoidResponseAsync(this.AddRequestAsync(request, cancellationToken));
@@ -169,7 +171,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 		{
 			Id = null,
 			Method = method,
-			Arguments = (RawMessagePack)this.owner.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = this.owner.Serializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
 		this.AddNotification(request, cancellationToken);
@@ -178,7 +180,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 
 	/// <inheritdoc/>
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
-	public ValueTask RequestAsync(string method, RawMessagePack arguments, CancellationToken cancellationToken)
+	public ValueTask RequestAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		JsonRpcRequest request = new()
 		{
@@ -192,7 +194,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 
 	/// <inheritdoc/>
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
-	public ValueTask<TResult> RequestAsync<TResult>(string method, RawMessagePack arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
+	public ValueTask<TResult> RequestAsync<TResult>(string method, JsonRpcValue arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
 		Requires.NotNull(resultShape);
 
@@ -208,7 +210,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 
 	/// <inheritdoc/>
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
-	public ValueTask NotifyAsync(string method, RawMessagePack arguments, CancellationToken cancellationToken)
+	public ValueTask NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		JsonRpcRequest request = new()
 		{
@@ -456,6 +458,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 
 	private void AddEntry(Entry entry)
 	{
+		this.owner.Serializer.ValidateMessage(entry.Request);
 		lock (this.syncObject)
 		{
 			this.ThrowIfDisposedOrSent();

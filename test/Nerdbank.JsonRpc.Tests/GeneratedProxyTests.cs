@@ -83,7 +83,7 @@ public class GeneratedProxyTests
 		Assert.Equal(nameof(IPositionalCalculator.SubtractAsync), request.Method);
 		Assert.NotNull(request.Id);
 
-		MessagePackReader reader = new(request.Arguments);
+		MessagePackReader reader = new(request.Arguments.AsMessagePack());
 		Assert.Equal(MessagePackType.Array, reader.NextMessagePackType);
 		Assert.Equal(2, reader.ReadArrayHeader());
 		Assert.Equal(9, reader.ReadInt32());
@@ -114,7 +114,7 @@ public class GeneratedProxyTests
 		Assert.Equal(nameof(IPositionalCalculator.EchoKeywordAsync), request.Method);
 		Assert.NotNull(request.Id);
 
-		MessagePackReader reader = new(request.Arguments);
+		MessagePackReader reader = new(request.Arguments.AsMessagePack());
 		Assert.Equal(MessagePackType.Array, reader.NextMessagePackType);
 		Assert.Equal(1, reader.ReadArrayHeader());
 		Assert.Equal(9, reader.ReadInt32());
@@ -144,7 +144,7 @@ public class GeneratedProxyTests
 		Assert.Equal(nameof(INamedCalculator.SubtractAsync), request.Method);
 		Assert.NotNull(request.Id);
 
-		MessagePackReader reader = new(request.Arguments);
+		MessagePackReader reader = new(request.Arguments.AsMessagePack());
 		Assert.Equal(MessagePackType.Map, reader.NextMessagePackType);
 		Assert.Equal(2, reader.ReadMapHeader());
 		Assert.Equal("a", reader.ReadString());

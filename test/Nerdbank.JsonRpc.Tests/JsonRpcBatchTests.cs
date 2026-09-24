@@ -13,9 +13,9 @@ public partial class JsonRpcBatchTests : TestBase
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
 		JsonRpcBatch batch = jsonRpc.CreateBatch();
-		Task<int> sumTask = batch.RequestAsync<int>("Add", NilMsgPack, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken).AsTask();
-		Task voidTask = batch.RequestAsync("Ping", NilMsgPack, this.TimeoutToken).AsTask();
-		await batch.NotifyAsync("Notify", NilMsgPack, this.TimeoutToken);
+		Task<int> sumTask = batch.RequestAsync<int>("Add", EmptyParamsMsgPack, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken).AsTask();
+		Task voidTask = batch.RequestAsync("Ping", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
+		await batch.NotifyAsync("Notify", EmptyParamsMsgPack, this.TimeoutToken);
 
 		await batch.SendAsync(this.TimeoutToken);
 
@@ -38,7 +38,7 @@ public partial class JsonRpcBatchTests : TestBase
 				new JsonRpcResult
 				{
 					Id = sumRequest.Id.Value,
-					Result = (RawMessagePack)jsonRpc.Serializer.Serialize<int, Witness>(5, this.TimeoutToken),
+					Result = (RawMessagePack)((MessagePackSerializerPlugin)jsonRpc.Serializer).Serializer.Serialize<int, Witness>(5, this.TimeoutToken),
 				},
 			]);
 		await channel.Writer.WriteAsync(responseBatch, this.TimeoutToken);
@@ -56,12 +56,12 @@ public partial class JsonRpcBatchTests : TestBase
 		await Assert.ThrowsAsync<InvalidOperationException>(() => emptyBatch.SendAsync(this.TimeoutToken).AsTask());
 
 		JsonRpcBatch batch = jsonRpc.CreateBatch();
-		await batch.NotifyAsync("Notify", NilMsgPack, this.TimeoutToken);
+		await batch.NotifyAsync("Notify", EmptyParamsMsgPack, this.TimeoutToken);
 		await batch.SendAsync(this.TimeoutToken);
 		Assert.IsType<JsonRpcMessageBatch>(await channel.Reader.ReadAsync(this.TimeoutToken));
 
 		await Assert.ThrowsAsync<InvalidOperationException>(() => batch.SendAsync(this.TimeoutToken).AsTask());
-		await Assert.ThrowsAsync<InvalidOperationException>(() => batch.NotifyAsync("Notify", NilMsgPack, this.TimeoutToken).AsTask());
+		await Assert.ThrowsAsync<InvalidOperationException>(() => batch.NotifyAsync("Notify", EmptyParamsMsgPack, this.TimeoutToken).AsTask());
 	}
 
 	[Fact]
@@ -69,7 +69,7 @@ public partial class JsonRpcBatchTests : TestBase
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
 		JsonRpcBatch batch = jsonRpc.CreateBatch();
-		Task requestTask = batch.RequestAsync("Ping", NilMsgPack, this.TimeoutToken).AsTask();
+		Task requestTask = batch.RequestAsync("Ping", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
 
 		batch.Dispose();
 
@@ -83,8 +83,8 @@ public partial class JsonRpcBatchTests : TestBase
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
 		JsonRpcBatch batch = jsonRpc.CreateBatch();
 		using CancellationTokenSource cts = new();
-		Task requestTask = batch.RequestAsync("Canceled", NilMsgPack, cts.Token).AsTask();
-		await batch.NotifyAsync("Notify", NilMsgPack, this.TimeoutToken);
+		Task requestTask = batch.RequestAsync("Canceled", EmptyParamsMsgPack, cts.Token).AsTask();
+		await batch.NotifyAsync("Notify", EmptyParamsMsgPack, this.TimeoutToken);
 
 		cts.Cancel();
 		await batch.SendAsync(this.TimeoutToken);
@@ -101,7 +101,7 @@ public partial class JsonRpcBatchTests : TestBase
 		(_, Channel<JsonRpcMessage> jsonRpcChannel) = MockChannel<JsonRpcMessage>.CreatePair();
 		JsonRpc jsonRpc = new(jsonRpcChannel);
 		JsonRpcBatch batch = jsonRpc.CreateBatch();
-		Task requestTask = batch.RequestAsync("Ping", NilMsgPack, this.TimeoutToken).AsTask();
+		Task requestTask = batch.RequestAsync("Ping", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
 
 		InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() => batch.SendAsync(this.TimeoutToken).AsTask());
 
@@ -114,9 +114,9 @@ public partial class JsonRpcBatchTests : TestBase
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
 		JsonRpcBatch batch = jsonRpc.CreateBatch();
-		Task firstTask = batch.RequestAsync("First", NilMsgPack, this.TimeoutToken).AsTask();
-		Task secondTask = batch.RequestAsync("Second", NilMsgPack, this.TimeoutToken).AsTask();
-		await batch.NotifyAsync("Notify", NilMsgPack, this.TimeoutToken);
+		Task firstTask = batch.RequestAsync("First", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
+		Task secondTask = batch.RequestAsync("Second", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
+		await batch.NotifyAsync("Notify", EmptyParamsMsgPack, this.TimeoutToken);
 		await batch.SendAsync(this.TimeoutToken);
 
 		JsonRpcMessageBatch sent = Assert.IsType<JsonRpcMessageBatch>(await channel.Reader.ReadAsync(this.TimeoutToken));
@@ -156,7 +156,7 @@ public partial class JsonRpcBatchTests : TestBase
 		JsonRpc jsonRpc = new(new FailingSecondWriteChannel());
 		jsonRpc.Start();
 		JsonRpcBatch batch = jsonRpc.CreateBatch();
-		Task requestTask = batch.RequestAsync("LongRunning", NilMsgPack, this.TimeoutToken).AsTask();
+		Task requestTask = batch.RequestAsync("LongRunning", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
 		await batch.SendAsync(this.TimeoutToken);
 
 		await Assert.ThrowsAsync<InvalidOperationException>(() => batch.CancelAllAsync().AsTask());
@@ -169,7 +169,7 @@ public partial class JsonRpcBatchTests : TestBase
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
 		JsonRpcBatch batch = jsonRpc.CreateBatch();
 		using CancellationTokenSource cts = new();
-		Task requestTask = batch.RequestAsync("LongRunning", NilMsgPack, cts.Token).AsTask();
+		Task requestTask = batch.RequestAsync("LongRunning", EmptyParamsMsgPack, cts.Token).AsTask();
 		await batch.SendAsync(this.TimeoutToken);
 
 		JsonRpcMessageBatch sent = Assert.IsType<JsonRpcMessageBatch>(await channel.Reader.ReadAsync(this.TimeoutToken));
@@ -198,7 +198,7 @@ public partial class JsonRpcBatchTests : TestBase
 		jsonRpc.Start();
 		JsonRpcBatch batch = jsonRpc.CreateBatch();
 		using CancellationTokenSource cts = new();
-		Task requestTask = batch.RequestAsync("LongRunning", NilMsgPack, cts.Token).AsTask();
+		Task requestTask = batch.RequestAsync("LongRunning", EmptyParamsMsgPack, cts.Token).AsTask();
 		await batch.SendAsync(this.TimeoutToken);
 
 		cts.Cancel();
@@ -290,8 +290,8 @@ public partial class JsonRpcBatchTests : TestBase
 		JsonRpcResult second = Assert.IsType<JsonRpcResult>(responseBatch.Messages[1]);
 		Assert.Equal((RequestId)1, first.Id);
 		Assert.Equal((RequestId)2, second.Id);
-		Assert.Equal(5, jsonRpc.Serializer.Deserialize<int, Witness>(first.Result, this.TimeoutToken));
-		Assert.Equal(42, jsonRpc.Serializer.Deserialize<int, Witness>(second.Result, this.TimeoutToken));
+		Assert.Equal(5, ((MessagePackSerializerPlugin)jsonRpc.Serializer).Serializer.Deserialize<int, Witness>(first.Result.AsMessagePack(), this.TimeoutToken));
+		Assert.Equal(42, ((MessagePackSerializerPlugin)jsonRpc.Serializer).Serializer.Deserialize<int, Witness>(second.Result.AsMessagePack(), this.TimeoutToken));
 	}
 
 	[Fact]
@@ -314,8 +314,8 @@ public partial class JsonRpcBatchTests : TestBase
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
 		JsonRpcBatch batch = jsonRpc.CreateBatch();
-		Task<int> firstTask = batch.RequestAsync<int>("first", NilMsgPack, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken).AsTask();
-		Task<int> secondTask = batch.RequestAsync<int>("second", NilMsgPack, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken).AsTask();
+		Task<int> firstTask = batch.RequestAsync<int>("first", EmptyParamsMsgPack, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken).AsTask();
+		Task<int> secondTask = batch.RequestAsync<int>("second", EmptyParamsMsgPack, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken).AsTask();
 		await batch.SendAsync(this.TimeoutToken);
 
 		JsonRpcMessageBatch requestBatch = Assert.IsType<JsonRpcMessageBatch>(await channel.Reader.ReadAsync(this.TimeoutToken));
@@ -324,8 +324,8 @@ public partial class JsonRpcBatchTests : TestBase
 
 		JsonRpcMessageBatch responseBatch = new(
 			[
-				new JsonRpcResult { Id = secondRequest.Id!.Value, Result = (RawMessagePack)jsonRpc.Serializer.Serialize<int, Witness>(2, this.TimeoutToken) },
-				new JsonRpcResult { Id = firstRequest.Id!.Value, Result = (RawMessagePack)jsonRpc.Serializer.Serialize<int, Witness>(1, this.TimeoutToken) },
+				new JsonRpcResult { Id = secondRequest.Id!.Value, Result = (RawMessagePack)((MessagePackSerializerPlugin)jsonRpc.Serializer).Serializer.Serialize<int, Witness>(2, this.TimeoutToken) },
+				new JsonRpcResult { Id = firstRequest.Id!.Value, Result = (RawMessagePack)((MessagePackSerializerPlugin)jsonRpc.Serializer).Serializer.Serialize<int, Witness>(1, this.TimeoutToken) },
 			]);
 		await channel.Writer.WriteAsync(responseBatch, this.TimeoutToken);
 

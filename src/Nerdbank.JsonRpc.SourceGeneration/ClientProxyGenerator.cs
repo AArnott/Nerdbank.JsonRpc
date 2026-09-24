@@ -364,33 +364,17 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		if (method.Kind is not ProxyMethodKind.Unsupported)
 		{
-			builder.AppendLine("\t\tusing global::Nerdbank.Streams.Sequence<byte> argumentsBuffer = new();");
-			builder.AppendLine("\t\tglobal::Nerdbank.MessagePack.MessagePackWriter argumentsWriter = new(argumentsBuffer);");
-			builder.Append("\t\targumentsWriter.Write").Append(method.ArgumentMatch == ProxyArgumentMatch.Positional ? "Array" : "Map").Append("Header(").Append(method.PayloadParameters.Length).AppendLine(");");
-
+			builder.Append("\t\tglobal::Nerdbank.JsonRpc.JsonRpcArgumentsBuilder argumentsBuilder = this.jsonRpc.CreateArguments(").Append(method.ArgumentMatch == ProxyArgumentMatch.Named ? "true" : "false").AppendLine(");");
 			foreach (IParameterSymbol parameter in method.PayloadParameters)
 			{
-				if (method.ArgumentMatch == ProxyArgumentMatch.Named)
-				{
-					builder.Append("\t\targumentsWriter.Write(");
-					AppendQuoted(builder, parameter.Name).AppendLine(");");
-				}
-
-				builder.Append("\t\tthis.jsonRpc.Serializer.Serialize(ref argumentsWriter, ").Append(EscapeIdentifier(parameter.Name)).Append(", ");
-				builder.Append("this.").Append(GetShapeFieldName(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), shapeFields)).Append(", ");
-				builder.Append(cancellationToken).AppendLine(");");
+				builder.Append("\t\targumentsBuilder.Add(");
+				if (method.ArgumentMatch == ProxyArgumentMatch.Named) AppendQuoted(builder, parameter.Name); else builder.Append("null");
+				builder.Append(", ").Append(EscapeIdentifier(parameter.Name)).Append(", this.")
+					.Append(GetShapeFieldName(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), shapeFields))
+					.Append(", ").Append(cancellationToken).AppendLine(");");
 			}
 
-			builder.AppendLine("\t\targumentsWriter.Flush();");
-			builder.AppendLine("\t\tglobal::System.Buffers.ReadOnlySequence<byte> writtenSequence = argumentsBuffer.AsReadOnlySequence;");
-			builder.AppendLine("\t\tbyte[] serializedArguments = new byte[checked((int)writtenSequence.Length)];");
-			builder.AppendLine("\t\tint copiedLength = 0;");
-			builder.AppendLine("\t\tforeach (global::System.ReadOnlyMemory<byte> segment in writtenSequence)");
-			builder.AppendLine("\t\t{");
-			builder.AppendLine("\t\t\tsegment.Span.CopyTo(serializedArguments.AsSpan(copiedLength));");
-			builder.AppendLine("\t\t\tcopiedLength += segment.Length;");
-			builder.AppendLine("\t\t}");
-			builder.AppendLine("\t\tglobal::Nerdbank.MessagePack.RawMessagePack arguments = (global::Nerdbank.MessagePack.RawMessagePack)serializedArguments;");
+			builder.AppendLine("\t\tglobal::Nerdbank.JsonRpc.JsonRpcValue arguments = argumentsBuilder.Build();");
 
 			switch (method.Kind)
 			{
