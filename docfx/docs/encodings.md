@@ -6,7 +6,7 @@ Nerdbank.JsonRpc supports MessagePack (the default) and UTF-8 JSON. Configure th
 
 For JSON, configure a <xref:Nerdbank.Json.JsonSerializer>, pass it to a <xref:Nerdbank.JsonRpc.JsonRpcJsonChannel>, and assign **the same instance** to <xref:Nerdbank.JsonRpc.JsonRpc.Serializer> before calling <xref:Nerdbank.JsonRpc.JsonRpc.Start*>:
 
-[!code-csharp[](../../samples/cs/GettingStarted.cs#json-encoding)]
+[!code-csharp[](../../samples/cs/encodings.cs#json-encoding)]
 
 To customize MessagePack instead, assign a configured <xref:Nerdbank.MessagePack.MessagePackSerializer> to <xref:Nerdbank.JsonRpc.JsonRpc.Serializer> before starting. Both concrete serializers are wrapped automatically by <xref:Nerdbank.JsonRpc.JsonSerializerPlugin> or <xref:Nerdbank.JsonRpc.MessagePackSerializerPlugin>; the wrappers retain the exact configured instances. Use a <xref:Nerdbank.JsonRpc.StreamingJsonRpcMessageChannel> for pipe-based MessagePack transport.
 

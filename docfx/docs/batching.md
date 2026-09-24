@@ -2,7 +2,7 @@
 
 Use <xref:Nerdbank.JsonRpc.JsonRpc.CreateBatch> to send several JSON-RPC requests or notifications in one protocol payload. The resulting <xref:Nerdbank.JsonRpc.JsonRpcBatch> supports <xref:Nerdbank.JsonRpc.JsonRpcBatch.RequestAsync*>, <xref:Nerdbank.JsonRpc.JsonRpcBatch.NotifyAsync*>, and <xref:Nerdbank.JsonRpc.JsonRpcBatch.Attach*>. Requests return tasks immediately, but nothing is transmitted until <xref:Nerdbank.JsonRpc.JsonRpcBatch.SendAsync*> seals and queues the batch:
 
-[!code-csharp[](../../samples/cs/GettingStarted.cs#sending-batch)]
+[!code-csharp[](../../samples/cs/batching.cs#sending-batch)]
 
 Batch execution follows JSON-RPC semantics:
 
