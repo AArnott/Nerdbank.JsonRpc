@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Diagnostics;
@@ -16,13 +16,13 @@ public abstract class TestBase : IDisposable
 
 	public TestBase()
 	{
-		this.Logger = TestContext.Current.TestOutputHelper;
+		this.Logger = Console.WriteLine;
 		this.timeoutSource.Token.Register(() =>
 		{
-			this.Logger?.WriteLine($"The test has exceeded the unexpected timeout of {UnexpectedTimeout.TotalSeconds} seconds.");
+			this.Logger?.Invoke($"The test has exceeded the unexpected timeout of {UnexpectedTimeout.TotalSeconds} seconds.");
 		});
 
-		this.timeoutJoinedSource = CancellationTokenSource.CreateLinkedTokenSource(this.timeoutSource.Token, TestContext.Current.CancellationToken);
+		this.timeoutJoinedSource = CancellationTokenSource.CreateLinkedTokenSource(this.timeoutSource.Token, TestContext.Current.Execution.CancellationToken);
 	}
 
 	public static TimeSpan UnexpectedTimeout => Debugger.IsAttached ? Timeout.InfiniteTimeSpan : TimeSpan.FromSeconds(5);
@@ -32,17 +32,12 @@ public abstract class TestBase : IDisposable
 	public static ILoggerFactory LoggerFactory { get; } = Microsoft.Extensions.Logging.LoggerFactory.Create(
 		builder =>
 		{
-			if (TestContext.Current.TestOutputHelper is { } helper)
-			{
-				builder.AddProvider(new XUnitLoggerProvider(helper));
-			}
-
 			builder.SetMinimumLevel(LogLevel.Trace);
 		});
 
 	public CancellationToken TimeoutToken => this.timeoutJoinedSource.Token;
 
-	public ITestOutputHelper? Logger { get; }
+	protected Action<string>? Logger { get; }
 
 	public void Log(JsonRpcMessage message, JsonRpc jsonRpc)
 	{
@@ -57,7 +52,7 @@ public abstract class TestBase : IDisposable
 			JsonRpcRequest request => request.Method,
 			_ => message.GetType().Name,
 		};
-		logger.WriteLine(description);
+		logger(description);
 	}
 
 	public virtual void Dispose()

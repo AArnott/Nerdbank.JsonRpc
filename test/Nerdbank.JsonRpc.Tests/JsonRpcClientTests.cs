@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Threading.Channels;
@@ -23,7 +23,7 @@ public partial class JsonRpcClientTests : TestBase
 		this.jsonRpc.Start();
 	}
 
-	[Fact]
+	[Test]
 	public void LoggerDefaultsToNullLoggerAndCanBeConfigured()
 	{
 		Assert.Same(Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, this.jsonRpc.Logger);
@@ -33,7 +33,7 @@ public partial class JsonRpcClientTests : TestBase
 		Assert.Throws<ArgumentNullException>(() => new JsonRpc(new MockJsonRpcPipeChannel(Channel.CreateUnbounded<JsonRpcMessage>())) { Logger = null! });
 	}
 
-	[Fact]
+	[Test]
 	public async Task InvalidEnvelopeFaultsEveryPendingDirectAndBatchRequest()
 	{
 		Task first = this.jsonRpc.RequestAsync("First", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
@@ -49,7 +49,7 @@ public partial class JsonRpcClientTests : TestBase
 		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => this.jsonRpc.Completion.WithCancellation(this.TimeoutToken));
 	}
 
-	[Fact]
+	[Test]
 	public async Task UnreadableResultFaultsOnlyTheMatchingRequest()
 	{
 		Task<int> first = this.jsonRpc.RequestAsync<AddNamedArguments, int, Witness>("First", new AddNamedArguments { A = 1, B = 2 }, this.TimeoutToken).AsTask();
@@ -63,17 +63,17 @@ public partial class JsonRpcClientTests : TestBase
 		Assert.Equal(7, await second.WithCancellation(this.TimeoutToken));
 	}
 
-	[Fact]
+	[Test]
 	public async Task RequestWithoutStartingFirst()
 	{
 		(_, Channel<JsonRpcMessage> jsonRpcChannel) = MockChannel<JsonRpcMessage>.CreatePair();
 		JsonRpc jsonRpc = new(new MockJsonRpcPipeChannel(jsonRpcChannel));
 		InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(
 			async () => await jsonRpc.RequestAsync<AddNamedArguments, int, Witness>("Add", new AddNamedArguments { A = 2, B = 3 }, this.TimeoutToken));
-		this.Logger?.WriteLine(ex.Message);
+		this.Logger?.Invoke(ex.Message);
 	}
 
-	[Fact]
+	[Test]
 	public async Task RequestWithNamedArguments()
 	{
 		Task<int> resultTask = this.jsonRpc.RequestAsync<AddNamedArguments, int, Witness>("Add", new AddNamedArguments { A = 2, B = 3 }, this.TimeoutToken).AsTask();
@@ -85,7 +85,7 @@ public partial class JsonRpcClientTests : TestBase
 		JsonRpcResult resultMessage = new()
 		{
 			Id = requestMessage.Id.Value,
-			Result = (RawMessagePack)((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Serialize<int, Witness>(5, TestContext.Current.CancellationToken),
+			Result = (RawMessagePack)((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Serialize<int, Witness>(5, TestContext.Current!.Execution.CancellationToken),
 		};
 		await this.channel.Writer.WriteAsync(resultMessage, this.TimeoutToken);
 
@@ -93,7 +93,7 @@ public partial class JsonRpcClientTests : TestBase
 		Assert.Equal(5, result);
 	}
 
-	[Fact]
+	[Test]
 	public async Task RequestWithPositionalArguments()
 	{
 		Task<int> resultTask = this.jsonRpc.RequestAsync<AddPositionalArguments, int, Witness>("Add", new AddPositionalArguments { A = 2, B = 3 }, this.TimeoutToken).AsTask();
@@ -105,7 +105,7 @@ public partial class JsonRpcClientTests : TestBase
 		JsonRpcResult resultMessage = new()
 		{
 			Id = requestMessage.Id.Value,
-			Result = (RawMessagePack)((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Serialize<int, Witness>(5, TestContext.Current.CancellationToken),
+			Result = (RawMessagePack)((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Serialize<int, Witness>(5, TestContext.Current!.Execution.CancellationToken),
 		};
 		await this.channel.Writer.WriteAsync(resultMessage, this.TimeoutToken);
 
@@ -113,7 +113,7 @@ public partial class JsonRpcClientTests : TestBase
 		Assert.Equal(5, result);
 	}
 
-	[Fact]
+	[Test]
 	public async Task RequestWithNoReturnValue()
 	{
 		Task resultTask = this.jsonRpc.RequestAsync("Add", new AddNamedArguments { A = 2, B = 3 }, this.TimeoutToken).AsTask();
@@ -132,7 +132,7 @@ public partial class JsonRpcClientTests : TestBase
 		await resultTask.WithCancellation(this.TimeoutToken);
 	}
 
-	[Fact]
+	[Test]
 	public async Task CancelPendingRequest()
 	{
 		using CancellationTokenSource cts = new();
@@ -171,7 +171,7 @@ public partial class JsonRpcClientTests : TestBase
 		Assert.Equal(JsonRpcErrorCode.RequestCancelled, ex.ErrorDetails.Code);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Notify()
 	{
 		await this.jsonRpc.NotifyAsync("Add", new AddNamedArguments { A = 2, B = 3 }, this.TimeoutToken);
@@ -181,7 +181,7 @@ public partial class JsonRpcClientTests : TestBase
 		this.Log(requestMessage, this.jsonRpc);
 	}
 
-	[Fact]
+	[Test]
 	public async Task NotifyWithRawArgumentsHonorsCancellation()
 	{
 		using CancellationTokenSource cts = new();

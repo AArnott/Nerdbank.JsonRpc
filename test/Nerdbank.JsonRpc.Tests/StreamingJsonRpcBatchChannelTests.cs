@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO.Pipelines;
@@ -9,7 +9,7 @@ using Nerdbank.Streams;
 
 public class StreamingJsonRpcBatchChannelTests : TestBase
 {
-	[Fact]
+	[Test]
 	public async Task ExplicitNilIdIsNotANotification()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
@@ -22,7 +22,7 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 		Assert.Equal(default(RequestId), request.Id);
 	}
 
-	[Fact]
+	[Test]
 	public async Task OmittedAndPresentMessagePackParamsRemainDistinct()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
@@ -38,7 +38,7 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 		Assert.Equal(emptyMap, request.Arguments);
 	}
 
-	[Fact]
+	[Test]
 	public async Task SendAndReceiveBatchPayload()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
@@ -58,7 +58,7 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 		Assert.Equal((RequestId)2, Assert.IsType<JsonRpcResult>(recv.Messages[1]).Id);
 	}
 
-	[Fact]
+	[Test]
 	public async Task ReceiveNestedBatchPayloadClosesChannel()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
@@ -77,7 +77,7 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => bob.Reader.Completion.WithCancellation(this.TimeoutToken));
 	}
 
-	[Fact]
+	[Test]
 	public async Task NilParamsClosesChannel()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
@@ -97,7 +97,7 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => bob.Reader.Completion.WithCancellation(this.TimeoutToken));
 	}
 
-	[Fact]
+	[Test]
 	public async Task MissingErrorFieldsCloseChannel()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
@@ -117,7 +117,7 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => bob.Reader.Completion.WithCancellation(this.TimeoutToken));
 	}
 
-	[Fact]
+	[Test]
 	public async Task InvalidPayloadClosesChannel()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();

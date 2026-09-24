@@ -13,9 +13,9 @@ using PolyType;
 
 public class JsonCodecTests : TestBase
 {
-	[Theory]
-	[InlineData(JsonRpcJsonFraming.NewlineDelimited)]
-	[InlineData(JsonRpcJsonFraming.ContentLength)]
+	[Test]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited)]
+	[Arguments(JsonRpcJsonFraming.ContentLength)]
 	public async Task DirectGeneratedProxyAndBatch(JsonRpcJsonFraming framing)
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
@@ -52,9 +52,9 @@ public class JsonCodecTests : TestBase
 		Assert.Equal(99, await calculator.NotificationReceived.Task.WithCancellation(this.TimeoutToken));
 	}
 
-	[Theory]
-	[InlineData(JsonRpcJsonFraming.NewlineDelimited)]
-	[InlineData(JsonRpcJsonFraming.ContentLength)]
+	[Test]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited)]
+	[Arguments(JsonRpcJsonFraming.ContentLength)]
 	public async Task PreservesIdTypesAndValidatesEnvelope(JsonRpcJsonFraming framing)
 	{
 		(IDuplexPipe firstPipe, IDuplexPipe secondPipe) = FullDuplexStream.CreatePipePair();
@@ -89,9 +89,9 @@ public class JsonCodecTests : TestBase
 		Assert.False(Assert.IsType<JsonRpcRequest>(await second.Reader.ReadAsync(this.TimeoutToken)).HasId);
 	}
 
-	[Theory]
-	[InlineData(JsonRpcJsonFraming.NewlineDelimited)]
-	[InlineData(JsonRpcJsonFraming.ContentLength)]
+	[Test]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited)]
+	[Arguments(JsonRpcJsonFraming.ContentLength)]
 	public async Task BadResultOnlyFaultsMatchingRequest(JsonRpcJsonFraming framing)
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
@@ -115,7 +115,7 @@ public class JsonCodecTests : TestBase
 		Assert.False(client.Completion.IsFaulted);
 	}
 
-	[Fact]
+	[Test]
 	public async Task JsonChannelSharesConfiguredSerializerWithRpc()
 	{
 		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
@@ -126,7 +126,7 @@ public class JsonCodecTests : TestBase
 		Assert.Same(plugin, ((IJsonRpcClient)rpc).Serializer);
 	}
 
-	[Fact]
+	[Test]
 	public async Task RawValueOwnsBytesAndRejectsWrongEncoding()
 	{
 		byte[] buffer = "[1]"u8.ToArray();
@@ -157,9 +157,9 @@ public class JsonCodecTests : TestBase
 		await channel.DisposeAsync();
 	}
 
-	[Theory]
-	[InlineData(JsonRpcEncoding.Json)]
-	[InlineData(JsonRpcEncoding.MessagePack)]
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
 	public async Task ErrorDataDistinguishesAbsentAndExplicitNull(JsonRpcEncoding encoding)
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
@@ -189,7 +189,7 @@ public class JsonCodecTests : TestBase
 		Assert.Equal(payload, response.Error.Data);
 	}
 
-	[Fact]
+	[Test]
 	public async Task MessagePackErrorDataWirePresence()
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
@@ -217,14 +217,14 @@ public class JsonCodecTests : TestBase
 		peer.Input.AdvanceTo(read.Buffer.End);
 	}
 
-	[Theory]
-	[InlineData("")]
-	[InlineData("  ")]
-	[InlineData("[1] true")]
-	[InlineData("[1] garbage")]
-	[InlineData("[1,")]
-	[InlineData("{\"key\":}")]
-	[InlineData("\"unterminated")]
+	[Test]
+	[Arguments("")]
+	[Arguments("  ")]
+	[Arguments("[1] true")]
+	[Arguments("[1] garbage")]
+	[Arguments("[1,")]
+	[Arguments("{\"key\":}")]
+	[Arguments("\"unterminated")]
 	public void RawJsonCopiesWithoutValidating(string json)
 	{
 		byte[] input = Encoding.UTF8.GetBytes(json);
@@ -233,7 +233,7 @@ public class JsonCodecTests : TestBase
 		Assert.Equal(input, value.Bytes.ToArray());
 	}
 
-	[Fact]
+	[Test]
 	public void RawMessagePackCopiesWithoutValidating()
 	{
 		byte[] input = [(byte)MessagePackCode.Nil, (byte)MessagePackCode.Nil];
@@ -244,20 +244,20 @@ public class JsonCodecTests : TestBase
 		Assert.True(JsonRpcValue.FromMessagePack((RawMessagePack)Array.Empty<byte>()).HasValue);
 	}
 
-	[Theory]
-	[InlineData("null ")]
-	[InlineData("  {\"name\": [1, 2]} \n")]
-	[InlineData("\"hello\"")]
+	[Test]
+	[Arguments("null ")]
+	[Arguments("  {\"name\": [1, 2]} \n")]
+	[Arguments("\"hello\"")]
 	public void RawJsonAcceptsCompleteValueWithWhitespace(string json)
 	{
 		Assert.Equal(json, Encoding.UTF8.GetString(JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(json)).Bytes.ToArray()));
 	}
 
-	[Theory]
-	[InlineData(JsonRpcEncoding.Json, false)]
-	[InlineData(JsonRpcEncoding.Json, true)]
-	[InlineData(JsonRpcEncoding.MessagePack, false)]
-	[InlineData(JsonRpcEncoding.MessagePack, true)]
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, false)]
+	[Arguments(JsonRpcEncoding.Json, true)]
+	[Arguments(JsonRpcEncoding.MessagePack, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, true)]
 	public void ArgumentBuilderStreamsCompleteParameters(JsonRpcEncoding encoding, bool named)
 	{
 		JsonRpcSerializer serializer = encoding == JsonRpcEncoding.Json
@@ -301,9 +301,9 @@ public class JsonCodecTests : TestBase
 		}
 	}
 
-	[Theory]
-	[InlineData(JsonRpcEncoding.Json)]
-	[InlineData(JsonRpcEncoding.MessagePack)]
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
 	public void ArgumentBuilderRequiresExactCountAndIsSingleUse(JsonRpcEncoding encoding)
 	{
 		JsonRpcSerializer serializer = encoding == JsonRpcEncoding.Json
@@ -367,9 +367,9 @@ public class JsonCodecTests : TestBase
 		}
 	}
 
-	[Theory]
-	[InlineData(JsonRpcJsonFraming.NewlineDelimited)]
-	[InlineData(JsonRpcJsonFraming.ContentLength)]
+	[Test]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited)]
+	[Arguments(JsonRpcJsonFraming.ContentLength)]
 	public async Task BatchCancellationUsesSelectedSerializer(JsonRpcJsonFraming framing)
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
@@ -393,9 +393,9 @@ public class JsonCodecTests : TestBase
 		Assert.Equal(1, await pending.WithCancellation(this.TimeoutToken));
 	}
 
-	[Theory]
-	[InlineData(JsonRpcJsonFraming.NewlineDelimited)]
-	[InlineData(JsonRpcJsonFraming.ContentLength)]
+	[Test]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited)]
+	[Arguments(JsonRpcJsonFraming.ContentLength)]
 	public async Task ServerObservesCancellation(JsonRpcJsonFraming framing)
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
@@ -419,9 +419,9 @@ public class JsonCodecTests : TestBase
 		Assert.Equal(JsonRpcErrorCode.RequestCancelled, exception.ErrorDetails.Code);
 	}
 
-	[Theory]
-	[InlineData(JsonRpcJsonFraming.NewlineDelimited)]
-	[InlineData(JsonRpcJsonFraming.ContentLength)]
+	[Test]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited)]
+	[Arguments(JsonRpcJsonFraming.ContentLength)]
 	public async Task RequestArgumentErrorEchoesPresentIdWithoutTerminatingServer(JsonRpcJsonFraming framing)
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
@@ -447,9 +447,9 @@ public class JsonCodecTests : TestBase
 		Assert.False(server.Completion.IsFaulted);
 	}
 
-	[Theory]
-	[InlineData(JsonRpcJsonFraming.NewlineDelimited)]
-	[InlineData(JsonRpcJsonFraming.ContentLength)]
+	[Test]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited)]
+	[Arguments(JsonRpcJsonFraming.ContentLength)]
 	public async Task WritesExplicitProtocolVersionWithoutReplacingIt(JsonRpcJsonFraming framing)
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
@@ -460,7 +460,7 @@ public class JsonCodecTests : TestBase
 		peer.Input.AdvanceTo(read.Buffer.End);
 	}
 
-	[Fact]
+	[Test]
 	public async Task InvalidJsonChannelConfigurationDoesNotStartTransport()
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
@@ -474,9 +474,9 @@ public class JsonCodecTests : TestBase
 		local.Input.AdvanceTo(read.Buffer.End);
 	}
 
-	[Theory]
-	[InlineData(JsonRpcJsonFraming.NewlineDelimited)]
-	[InlineData(JsonRpcJsonFraming.ContentLength)]
+	[Test]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited)]
+	[Arguments(JsonRpcJsonFraming.ContentLength)]
 	public async Task HandlesFragmentedAndCoalescedFrames(JsonRpcJsonFraming framing)
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
@@ -502,11 +502,11 @@ public class JsonCodecTests : TestBase
 		Assert.Equal("two", Assert.IsType<JsonRpcRequest>(await channel.Reader.ReadAsync(this.TimeoutToken)).Method);
 	}
 
-	[Theory]
-	[InlineData(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"method\":\"partial\"")]
-	[InlineData(JsonRpcJsonFraming.ContentLength, "Content-Length: 100\r\n\r\n{}")]
-	[InlineData(JsonRpcJsonFraming.NewlineDelimited, "")]
-	[InlineData(JsonRpcJsonFraming.ContentLength, "Content-Length: 0\r\n\r\n")]
+	[Test]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"method\":\"partial\"")]
+	[Arguments(JsonRpcJsonFraming.ContentLength, "Content-Length: 100\r\n\r\n{}")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "")]
+	[Arguments(JsonRpcJsonFraming.ContentLength, "Content-Length: 0\r\n\r\n")]
 	public async Task InvalidOrIncompleteFramingFaultsTransport(JsonRpcJsonFraming framing, string incompleteFrame)
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
@@ -516,14 +516,14 @@ public class JsonCodecTests : TestBase
 		await Assert.ThrowsAnyAsync<Exception>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
 	}
 
-	[Theory]
-	[InlineData(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"params\":42}")]
-	[InlineData(JsonRpcJsonFraming.ContentLength, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"params\":42}")]
-	[InlineData(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"params\":null}")]
-	[InlineData(JsonRpcJsonFraming.ContentLength, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"params\":null}")]
-	[InlineData(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"jsonrpc\":\"2.0\",\"method\":\"echo\"}")]
-	[InlineData(JsonRpcJsonFraming.ContentLength, "{\"jsonrpc\":\"2.0\",\"id\":1e0,\"method\":\"echo\"}")]
-	[InlineData(JsonRpcJsonFraming.NewlineDelimited, "[{\"jsonrpc\":\"2.0\",\"method\":\"echo\"},42]")]
+	[Test]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"params\":42}")]
+	[Arguments(JsonRpcJsonFraming.ContentLength, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"params\":42}")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"params\":null}")]
+	[Arguments(JsonRpcJsonFraming.ContentLength, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"params\":null}")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"jsonrpc\":\"2.0\",\"method\":\"echo\"}")]
+	[Arguments(JsonRpcJsonFraming.ContentLength, "{\"jsonrpc\":\"2.0\",\"id\":1e0,\"method\":\"echo\"}")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "[{\"jsonrpc\":\"2.0\",\"method\":\"echo\"},42]")]
 	public async Task InvalidJsonEnvelopeFaultsTransport(JsonRpcJsonFraming framing, string json)
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
@@ -543,9 +543,9 @@ public class JsonCodecTests : TestBase
 		await Assert.ThrowsAnyAsync<Exception>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
 	}
 
-	[Theory]
-	[InlineData(JsonRpcJsonFraming.NewlineDelimited)]
-	[InlineData(JsonRpcJsonFraming.ContentLength)]
+	[Test]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited)]
+	[Arguments(JsonRpcJsonFraming.ContentLength)]
 	public async Task MalformedEnvelopeFaultsPendingCalls(JsonRpcJsonFraming framing)
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe peerPipe) = FullDuplexStream.CreatePipePair();

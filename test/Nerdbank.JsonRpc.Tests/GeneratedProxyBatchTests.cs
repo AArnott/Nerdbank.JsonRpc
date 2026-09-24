@@ -7,7 +7,7 @@ using ShapeProvider = PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRp
 
 public class GeneratedProxyBatchTests
 {
-	[Fact]
+	[Test]
 	public async Task GeneratedProxy_BatchUsesAttachmentOptions()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
@@ -46,7 +46,7 @@ public class GeneratedProxyBatchTests
 		Assert.Equal(5, await secondResult.WithCancellation(cts.Token));
 	}
 
-	[Fact]
+	[Test]
 	public async Task GeneratedProxy_AttachesToBatch()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();

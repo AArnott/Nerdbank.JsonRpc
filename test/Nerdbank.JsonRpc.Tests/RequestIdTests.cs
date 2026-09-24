@@ -1,9 +1,9 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 public class RequestIdTests
 {
-	[Fact]
+	[Test]
 	public void Equals_Object()
 	{
 		Assert.True(default(RequestId).Equals((object?)default(RequestId)));
@@ -13,14 +13,14 @@ public class RequestIdTests
 		Assert.False(new RequestId("a"u8.ToArray()).Equals((object?)"a"));
 	}
 
-	[Fact]
+	[Test]
 	public void MemoryOfByteConverter()
 	{
 		RequestId id = (ReadOnlyMemory<byte>)"abc"u8.ToArray();
 		Assert.Equal("abc", id.ToString());
 	}
 
-	[Fact]
+	[Test]
 	public void StringConstructor()
 	{
 		RequestId id = new("abc");
@@ -28,7 +28,7 @@ public class RequestIdTests
 		Assert.Equal((RequestId)"abc", id);
 	}
 
-	[Fact]
+	[Test]
 	public void Default_Value()
 	{
 		Assert.Equal(default(RequestId), default(RequestId));
@@ -37,7 +37,7 @@ public class RequestIdTests
 		AssertRoundTrip(default);
 	}
 
-	[Fact]
+	[Test]
 	public void Long_Value()
 	{
 		RequestId id1 = 1, id2 = 2;
@@ -47,7 +47,7 @@ public class RequestIdTests
 		AssertRoundTrip(id1);
 	}
 
-	[Fact]
+	[Test]
 	public void UInt64_MaxValueRoundTrips()
 	{
 		RequestId maximum = new(ulong.MaxValue);
@@ -56,7 +56,7 @@ public class RequestIdTests
 		AssertRoundTrip(maximum);
 	}
 
-	[Fact]
+	[Test]
 	public void String_Value()
 	{
 		RequestId id1 = "a", id2 = "b";
@@ -80,7 +80,7 @@ public class RequestIdTests
 		Assert.NotEqual(id1, id2);
 	}
 
-	[Fact]
+	[Test]
 	public void DefaultAndEmptyStringAreDistinct()
 	{
 		RequestId empty = string.Empty;
