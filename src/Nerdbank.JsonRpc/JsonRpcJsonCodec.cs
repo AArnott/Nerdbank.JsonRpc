@@ -221,7 +221,7 @@ internal static class JsonRpcJsonCodec
 	private static void WriteOne(Utf8JsonWriter writer, JsonRpcMessage message)
 	{
 		writer.WriteStartObject();
-		writer.WriteString("jsonrpc", "2.0");
+		writer.WriteString("jsonrpc", message.Version);
 		if (message is JsonRpcRequest request)
 		{
 			writer.WriteString("method", request.Method);

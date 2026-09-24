@@ -450,6 +450,19 @@ public class JsonCodecTests : TestBase
 	[Theory]
 	[InlineData(JsonRpcJsonFraming.NewlineDelimited)]
 	[InlineData(JsonRpcJsonFraming.ContentLength)]
+	public async Task WritesExplicitProtocolVersionWithoutReplacingIt(JsonRpcJsonFraming framing)
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcJsonChannel channel = new(local, new Nerdbank.Json.JsonSerializer(), framing, LoggerFactory.CreateLogger("local"));
+		await channel.Writer.WriteAsync(new JsonRpcRequest { Method = "example", Version = "3.0" }, this.TimeoutToken);
+		ReadResult read = await peer.Input.ReadAsync(this.TimeoutToken);
+		Assert.Contains("\"jsonrpc\":\"3.0\"", Encoding.UTF8.GetString(read.Buffer.ToArray()));
+		peer.Input.AdvanceTo(read.Buffer.End);
+	}
+
+	[Theory]
+	[InlineData(JsonRpcJsonFraming.NewlineDelimited)]
+	[InlineData(JsonRpcJsonFraming.ContentLength)]
 	public async Task HandlesFragmentedAndCoalescedFrames(JsonRpcJsonFraming framing)
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
