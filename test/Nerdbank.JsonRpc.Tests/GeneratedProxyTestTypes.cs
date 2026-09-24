@@ -20,6 +20,15 @@ internal partial interface ICalculator
 
 [GenerateJsonRpcProxy]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IDisposableContract
+{
+	Task<IDisposable> GetDisposableAsync(CancellationToken cancellationToken);
+
+	Task UseDisposableAsync(IDisposable value, CancellationToken cancellationToken);
+}
+
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface ICompositeCalculator : ICalculator
 {
 }

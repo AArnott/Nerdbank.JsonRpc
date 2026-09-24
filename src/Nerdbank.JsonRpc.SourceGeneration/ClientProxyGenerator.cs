@@ -307,10 +307,13 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		{
 			foreach (IParameterSymbol parameter in method.PayloadParameters)
 			{
-				AddShapeField(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), seenTypeNames, shapeFields);
+				if (!IsDisposableType(parameter.Type))
+				{
+					AddShapeField(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), seenTypeNames, shapeFields);
+				}
 			}
 
-			if (method.ResultTypeName is not null)
+			if (method.ResultTypeName is not null && !IsDisposableTypeName(method.ResultTypeName))
 			{
 				AddShapeField(method.ResultTypeName, seenTypeNames, shapeFields);
 			}
@@ -318,6 +321,12 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		return shapeFields.ToImmutable();
 	}
+
+	private static bool IsDisposableType(ITypeSymbol type)
+		=> IsDisposableTypeName(type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+
+	private static bool IsDisposableTypeName(string typeName)
+		=> typeName == "global::System.IDisposable";
 
 	private static void AddShapeField(string typeName, HashSet<string> seenTypeNames, ImmutableArray<ShapeFieldInfo>.Builder shapeFields)
 	{
@@ -341,12 +350,19 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.Append("\t\tusing global::Nerdbank.JsonRpc.JsonRpcArgumentsBuilder argumentsBuilder = this.jsonRpc.CreateArguments(").Append("this.useNamedArguments, ").Append(method.PayloadParameters.Length).Append(", ").Append(cancellationToken).AppendLine(");");
 			foreach (IParameterSymbol parameter in method.PayloadParameters)
 			{
-				builder.Append("\t\targumentsBuilder.Add(");
-				AppendQuoted(builder, parameter.Name);
-
-				builder.Append(", ").Append(EscapeIdentifier(parameter.Name)).Append(", this.")
-					.Append(GetShapeFieldName(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), shapeFields))
-					.AppendLine(");");
+				if (IsDisposableType(parameter.Type))
+				{
+					builder.Append("\t\targumentsBuilder.AddMarshaled(");
+					AppendQuoted(builder, parameter.Name).Append(", ").Append(EscapeIdentifier(parameter.Name)).AppendLine(");");
+				}
+				else
+				{
+					builder.Append("\t\targumentsBuilder.Add(");
+					AppendQuoted(builder, parameter.Name);
+					builder.Append(", ").Append(EscapeIdentifier(parameter.Name)).Append(", this.")
+						.Append(GetShapeFieldName(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), shapeFields))
+						.AppendLine(");");
+				}
 			}
 
 			builder.AppendLine("\t\tglobal::Nerdbank.JsonRpc.JsonRpcValue arguments = argumentsBuilder.Build();");
@@ -354,16 +370,30 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			switch (method.Kind)
 			{
 				case ProxyMethodKind.ValueTaskOfT:
-					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
-					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
-					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
-					builder.Append(cancellationToken).AppendLine(");");
+					if (IsDisposableTypeName(method.ResultTypeName!))
+					{
+						builder.Append("\t\treturn this.jsonRpc.RequestDisposableAsync(");
+						AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ").Append(cancellationToken).AppendLine(");");
+					}
+					else
+					{
+						builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
+						AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
+						builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ").Append(cancellationToken).AppendLine(");");
+					}
 					break;
 				case ProxyMethodKind.TaskOfT:
-					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
-					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
-					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
-					builder.Append(cancellationToken).AppendLine(").AsTask();");
+					if (IsDisposableTypeName(method.ResultTypeName!))
+					{
+						builder.Append("\t\treturn this.jsonRpc.RequestDisposableAsync(");
+						AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ").Append(cancellationToken).AppendLine(").AsTask();");
+					}
+					else
+					{
+						builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
+						AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
+						builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ").Append(cancellationToken).AppendLine(").AsTask();");
+					}
 					break;
 				case ProxyMethodKind.ValueTask:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
