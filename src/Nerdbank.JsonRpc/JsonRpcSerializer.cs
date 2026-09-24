@@ -120,7 +120,7 @@ public abstract class JsonRpcSerializer
 	{
 		if (value.HasValue && value.Encoding != this.Encoding)
 		{
-			throw new ArgumentException("The value encoding does not match the connection serializer.");
+			throw new ArgumentException($"Value encoding mismatch: expected {this.Encoding}, actual {value.Encoding}.");
 		}
 	}
 }
