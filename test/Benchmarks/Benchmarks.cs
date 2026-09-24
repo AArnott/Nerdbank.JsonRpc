@@ -22,8 +22,8 @@ public partial class Benchmarks
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 
-		StreamingJsonRpcMessageChannel clientChannel = new(clientPipe, NullLogger.Instance);
-		StreamingJsonRpcMessageChannel serverChannel = new(serverPipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel clientChannel = new(clientPipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel serverChannel = new(serverPipe, NullLogger.Instance);
 
 		this.clientRpc = new(clientChannel);
 		this.clientRpc.Start();

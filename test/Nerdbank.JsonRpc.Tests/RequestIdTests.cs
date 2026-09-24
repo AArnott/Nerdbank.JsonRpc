@@ -48,6 +48,15 @@ public class RequestIdTests
 	}
 
 	[Fact]
+	public void UInt64_MaxValueRoundTrips()
+	{
+		RequestId maximum = new(ulong.MaxValue);
+		Assert.Equal(ulong.MaxValue.ToString(), maximum.ToString());
+		Assert.NotEqual(new RequestId(long.MaxValue), maximum);
+		AssertRoundTrip(maximum);
+	}
+
+	[Fact]
 	public void String_Value()
 	{
 		RequestId id1 = "a", id2 = "b";
@@ -82,5 +91,5 @@ public class RequestIdTests
 
 	private static void AssertRoundTrip(RequestId requestId) => Assert.Equal(requestId, Roundtrip(requestId));
 
-	private static RequestId Roundtrip(RequestId requestId) => JsonRpc.DefaultSerializer.Deserialize<RequestId>(JsonRpc.DefaultSerializer.Serialize(requestId));
+	private static RequestId Roundtrip(RequestId requestId) => JsonRpcMessagePackChannel.DefaultSerializer.Deserialize<RequestId>(JsonRpcMessagePackChannel.DefaultSerializer.Serialize(requestId));
 }

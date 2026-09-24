@@ -3,7 +3,7 @@
 
 using PolyType;
 
-[GenerateJsonRpcProxy(UseNamedArguments = true)]
+[GenerateJsonRpcProxy]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface INamedCalculator
 {

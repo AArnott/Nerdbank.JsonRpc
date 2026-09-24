@@ -6,4 +6,8 @@ namespace Nerdbank.JsonRpc;
 /// <summary>
 /// Provides options that control generated JSON-RPC client proxy attachment.
 /// </summary>
-public sealed record JsonRpcProxyOptions;
+public sealed record JsonRpcProxyOptions
+{
+	/// <summary>Gets a value indicating whether requests encode arguments by parameter name rather than position.</summary>
+	public bool UseNamedArguments { get; init; }
+}

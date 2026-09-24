@@ -3,3 +3,11 @@ items:
   href: features.md
 - name: Getting Started
   href: getting-started.md
+- name: Encodings and framing
+  href: encodings.md
+- name: Generated client proxies
+  href: client-proxies.md
+- name: Batching
+  href: batching.md
+- name: Protocol behavior
+  href: protocol-behavior.md

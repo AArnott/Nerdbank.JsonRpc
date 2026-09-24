@@ -8,6 +8,8 @@ public abstract class TestBase : IDisposable
 {
 	protected static readonly RawMessagePack NilMsgPack = WriteNil();
 
+	protected static readonly RawMessagePack EmptyParamsMsgPack = WriteEmptyArray();
+
 	private readonly CancellationTokenSource timeoutSource = new(UnexpectedTimeout);
 
 	private readonly CancellationTokenSource timeoutJoinedSource;
@@ -43,12 +45,32 @@ public abstract class TestBase : IDisposable
 	public ITestOutputHelper? Logger { get; }
 
 	public void Log(JsonRpcMessage message, JsonRpc jsonRpc)
-		=> this.Logger?.WriteLine(jsonRpc.Serializer.ConvertToJson(jsonRpc.Serializer.Serialize(message, TestContext.Current.CancellationToken)));
+	{
+		if (this.Logger is not { } logger)
+		{
+			return;
+		}
+
+		string description = message switch
+		{
+			JsonRpcRequest { Arguments.HasValue: true } request => $"{request.Method}: {((MessagePackSerializerPlugin)((IJsonRpcClient)jsonRpc).Serializer).Serializer.ConvertToJson(request.Arguments.AsMessagePack())}",
+			JsonRpcRequest request => request.Method,
+			_ => message.GetType().Name,
+		};
+		logger.WriteLine(description);
+	}
 
 	public virtual void Dispose()
 	{
 		this.timeoutSource.Dispose();
 		this.timeoutJoinedSource.Dispose();
+	}
+
+	private static RawMessagePack WriteEmptyArray()
+	{
+		byte[] msgpack = new byte[1];
+		MessagePackPrimitives.TryWriteArrayHeader(msgpack, 0, out _);
+		return (RawMessagePack)msgpack;
 	}
 
 	private static RawMessagePack WriteNil()

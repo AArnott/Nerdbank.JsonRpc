@@ -19,7 +19,7 @@ public partial class JsonRpcServerTests : TestBase
 	public JsonRpcServerTests()
 	{
 		(this.channel, Channel<JsonRpcMessage> jsonRpcChannel) = MockChannel<JsonRpcMessage>.CreatePair();
-		this.jsonRpc = new(jsonRpcChannel);
+		this.jsonRpc = new(new MockJsonRpcPipeChannel(jsonRpcChannel));
 
 		this.jsonRpc.AddRpcTarget(this.server);
 		this.jsonRpc.Start();
@@ -30,7 +30,7 @@ public partial class JsonRpcServerTests : TestBase
 	{
 		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.GetMagicNumber) }, this.TimeoutToken);
 		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
-		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
+		int resultValue = ((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Deserialize(result.Result.AsMessagePack(), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
 		Assert.Equal(42, resultValue);
 	}
 
@@ -40,7 +40,7 @@ public partial class JsonRpcServerTests : TestBase
 		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = "Abc", Method = nameof(MockServer.GetMagicNumber) }, this.TimeoutToken);
 		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal("Abc", result.Id);
-		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
+		int resultValue = ((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Deserialize(result.Result.AsMessagePack(), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
 		Assert.Equal(42, resultValue);
 	}
 
@@ -58,7 +58,7 @@ public partial class JsonRpcServerTests : TestBase
 		this.server.Unpause.Set();
 		JsonRpcMessage responseMessage = await responseMessageTask;
 		JsonRpcResult result = Assert.IsType<JsonRpcResult>(responseMessage);
-		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
+		int resultValue = ((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Deserialize(result.Result.AsMessagePack(), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
 		Assert.Equal(42, resultValue);
 	}
 
@@ -89,7 +89,7 @@ public partial class JsonRpcServerTests : TestBase
 
 		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.Add), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
 		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
-		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
+		int resultValue = ((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Deserialize(result.Result.AsMessagePack(), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
 		Assert.Equal(5, resultValue);
 	}
 
@@ -105,7 +105,7 @@ public partial class JsonRpcServerTests : TestBase
 
 		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.AddValueTask), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
 		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
-		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
+		int resultValue = ((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Deserialize(result.Result.AsMessagePack(), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
 		Assert.Equal(5, resultValue);
 	}
 
@@ -121,7 +121,7 @@ public partial class JsonRpcServerTests : TestBase
 
 		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.AddTask), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
 		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
-		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
+		int resultValue = ((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Deserialize(result.Result.AsMessagePack(), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
 		Assert.Equal(5, resultValue);
 	}
 
@@ -171,7 +171,7 @@ public partial class JsonRpcServerTests : TestBase
 
 		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.Add), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
 		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
-		int resultValue = this.jsonRpc.Serializer.Deserialize(result.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
+		int resultValue = ((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Deserialize(result.Result.AsMessagePack(), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
 		Assert.Equal(5, resultValue);
 	}
 
@@ -222,7 +222,7 @@ public partial class JsonRpcServerTests : TestBase
 		Sequence<byte> seq = new();
 		MessagePackWriter msgpackWriter = new(seq);
 		msgpackWriter.WriteArrayHeader(1);
-		this.jsonRpc.Serializer.Serialize(ref msgpackWriter, id, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.RequestId, this.TimeoutToken);
+		((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Serialize(ref msgpackWriter, id, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.RequestId, this.TimeoutToken);
 		msgpackWriter.Flush();
 
 		return new JsonRpcRequest { Method = "$/cancelRequest", Arguments = (RawMessagePack)seq.AsReadOnlySequence };

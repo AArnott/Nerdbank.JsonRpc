@@ -1,12 +1,10 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO.Pipelines;
-using System.Net;
 using System.Threading.Channels;
 using Microsoft;
 using Microsoft.Extensions.Logging;
-using Nerdbank.MessagePack;
 
 namespace Nerdbank.JsonRpc;
 
@@ -15,25 +13,26 @@ namespace Nerdbank.JsonRpc;
 /// exchange between endpoints.
 /// </summary>
 /// <remarks>
-/// Abstract methods allow a derived class to define how messages are serialized and deserialized over the pipe,
-/// and to control any framing around those messages.
+/// Derived classes select the encoding and implement serialization, deserialization, and any framing.
+/// This base class manages the pipe and message queues without choosing a wire format.
 /// </remarks>
 public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDisposable
 {
-	protected static readonly MessagePackSerializer Serializer = new()
-	{
-		InternStrings = true,
-	};
-
 	private static readonly EventId MessageSent = new(1, "Message sent");
 	private static readonly EventId MessageReceived = new(2, "Message received");
 
 	private readonly CancellationTokenSource disposalSource = new();
+	private readonly TaskCompletionSource<bool> transportReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
 	private readonly Task inboundTaskProcessor;
 	private readonly Task outboundTaskProcessor;
 	private readonly ChannelWriter<JsonRpcMessage> inboundMessageWriter;
 	private readonly ChannelReader<JsonRpcMessage> outboundMessageReader;
 
+	/// <summary>Initializes a new instance of the <see cref="JsonRpcPipeChannel"/> class with deferred transport startup.</summary>
+	/// <param name="pipe">The connected duplex pipe.</param>
+	/// <param name="inboundChannel">The queue for received messages.</param>
+	/// <param name="outboundChannel">The queue for messages to send.</param>
+	/// <param name="logger">The transport logger.</param>
 	protected JsonRpcPipeChannel(IDuplexPipe pipe, Channel<JsonRpcMessage> inboundChannel, Channel<JsonRpcMessage> outboundChannel, ILogger logger)
 	{
 		Requires.NotNull(pipe);
@@ -49,6 +48,12 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 		this.outboundTaskProcessor = this.HandleOutboundMessagesAsync(pipe.Output, this.disposalSource.Token);
 	}
 
+	/// <summary>Gets the encoding used by this transport.</summary>
+	public abstract JsonRpcEncoding Encoding { get; }
+
+	/// <summary>Gets the serializer selected by this channel for application values.</summary>
+	public abstract JsonRpcSerializer Serializer { get; }
+
 	protected ILogger Logger { get; }
 
 	public async ValueTask DisposeAsync()
@@ -58,39 +63,11 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 #else
 		this.disposalSource.Cancel();
 #endif
+		this.StartTransport();
 
 #pragma warning disable VSTHRD003 // Avoid awaiting foreign Tasks - No main thread dependency.
 		await Task.WhenAll(this.inboundTaskProcessor, this.outboundTaskProcessor).ConfigureAwait(false);
 #pragma warning restore VSTHRD003 // Avoid awaiting foreign Tasks
-	}
-
-	protected static ValueTask SerializeAsync(PipeWriter writer, JsonRpcMessage message, CancellationToken cancellationToken)
-	{
-		return message switch
-		{
-			JsonRpcRequest request => Serializer.SerializeAsync(writer, request, cancellationToken),
-			JsonRpcResult result => Serializer.SerializeAsync(writer, result, cancellationToken),
-			JsonRpcError error => Serializer.SerializeAsync(writer, error, cancellationToken),
-			JsonRpcMessageBatch batch => Serializer.SerializeAsync<JsonRpcMessage>(writer, batch, cancellationToken),
-			_ => throw new ArgumentException($"Unrecognized JSON-RPC message type: {message.GetType().FullName}", nameof(message)),
-		};
-	}
-
-	protected static async ValueTask<JsonRpcMessage?> DeserializeAsync(PipeReader reader, CancellationToken cancellationToken)
-	{
-		Requires.NotNull(reader);
-
-		// Read just to verify that we're not at the end of the stream.
-		// Then undo the read and ask the deserializer to take over.
-		ReadResult readResult = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-		if (readResult.Buffer.IsEmpty && readResult.IsCompleted)
-		{
-			return null;
-		}
-
-		reader.AdvanceTo(readResult.Buffer.Start);
-
-		return await Serializer.DeserializeAsync<JsonRpcMessage>(reader, cancellationToken).ConfigureAwait(false) ?? throw new ProtocolViolationException("Unexpected null value was received instead of JSON-RPC message.");
 	}
 
 	protected static Channel<JsonRpcMessage> CreateInboundChannel(int? capacity) => capacity is null
@@ -101,37 +78,42 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 		? Channel.CreateUnbounded<JsonRpcMessage>(new UnboundedChannelOptions { SingleReader = true })
 		: Channel.CreateBounded<JsonRpcMessage>(new BoundedChannelOptions(capacity.Value) { SingleReader = true });
 
+	/// <summary>Starts transport processing after a derived channel has initialized its framing.</summary>
+	protected void StartTransport() => this.transportReady.TrySetResult(true);
+
 	protected abstract IAsyncEnumerable<JsonRpcMessage> ReceiveMessagesAsync(PipeReader reader, CancellationToken cancellationToken);
 
 	protected abstract ValueTask SendMessageAsync(PipeWriter writer, JsonRpcMessage message, CancellationToken cancellationToken);
 
 	private static string FormatLoggedMessage(JsonRpcMessage message, Exception? exception)
-	{
-		try
-		{
-			byte[] msgpack = Serializer.Serialize(message, CancellationToken.None);
-			return Serializer.ConvertToJson(msgpack);
-		}
-		catch (ArgumentException) when (message is JsonRpcInvalidMessage or JsonRpcMessageBatch)
-		{
-			return message is JsonRpcInvalidMessage invalid ? $"Invalid JSON-RPC message: {invalid.Message}" : "JSON-RPC batch contains an invalid message.";
-		}
-	}
+		=> $"JSON-RPC {message.GetType().Name}";
 
 	private async Task HandleInboundMessagesAsync(PipeReader reader, CancellationToken cancellationToken)
 	{
 		try
 		{
+#pragma warning disable VSTHRD003 // Waiting for this channel's own transport initialization gate.
+			await this.transportReady.Task.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
 			await foreach (JsonRpcMessage message in this.ReceiveMessagesAsync(reader, cancellationToken))
 			{
 				this.Logger.Log(LogLevel.Information, MessageReceived, message, null, FormatLoggedMessage);
 				await this.inboundMessageWriter.WriteAsync(message, cancellationToken).ConfigureAwait(false);
 			}
 
+			this.inboundMessageWriter.TryComplete();
 			await reader.CompleteAsync().ConfigureAwait(false);
 		}
 		catch (Exception ex)
 		{
+			this.Logger.LogError(ex, "JSON-RPC inbound transport failed.");
+			this.inboundMessageWriter.TryComplete(ex);
+			this.Writer.TryComplete(ex);
+#if NET
+			await this.disposalSource.CancelAsync().ConfigureAwait(false);
+#else
+			this.disposalSource.Cancel();
+#endif
 			await reader.CompleteAsync(ex).ConfigureAwait(false);
 		}
 	}
@@ -141,6 +123,9 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 		Requires.NotNull(writer);
 		try
 		{
+#pragma warning disable VSTHRD003 // Waiting for this channel's own transport initialization gate.
+			await this.transportReady.Task.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
 			while (!this.outboundMessageReader.Completion.IsCompleted)
 			{
 				JsonRpcMessage message = await this.outboundMessageReader.ReadAsync(cancellationToken).ConfigureAwait(false);
@@ -153,6 +138,14 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 		}
 		catch (Exception ex)
 		{
+			this.Logger.LogError(ex, "JSON-RPC outbound transport failed.");
+			this.inboundMessageWriter.TryComplete(ex);
+			this.Writer.TryComplete(ex);
+#if NET
+			await this.disposalSource.CancelAsync().ConfigureAwait(false);
+#else
+			this.disposalSource.Cancel();
+#endif
 			await writer.CompleteAsync(ex).ConfigureAwait(false);
 		}
 	}
