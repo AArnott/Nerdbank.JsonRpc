@@ -30,7 +30,7 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcJsonChannel"/> class.</summary>
 	/// <param name="pipe">The connected pipe.</param>
-	/// <param name="serializer">The same plugin assigned to the JsonRpc instance.</param>
+	/// <param name="serializer">The plugin used for JSON application values by default.</param>
 	/// <param name="framing">The wire framing convention.</param>
 	/// <param name="logger">The transport logger.</param>
 	/// <param name="inboundCapacity">The inbound queue limit.</param>
@@ -50,7 +50,7 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcJsonChannel"/> class.</summary>
 	/// <param name="pipe">The connected pipe.</param>
-	/// <param name="serializer">The configured serializer also assigned to JsonRpc.Serializer.</param>
+	/// <param name="serializer">The configured serializer used for JSON application values by default.</param>
 	/// <param name="framing">The wire framing convention.</param>
 	/// <param name="logger">The transport logger.</param>
 	public JsonRpcJsonChannel(IDuplexPipe pipe, Nerdbank.Json.JsonSerializer serializer, JsonRpcJsonFraming framing, ILogger logger)

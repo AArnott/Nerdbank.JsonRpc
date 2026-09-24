@@ -52,11 +52,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	public static JsonRpcSerializer DefaultSerializer => DefaultSerializerHolder.Instance;
 
 	/// <summary>
-	/// Gets the serializer used for JSON-RPC messages by this instance.
+	/// Gets the serializer used for application values. Defaults to the channel's serializer plugin when available, or the default MessagePack serializer otherwise.
 	/// </summary>
 	public JsonRpcSerializer Serializer
 	{
-		get => this.serializer ??= DefaultSerializer;
+		get => this.serializer ??= (this.channel as JsonRpcPipeChannel)?.SerializerPlugin ?? DefaultSerializer;
 		init => this.serializer = value ?? throw new ArgumentNullException(nameof(value));
 	}
 

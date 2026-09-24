@@ -23,8 +23,10 @@ public class JsonCodecTests : TestBase
 		JsonSerializerPlugin serverPlugin = new(new Nerdbank.Json.JsonSerializer());
 		await using JsonRpcJsonChannel clientChannel = new(clientPipe, clientPlugin, framing, LoggerFactory.CreateLogger("client"));
 		await using JsonRpcJsonChannel serverChannel = new(serverPipe, serverPlugin, framing, LoggerFactory.CreateLogger("server"));
-		using JsonRpc client = new(clientChannel) { Serializer = clientPlugin };
-		using JsonRpc server = new(serverChannel) { Serializer = serverPlugin };
+		using JsonRpc client = new(clientChannel);
+		using JsonRpc server = new(serverChannel);
+		Assert.Same(clientPlugin, client.Serializer);
+		Assert.Same(serverPlugin, server.Serializer);
 		Calculator calculator = new();
 		server.AddRpcTarget<ICalculator>(calculator);
 		server.AddRpcTarget<INamedCalculator>(new NamedCalculator(), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.INamedCalculator);
@@ -108,6 +110,16 @@ public class JsonCodecTests : TestBase
 		await Assert.ThrowsAnyAsync<Exception>(() => first.WithCancellation(this.TimeoutToken));
 		Assert.Equal(42, await second.WithCancellation(this.TimeoutToken));
 		Assert.False(client.Completion.IsFaulted);
+	}
+
+	[Fact]
+	public async Task JsonChannelRejectsExplicitSerializerMismatch()
+	{
+		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
+		JsonSerializerPlugin channelPlugin = new(new Nerdbank.Json.JsonSerializer());
+		await using JsonRpcJsonChannel channel = new(local, channelPlugin, JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("local"));
+		using JsonRpc rpc = new(channel) { Serializer = new Nerdbank.Json.JsonSerializer() };
+		Assert.Throws<InvalidOperationException>(() => rpc.Start());
 	}
 
 	[Fact]
@@ -351,7 +363,7 @@ public class JsonCodecTests : TestBase
 		Nerdbank.Json.JsonSerializer configured = new();
 		await using JsonRpcJsonChannel clientChannel = new(clientPipe, configured, framing, LoggerFactory.CreateLogger("client"));
 		await using JsonRpcJsonChannel serverChannel = new(serverPipe, new Nerdbank.Json.JsonSerializer(), framing, LoggerFactory.CreateLogger("server"));
-		using JsonRpc client = new(clientChannel) { Serializer = configured };
+		using JsonRpc client = new(clientChannel);
 		Assert.Same(configured, Assert.IsType<JsonSerializerPlugin>(client.Serializer).Serializer);
 		client.Start();
 

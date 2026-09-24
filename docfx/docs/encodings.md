@@ -4,11 +4,11 @@ Nerdbank.JsonRpc supports MessagePack (the default) and UTF-8 JSON. Configure th
 
 ## Select a serializer
 
-For JSON, configure a <xref:Nerdbank.Json.JsonSerializer>, pass it to a <xref:Nerdbank.JsonRpc.JsonRpcJsonChannel>, and assign **the same instance** to <xref:Nerdbank.JsonRpc.JsonRpc.Serializer> before calling <xref:Nerdbank.JsonRpc.JsonRpc.Start*>:
+For JSON, configure a <xref:Nerdbank.Json.JsonSerializer>, pass it to a <xref:Nerdbank.JsonRpc.JsonRpcJsonChannel>, and construct <xref:Nerdbank.JsonRpc.JsonRpc> with that channel. The RPC instance automatically uses the channel's serializer when you call <xref:Nerdbank.JsonRpc.JsonRpc.Start*>:
 
 [!code-csharp[](../../samples/cs/encodings.cs#json-encoding)]
 
-To customize MessagePack instead, assign a configured <xref:Nerdbank.MessagePack.MessagePackSerializer> to <xref:Nerdbank.JsonRpc.JsonRpc.Serializer> before starting. Both concrete serializers are wrapped automatically by <xref:Nerdbank.JsonRpc.JsonSerializerPlugin> or <xref:Nerdbank.JsonRpc.MessagePackSerializerPlugin>; the wrappers retain the exact configured instances. Use <xref:Nerdbank.JsonRpc.JsonRpcMessagePackChannel> for pipe-based MessagePack transport: it streams self-delimiting MessagePack values without additional framing. The original <xref:Nerdbank.JsonRpc.StreamingJsonRpcMessageChannel> name remains available for compatibility.
+To customize MessagePack instead, assign a configured <xref:Nerdbank.MessagePack.MessagePackSerializer> to <xref:Nerdbank.JsonRpc.JsonRpc.Serializer> before starting. A MessagePack channel leaves application-value serialization configurable and uses the default MessagePack serializer unless you override it. Both concrete serializers are wrapped automatically by <xref:Nerdbank.JsonRpc.JsonSerializerPlugin> or <xref:Nerdbank.JsonRpc.MessagePackSerializerPlugin>; the wrappers retain the exact configured instances. An explicit <xref:Nerdbank.JsonRpc.JsonRpc.Serializer> override for a JSON channel must use the channel's serializer instance. Use <xref:Nerdbank.JsonRpc.JsonRpcMessagePackChannel> for pipe-based MessagePack transport: it streams self-delimiting MessagePack values without additional framing. The original <xref:Nerdbank.JsonRpc.StreamingJsonRpcMessageChannel> name remains available for compatibility.
 
 ## JSON framing
 
