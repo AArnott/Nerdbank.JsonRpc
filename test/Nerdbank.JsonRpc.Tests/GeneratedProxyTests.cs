@@ -49,6 +49,32 @@ public class GeneratedProxyTests
 	}
 
 	[Test]
+	public async Task GeneratedProxy_MarshalsDisposableArguments()
+	{
+		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
+		using JsonRpc rpc = new(new MockJsonRpcPipeChannel(transport));
+		rpc.Start();
+		IDisposableContract client = rpc.Attach<IDisposableContract>();
+
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		Task requestTask = client.UseDisposableAsync(new TestDisposable(), cts.Token);
+		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(cts.Token));
+		MessagePackReader reader = new(request.Arguments.AsMessagePack());
+		Assert.Equal(1, reader.ReadArrayHeader());
+		Assert.Equal(MessagePackType.Map, reader.NextMessagePackType);
+		int propertyCount = reader.ReadMapHeader();
+		Dictionary<string, object?> properties = [];
+		for (int i = 0; i < propertyCount; i++)
+		{
+			string key = reader.ReadString()!;
+			properties[key] = key == "__jsonrpc_marshaled" ? reader.ReadInt32() : key == "handle" ? reader.ReadInt64() : reader.ReadString();
+		}
+		Assert.Equal(1, properties["__jsonrpc_marshaled"]);
+		Assert.IsType<long>(properties["handle"]);
+		Assert.Equal("explicit", properties["lifetime"]);
+	}
+
+	[Test]
 	public async Task GeneratedProxy_IncludesInheritedInterfaceMethods()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
@@ -215,3 +241,11 @@ public class GeneratedProxyTests
 		Assert.Contains("interface", ex.Message, StringComparison.OrdinalIgnoreCase);
 	}
 }
+
+	internal sealed class TestDisposable : IDisposable
+	{
+		public void Dispose()
+		{
+		}
+	}
+
