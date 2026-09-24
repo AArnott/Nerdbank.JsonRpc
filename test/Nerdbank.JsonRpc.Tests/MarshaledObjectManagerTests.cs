@@ -18,6 +18,19 @@ public class MarshaledObjectManagerTests
 		Assert.True(disposable.IsDisposed);
 	}
 
+	[Test]
+	public async Task DisposingRemoteProxySendsReleaseNotification()
+	{
+		System.Threading.Channels.Channel<JsonRpcMessage> messages = System.Threading.Channels.Channel.CreateUnbounded<JsonRpcMessage>();
+		MockJsonRpcPipeChannel channel = new(messages);
+		using JsonRpc rpc = new(channel);
+		JsonRpcValue marker = rpc.MarshalDisposable(new TrackingDisposable());
+
+		rpc.UnmarshalDisposable(marker).Dispose();
+
+		JsonRpcRequest release = Assert.IsType<JsonRpcRequest>(await messages.Reader.ReadAsync());
+		Assert.Equal("$/releaseMarshaledObject", release.Method);
+	}
 	private sealed class TrackingDisposable : IDisposable
 	{
 		public bool IsDisposed { get; private set; }
