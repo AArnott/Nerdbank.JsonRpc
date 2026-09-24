@@ -66,11 +66,6 @@ After publishing the release, the `.github/workflows/release.yml` workflow will 
 The workflow is written to leverage NuGet.org Trusted Publishing.
 You should set `NUGET_USER` as a repo secret to satisfy Trusted Publishing requirements.
 
-### Azure Pipelines
-
-When your repo builds with Azure Pipelines, use the `azure-pipelines/release.yml` pipeline.
-Trigger the pipeline by adding the `auto-release` tag on a run of your main `azure-pipelines.yml` pipeline.
-
 ## Tutorial and API documentation
 
 API and hand-written docs are found under the `docfx/` directory and are built by [docfx](https://dotnet.github.io/docfx/).

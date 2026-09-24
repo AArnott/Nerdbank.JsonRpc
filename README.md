@@ -1,84 +1,63 @@
-# Your Library
+# Nerdbank.JsonRpc
+
+[![NuGet package](https://img.shields.io/nuget/v/Nerdbank.JsonRpc.svg)](https://www.nuget.org/packages/Nerdbank.JsonRpc)
+[![Build](https://github.com/AArnott/Nerdbank.JsonRpc/actions/workflows/build.yml/badge.svg)](https://github.com/AArnott/Nerdbank.JsonRpc/actions/workflows/build.yml)
+
+Nerdbank.JsonRpc is a .NET library for building strongly typed JSON-RPC clients and servers over MessagePack or UTF-8 JSON. It supports typed requests and notifications, generated client proxies, batching, cancellation, and configurable JSON framing.
+
+## Install
+
+```shell
+dotnet add package Nerdbank.JsonRpc
+```
+
+## Quick start
+
+Define a shared contract and annotate it for PolyType method-shape and proxy generation:
+
+```csharp
+using Nerdbank.JsonRpc;
+using PolyType;
+
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+public partial interface ICalculator
+{
+    ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken);
+}
+```
+
+After creating and starting a `JsonRpc` connection, attach the generated proxy and call it like an ordinary interface:
+
+```csharp
+JsonRpc rpc = new(channel);
+rpc.Start();
+
+ICalculator calculator = rpc.Attach<ICalculator>();
+int sum = await calculator.AddAsync(1, 2, CancellationToken.None);
+```
+
+MessagePack is the default encoding. Configure a `JsonRpcJsonChannel` when your protocol uses UTF-8 JSON, with either newline-delimited or `Content-Length` framing.
 
 ## Features
 
-* Follow the best and simplest patterns of build, pack and test with dotnet CLI.
-* Init script that installs prerequisites and auth helpers, supporting both non-elevation and elevation modes.
-* Static analyzers: default [Code Analysis](https://learn.microsoft.com/dotnet/fundamentals/code-analysis/overview) and [StyleCop](https://github.com/DotNetAnalyzers/StyleCopAnalyzers)
-* Read-only source tree (builds to top-level bin/obj folders)
-* Auto-versioning (via [Nerdbank.GitVersioning](https://github.com/dotnet/nerdbank.gitversioning))
-* Builds with a "pinned" .NET SDK to ensure reproducible builds across machines and across time.
-* Automatically pack the library and publish it as an artifact, and even push it to some NuGet feed for consumption.
-* Testing
-  * Testing on .NET Framework, multiple .NET versions
-  * Testing on Windows, Linux and OSX
-  * Tests that crash or hang in Azure Pipelines automatically collect dumps and publish as a pipeline artifact for later investigation.
-* Cloud build support
-  * YAML based build for long-term serviceability, and PR review opportunities for any changes.
-  * Azure Pipelines and GitHub Action support
-  * Emphasis on PowerShell scripts over reliance on tasks for a more locally reproducible build.
-  * Code coverage published to Azure Pipelines
-  * Code coverage published to codecov.io so GitHub PRs get code coverage results added as a PR comment
+- **Strongly typed RPC:** Register server targets and issue typed requests or notifications.
+- **Generated client proxies:** Use interface-backed clients with positional or named arguments.
+- **MessagePack or JSON:** Select MessagePack or UTF-8 JSON; choose newline-delimited or `Content-Length` framing for JSON.
+- **Batching:** Send independent requests and notifications in one JSON-RPC payload.
+- **Robust protocol behavior:** Propagate cancellation and distinguish malformed protocol messages from application value failures.
 
-## Consumption
+## Documentation
 
-Once you've expanded this template for your own use, you should **run the `Expand-Template.ps1` script** to customize the template for your own project.
+- [Getting started](https://aarnott.github.io/Nerdbank.JsonRpc/docs/getting-started.html)
+- [Feature overview](https://aarnott.github.io/Nerdbank.JsonRpc/docs/features.html)
+- [Encodings and framing](https://aarnott.github.io/Nerdbank.JsonRpc/docs/encodings.html)
+- [API reference](https://aarnott.github.io/Nerdbank.JsonRpc/api/index.html)
 
-Further customize your repo by:
+## Contributing
 
-1. Verify the license is suitable for your goal as it appears in the LICENSE and stylecop.json files and the Directory.Build.props file's `PackageLicenseExpression` property.
-1. Reset or replace the badges at the top of this file.
+Contributions and bug reports are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, build, test, and documentation instructions. Please report issues at [GitHub Issues](https://github.com/AArnott/Nerdbank.JsonRpc/issues).
 
-[Activate Renovate automated dependency updates](https://docs.renovatebot.com/getting-started/installing-onboarding/) for your repo.
+## License
 
-### Maintaining your repo based on this template
-
-The best way to keep your repo in sync with this template's evolving features and best practices is to periodically merge the template into your repo:
-
-```ps1
-git fetch
-git checkout origin/main
-.\tools\MergeFrom-Template.ps1
-# resolve any conflicts, then commit the merge commit.
-git push origin -u HEAD
-```
-
-There will frequently be merge conflicts to work out, but they will be easier to resolve than running the `Apply-Template.ps1` script every time, which simply blows away all your local changes with the latest from the template.
-
-If you do not already have Library.Template history in your repo or have never completed a merge before, the above steps may produce errors.
-To get it working the first time, follow these steps:
-
-```ps1
-git remote add libtemplate https://github.com/AArnott/Library.Template.git
-git fetch libtemplate
-```
-
-If the `git merge` step described earlier still fails for you, you may need to artificially create your first merge.
-First, you must have a local clone of Library.Template on your box:
-
-```ps1
-git clone https://github.com/AArnott/Library.Template.git
-```
-
-Make sure you have either `main` checked out in that clone, as appropriate to match.
-Use `git rev-parse HEAD` within the Library.Template repo and record the resulting commit as we'll use it later.
-
-Run the `Apply-Template.ps1` script, passing in the path to your own Library.Template-based repo. This will blow away most customizations you may have made to your repo's build authoring. You should *carefully* review all changes to your repo, staging those changes that you want to keep and reverting those that remove customizations you made.
-
-Now it's time to commit your changes. We do this in a very low-level way in order to have git record this as a *merge* commit even though it didn't start as a merge.
-By doing this, git will allow future merges from `libtemplate/main` and only new changes will be brought down, which will be much easier than the `Apply-Template.ps1` script you just ran.
-We create the merge commit with these commands:
-
-1. Be sure to have staged or reverted all the changes in your repo.
-1. Run `git write-tree` within your repo. This will print out a git tree hash.
-1. Run `git commit-tree -p HEAD -p A B -m "Merged latest Library.Template"`, where `A` is the output from `git rev-parse HEAD` that you recorded earlier, and `B` is the output from your prior `git write-tree` command.
-1. Run `git merge X` where `X` is the output of the `git commit-tree` command.
-
-**IMPORTANT**: If using a pull request to get your changes into your repo, you must *merge* your PR. If you *squash* your PR, history will be lost and you will have to repeatedly resolve the same merge conflicts at the next Library.Template update.
-
-**CAUTION**: when merging this for the first time, a github-hosted repo may close issues in your repo with the same number as issues that this repo closed in git commit messages.
-Verify after completing your PR by visiting your github closed issues, sorted by recently updated, and reactivate any that were inadvertently closed by this merge.
-This shouldn't be a recurring issue because going forward, we will avoid referencing github issues with simple `#123` syntax in this repo's history.
-
-Congratulations. You're all done.
-Next time you want to sync to latest from Library.Template, you can the simple `git merge` steps given at the start of this section.
+Licensed under the [MIT License](LICENSE).
