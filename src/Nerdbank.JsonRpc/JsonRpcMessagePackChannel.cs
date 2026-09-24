@@ -64,6 +64,7 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 	/// <inheritdoc/>
 	protected override ValueTask SendMessageAsync(PipeWriter writer, JsonRpcMessage message, CancellationToken cancellationToken)
 	{
+		this.Serializer.ValidateMessage(message);
 		return this.messagePackSerializer.SerializeAsync(writer, new JsonRpcMessagePackEnvelope(message), cancellationToken);
 	}
 }

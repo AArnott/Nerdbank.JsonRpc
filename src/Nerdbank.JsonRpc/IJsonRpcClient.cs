@@ -28,7 +28,7 @@ public interface IJsonRpcClient
 	JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default);
 
 	/// <summary>
-	/// Sends a request with arguments that have already been serialized to MessagePack.
+	/// Sends a request with arguments already serialized using the channel's selected encoding.
 	/// </summary>
 	/// <param name="method">The name of the remote method to invoke.</param>
 	/// <param name="arguments">The pre-serialized arguments payload.</param>
@@ -37,7 +37,7 @@ public interface IJsonRpcClient
 	ValueTask RequestAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken);
 
 	/// <summary>
-	/// Sends a request with arguments that have already been serialized to MessagePack.
+	/// Sends a request with arguments already serialized using the channel's selected encoding.
 	/// </summary>
 	/// <typeparam name="TResult">The expected result type.</typeparam>
 	/// <param name="method">The name of the remote method to invoke.</param>
@@ -48,7 +48,7 @@ public interface IJsonRpcClient
 	ValueTask<TResult> RequestAsync<TResult>(string method, JsonRpcValue arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken);
 
 	/// <summary>
-	/// Sends a notification with arguments that have already been serialized to MessagePack.
+	/// Sends a notification with arguments already serialized using the channel's selected encoding.
 	/// </summary>
 	/// <param name="method">The name of the remote method to invoke.</param>
 	/// <param name="arguments">The pre-serialized arguments payload.</param>

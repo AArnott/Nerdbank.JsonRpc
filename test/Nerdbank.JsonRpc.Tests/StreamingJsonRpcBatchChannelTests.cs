@@ -62,17 +62,17 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 	public async Task ReceiveNestedBatchPayloadClosesChannel()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
-		JsonRpcMessagePackChannel alice = new(alicePipe, NullLogger.Instance);
-		JsonRpcMessagePackChannel bob = new(bobPipe, NullLogger.Instance);
-		JsonRpcMessageBatch sent = new(
-		[
-			new JsonRpcMessageBatch(
-			[
-				new JsonRpcRequest { Id = 1, Method = "testMethod" },
-			]),
-		]);
-
-		await alice.Writer.WriteAsync(sent, this.TimeoutToken);
+		await using JsonRpcMessagePackChannel bob = new(bobPipe, NullLogger.Instance);
+		MessagePackWriter writer = new(alicePipe.Output);
+		writer.WriteArrayHeader(1);
+		writer.WriteArrayHeader(1);
+		writer.WriteMapHeader(2);
+		writer.Write("jsonrpc");
+		writer.Write("2.0");
+		writer.Write("method");
+		writer.Write("testMethod");
+		writer.Flush();
+		await alicePipe.Output.FlushAsync(this.TimeoutToken);
 
 		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => bob.Reader.Completion.WithCancellation(this.TimeoutToken));
 	}

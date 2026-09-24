@@ -3,6 +3,7 @@
 
 using System.IO.Pipelines;
 using Microsoft.Extensions.Logging;
+using Microsoft.VisualStudio.Threading;
 using Nerdbank.JsonRpc;
 using Nerdbank.Streams;
 
@@ -44,6 +45,24 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 		Assert.Equal(42, reader.ReadInt32());
 		Assert.True(reader.End);
 		Assert.Same(configured, Assert.IsType<MessagePackSerializerPlugin>(((IJsonRpcClient)client).Serializer).Serializer);
+	}
+
+	[Theory]
+	[InlineData(0)]
+	[InlineData(1)]
+	[InlineData(2)]
+	public async Task DirectWriterRejectsInvalidMessages(int caseNumber)
+	{
+		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcMessagePackChannel channel = new(local, LoggerFactory.CreateLogger<JsonRpcPipeChannel>());
+		JsonRpcMessage message = caseNumber switch
+		{
+			0 => new JsonRpcMessageBatch([]),
+			1 => new JsonRpcMessageBatch([new JsonRpcMessageBatch([new JsonRpcRequest { Method = "method" }])]),
+			_ => new JsonRpcRequest { Method = "method", Arguments = JsonRpcValue.FromMessagePack((RawMessagePack)new byte[] { 42 }) },
+		};
+		await channel.Writer.WriteAsync(message, this.TimeoutToken);
+		await Assert.ThrowsAsync<ArgumentException>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
 	}
 
 	[Fact]

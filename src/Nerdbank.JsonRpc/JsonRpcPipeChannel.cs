@@ -28,7 +28,23 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	private readonly ChannelWriter<JsonRpcMessage> inboundMessageWriter;
 	private readonly ChannelReader<JsonRpcMessage> outboundMessageReader;
 
-	protected JsonRpcPipeChannel(IDuplexPipe pipe, Channel<JsonRpcMessage> inboundChannel, Channel<JsonRpcMessage> outboundChannel, ILogger logger, bool startImmediately = true)
+	/// <summary>Initializes a new instance of the <see cref="JsonRpcPipeChannel"/> class and starts the transport.</summary>
+	/// <param name="pipe">The connected duplex pipe.</param>
+	/// <param name="inboundChannel">The queue for received messages.</param>
+	/// <param name="outboundChannel">The queue for messages to send.</param>
+	/// <param name="logger">The transport logger.</param>
+	protected JsonRpcPipeChannel(IDuplexPipe pipe, Channel<JsonRpcMessage> inboundChannel, Channel<JsonRpcMessage> outboundChannel, ILogger logger)
+		: this(pipe, inboundChannel, outboundChannel, logger, startImmediately: true)
+	{
+	}
+
+	/// <summary>Initializes a new instance of the <see cref="JsonRpcPipeChannel"/> class with optional deferred transport startup.</summary>
+	/// <param name="pipe">The connected duplex pipe.</param>
+	/// <param name="inboundChannel">The queue for received messages.</param>
+	/// <param name="outboundChannel">The queue for messages to send.</param>
+	/// <param name="logger">The transport logger.</param>
+	/// <param name="startImmediately">Whether to start processing before returning from this constructor.</param>
+	protected JsonRpcPipeChannel(IDuplexPipe pipe, Channel<JsonRpcMessage> inboundChannel, Channel<JsonRpcMessage> outboundChannel, ILogger logger, bool startImmediately)
 	{
 		Requires.NotNull(pipe);
 		Requires.NotNull(inboundChannel);
