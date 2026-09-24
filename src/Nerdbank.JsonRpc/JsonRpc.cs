@@ -102,7 +102,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	/// Attaches a generated client proxy for an RPC contract interface to this JSON-RPC connection.
 	/// </summary>
 	/// <typeparam name="T">The RPC contract interface to proxy.</typeparam>
-	/// <param name="options">Options reserved for future proxy attachment behavior.</param>
+	/// <param name="options">Options controlling argument encoding for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <typeparamref name="T"/>.</returns>
 	public T Attach<T>(JsonRpcProxyOptions? options = null) => (T)this.Attach(typeof(T), options);
 
@@ -110,7 +110,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	/// Attaches a generated client proxy for an RPC contract interface to this JSON-RPC connection.
 	/// </summary>
 	/// <param name="interfaceType">The RPC contract interface to proxy.</param>
-	/// <param name="options">Options reserved for future proxy attachment behavior.</param>
+	/// <param name="options">Options controlling argument encoding for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <paramref name="interfaceType"/>.</returns>
 	public object Attach(Type interfaceType, JsonRpcProxyOptions? options = null) => AttachCore(this, interfaceType, options);
 
@@ -257,13 +257,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not implement requested interface '{interfaceType.FullName}'.");
 		}
 
-		ConstructorInfo? constructor = proxyType.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null, types: [typeof(IJsonRpcClient)], modifiers: null);
+		ConstructorInfo? constructor = proxyType.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null, types: [typeof(IJsonRpcClient), typeof(JsonRpcProxyOptions)], modifiers: null);
 		if (constructor is null)
 		{
-			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not have a constructor that accepts an IJsonRpcClient instance.");
+			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not have a constructor that accepts an IJsonRpcClient and JsonRpcProxyOptions instance.");
 		}
 
-		return constructor.Invoke([client]);
+		return constructor.Invoke([client, options ?? new JsonRpcProxyOptions()]);
 	}
 
 	internal RequestId GetNextRequestId()

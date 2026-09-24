@@ -36,7 +36,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 	/// Attaches a generated client proxy for an RPC contract interface to this batch.
 	/// </summary>
 	/// <typeparam name="T">The RPC contract interface to proxy.</typeparam>
-	/// <param name="options">Options reserved for future proxy attachment behavior.</param>
+	/// <param name="options">Options controlling argument encoding for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <typeparamref name="T"/>.</returns>
 	public T Attach<T>(JsonRpcProxyOptions? options = null) => (T)this.Attach(typeof(T), options);
 
@@ -44,7 +44,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 	/// Attaches a generated client proxy for an RPC contract interface to this batch.
 	/// </summary>
 	/// <param name="interfaceType">The RPC contract interface to proxy.</param>
-	/// <param name="options">Options reserved for future proxy attachment behavior.</param>
+	/// <param name="options">Options controlling argument encoding for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <paramref name="interfaceType"/>.</returns>
 	public object Attach(Type interfaceType, JsonRpcProxyOptions? options = null) => JsonRpc.AttachCore(this, interfaceType, options);
 

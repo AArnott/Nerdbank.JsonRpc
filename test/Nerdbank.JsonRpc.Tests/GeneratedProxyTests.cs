@@ -135,7 +135,7 @@ public class GeneratedProxyTests
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
 		JsonRpc clientRpc = new(transport);
 		clientRpc.Start();
-		INamedCalculator client = clientRpc.Attach<INamedCalculator>();
+		INamedCalculator client = clientRpc.Attach<INamedCalculator>(new JsonRpcProxyOptions { UseNamedArguments = true });
 
 		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
 		Task<int> resultTask = client.SubtractAsync(9, 4, cts.Token).AsTask();
@@ -160,6 +160,37 @@ public class GeneratedProxyTests
 		await remote.Writer.WriteAsync(response, cts.Token);
 
 		Assert.Equal(5, await resultTask.WithCancellation(cts.Token));
+	}
+
+	[Fact]
+	public async Task GeneratedProxy_SameContractCanUseBothArgumentModes()
+	{
+		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
+		using JsonRpc rpc = new(transport);
+		rpc.Start();
+		IPositionalCalculator positional = rpc.Attach<IPositionalCalculator>();
+		IPositionalCalculator named = rpc.Attach<IPositionalCalculator>(new JsonRpcProxyOptions { UseNamedArguments = true });
+
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		Task<int> positionalResult = positional.SubtractAsync(9, 4, cts.Token).AsTask();
+		Task<int> namedResult = named.SubtractAsync(8, 3, cts.Token).AsTask();
+		JsonRpcRequest first = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(cts.Token));
+		JsonRpcRequest second = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(cts.Token));
+		MessagePackReader firstReader = new(first.Arguments.AsMessagePack());
+		Assert.Equal(2, firstReader.ReadArrayHeader());
+		Assert.Equal(9, firstReader.ReadInt32());
+		Assert.Equal(4, firstReader.ReadInt32());
+		MessagePackReader secondReader = new(second.Arguments.AsMessagePack());
+		Assert.Equal(2, secondReader.ReadMapHeader());
+		Assert.Equal("a", secondReader.ReadString());
+		Assert.Equal(8, secondReader.ReadInt32());
+		Assert.Equal("b", secondReader.ReadString());
+		Assert.Equal(3, secondReader.ReadInt32());
+
+		await remote.Writer.WriteAsync(new JsonRpcResult { Id = first.Id!.Value, Result = rpc.Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) }, cts.Token);
+		await remote.Writer.WriteAsync(new JsonRpcResult { Id = second.Id!.Value, Result = rpc.Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) }, cts.Token);
+		Assert.Equal(5, await positionalResult.WithCancellation(cts.Token));
+		Assert.Equal(5, await namedResult.WithCancellation(cts.Token));
 	}
 
 	[Fact]

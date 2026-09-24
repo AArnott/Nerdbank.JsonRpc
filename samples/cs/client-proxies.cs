@@ -13,15 +13,6 @@ public partial interface ICalculator
     ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken);
 }
 
-#region named-arguments
-[GenerateJsonRpcProxy(UseNamedArguments = true)]
-[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
-public partial interface INamedCalculator
-{
-    ValueTask<int> SubtractAsync(int a, int b, CancellationToken cancellationToken);
-}
-#endregion
-
 public static class ProxyOptions
 {
     public static void Run(JsonRpc rpc)
@@ -29,7 +20,11 @@ public static class ProxyOptions
         ArgumentNullException.ThrowIfNull(rpc);
 
         #region proxy-options
-        ICalculator client = rpc.Attach<ICalculator>(new JsonRpcProxyOptions());
+        ICalculator positionalClient = rpc.Attach<ICalculator>();
+        #endregion
+
+        #region named-arguments
+        ICalculator namedClient = rpc.Attach<ICalculator>(new JsonRpcProxyOptions { UseNamedArguments = true });
         #endregion
     }
 }

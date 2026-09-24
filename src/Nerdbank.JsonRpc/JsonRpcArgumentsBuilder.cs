@@ -58,7 +58,7 @@ public ref struct JsonRpcArgumentsBuilder
 
 	/// <summary>Serializes a parameter directly into the output buffer.</summary>
 	/// <typeparam name="T">The parameter type.</typeparam>
-	/// <param name="name">The name for a named parameter, or null for positional parameters.</param>
+	/// <param name="name">The name for a named parameter; ignored for positional parameters.</param>
 	/// <param name="value">The parameter value.</param>
 	/// <param name="shape">The parameter type shape.</param>
 	public void Add<T>(string? name, in T value, ITypeShape<T> shape)

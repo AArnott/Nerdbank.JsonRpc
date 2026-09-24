@@ -2,11 +2,11 @@
 
 The experimental client proxy generator creates a typed implementation of an interface annotated with <xref:Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute>. It uses PolyType-generated method shapes for arguments and results. [Getting Started](getting-started.md) shows the contract declaration and how to call <xref:Nerdbank.JsonRpc.JsonRpc.Attach*> on a connection to obtain the proxy; you do not need to construct the generated implementation yourself.
 
-The proxy resolves its type-shape provider once and caches the shapes it needs. <xref:Nerdbank.JsonRpc.JsonRpc.Attach*> accepts an optional immutable <xref:Nerdbank.JsonRpc.JsonRpcProxyOptions> record reserved for future settings:
+The proxy resolves its type-shape provider once and caches the shapes it needs. <xref:Nerdbank.JsonRpc.JsonRpc.Attach*> and <xref:Nerdbank.JsonRpc.JsonRpcBatch.Attach*> accept an optional immutable <xref:Nerdbank.JsonRpc.JsonRpcProxyOptions> record for per-proxy argument encoding:
 
 [!code-csharp[](../../samples/cs/client-proxies.cs#proxy-options)]
 
-Generated methods support `ValueTask<T>`, `Task<T>`, `ValueTask`, `Task`, and `void` notifications. Arguments are positional arrays by default. To send named object/map arguments, set <xref:Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute.UseNamedArguments> on the contract:
+Generated methods support `ValueTask<T>`, `Task<T>`, `ValueTask`, `Task`, and `void` notifications. Arguments are positional arrays by default; set <xref:Nerdbank.JsonRpc.JsonRpcProxyOptions.UseNamedArguments> to send named object/map arguments when attaching a proxy. The same generated contract can be attached in either mode, including to a batch. For example, attach `ICalculator` with the named setting:
 
 [!code-csharp[](../../samples/cs/client-proxies.cs#named-arguments)]
 

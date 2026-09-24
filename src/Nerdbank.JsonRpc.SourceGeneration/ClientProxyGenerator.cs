@@ -44,12 +44,6 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		Notification,
 	}
 
-	private enum ProxyArgumentMatch
-	{
-		Named,
-		Positional,
-	}
-
 	/// <inheritdoc />
 	public void Initialize(IncrementalGeneratorInitializationContext context)
 	{
@@ -76,7 +70,6 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol, InterfaceDeclarationSyntax interfaceDeclaration, Compilation compilation)
 	{
-		ProxyArgumentMatch defaultArgumentMatch = GetArgumentMatch(interfaceSymbol.GetAttributes(), ProxyArgumentMatch.Positional);
 		ImmutableArray<MethodInfo>.Builder methods = ImmutableArray.CreateBuilder<MethodInfo>();
 		ImmutableArray<Diagnostic>.Builder diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
 		if (!interfaceDeclaration.Modifiers.Any(SyntaxKind.PartialKeyword))
@@ -99,7 +92,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				continue;
 			}
 
-			methods.Add(CreateMethodInfo(method, defaultArgumentMatch));
+			methods.Add(CreateMethodInfo(method));
 		}
 
 		return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
@@ -194,7 +187,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			.Any(static method => method.IsGenericMethod && method.TypeParameters.Length == 1 && method.ContainingAssembly.Name == "PolyType") is true;
 	}
 
-	private static MethodInfo CreateMethodInfo(IMethodSymbol method, ProxyArgumentMatch argumentMatch)
+	private static MethodInfo CreateMethodInfo(IMethodSymbol method)
 	{
 		bool hasCancellationToken = method.Parameters.LastOrDefault() is { } lastParameter && IsCancellationToken(lastParameter.Type);
 		ImmutableArray<IParameterSymbol> payloadParameters = hasCancellationToken
@@ -203,28 +196,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		ProxyMethodKind methodKind = GetMethodKind(method.ReturnType, out string? resultTypeName);
 
-		return new MethodInfo(method, payloadParameters, hasCancellationToken, methodKind, argumentMatch, resultTypeName);
-	}
-
-	private static ProxyArgumentMatch GetArgumentMatch(ImmutableArray<AttributeData> attributes, ProxyArgumentMatch defaultValue)
-	{
-		foreach (AttributeData attribute in attributes)
-		{
-			if (attribute.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute")
-			{
-				foreach (KeyValuePair<string, TypedConstant> namedArgument in attribute.NamedArguments)
-				{
-					if (namedArgument.Key == "UseNamedArguments" && namedArgument.Value.Value is bool useNamedArguments)
-					{
-						return useNamedArguments ? ProxyArgumentMatch.Named : ProxyArgumentMatch.Positional;
-					}
-				}
-
-				return defaultValue;
-			}
-		}
-
-		return defaultValue;
+		return new MethodInfo(method, payloadParameters, hasCancellationToken, methodKind, resultTypeName);
 	}
 
 	private static ProxyMethodKind GetMethodKind(ITypeSymbol returnType, out string? resultTypeName)
@@ -274,6 +246,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		builder.Append("internal sealed class ").Append(info.ProxyName).Append(" : ").Append(info.InterfaceName).AppendLine();
 		builder.AppendLine("{");
 		builder.AppendLine("\tprivate readonly global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc;");
+		builder.AppendLine("\tprivate readonly bool useNamedArguments;");
 		builder.AppendLine();
 
 		foreach (ShapeFieldInfo shapeField in shapeFields)
@@ -290,9 +263,10 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.AppendLine();
 		}
 
-		builder.Append("\tinternal ").Append(info.ProxyName).Append("(global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc)").AppendLine();
+		builder.Append("\tinternal ").Append(info.ProxyName).Append("(global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc, global::Nerdbank.JsonRpc.JsonRpcProxyOptions options)").AppendLine();
 		builder.AppendLine("\t{");
 		builder.AppendLine("\t\tthis.jsonRpc = jsonRpc;");
+		builder.AppendLine("\t\tthis.useNamedArguments = options.UseNamedArguments;");
 		if (shapeFields.Length > 0)
 		{
 			builder.Append("\t\tglobal::PolyType.ITypeShapeProvider typeShapeProvider = global::PolyType.Abstractions.TypeShapeResolver.")
@@ -364,18 +338,11 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		if (method.Kind is not ProxyMethodKind.Unsupported)
 		{
-			builder.Append("\t\tusing global::Nerdbank.JsonRpc.JsonRpcArgumentsBuilder argumentsBuilder = this.jsonRpc.CreateArguments(").Append(method.ArgumentMatch == ProxyArgumentMatch.Named ? "true" : "false").Append(", ").Append(method.PayloadParameters.Length).Append(", ").Append(cancellationToken).AppendLine(");");
+			builder.Append("\t\tusing global::Nerdbank.JsonRpc.JsonRpcArgumentsBuilder argumentsBuilder = this.jsonRpc.CreateArguments(").Append("this.useNamedArguments, ").Append(method.PayloadParameters.Length).Append(", ").Append(cancellationToken).AppendLine(");");
 			foreach (IParameterSymbol parameter in method.PayloadParameters)
 			{
 				builder.Append("\t\targumentsBuilder.Add(");
-				if (method.ArgumentMatch == ProxyArgumentMatch.Named)
-				{
-					AppendQuoted(builder, parameter.Name);
-				}
-				else
-				{
-					builder.Append("null");
-				}
+				AppendQuoted(builder, parameter.Name);
 
 				builder.Append(", ").Append(EscapeIdentifier(parameter.Name)).Append(", this.")
 					.Append(GetShapeFieldName(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), shapeFields))
@@ -479,7 +446,6 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		ImmutableArray<IParameterSymbol> PayloadParameters,
 		bool HasCancellationToken,
 		ProxyMethodKind Kind,
-		ProxyArgumentMatch ArgumentMatch,
 		string? ResultTypeName);
 
 	private sealed record ShapeFieldInfo(string TypeName, string FieldName);
