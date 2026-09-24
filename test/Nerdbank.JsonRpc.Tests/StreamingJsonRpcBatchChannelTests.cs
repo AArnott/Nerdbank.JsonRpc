@@ -82,6 +82,26 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 	}
 
 	[Fact]
+	public async Task MissingErrorFieldsCloseChannel()
+	{
+		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcMessagePackChannel bob = new(bobPipe, NullLogger.Instance);
+
+		MessagePackWriter writer = new(alicePipe.Output);
+		writer.WriteMapHeader(3);
+		writer.Write("jsonrpc");
+		writer.Write("2.0");
+		writer.Write("id");
+		writer.Write(1);
+		writer.Write("error");
+		writer.WriteMapHeader(0);
+		writer.Flush();
+		await alicePipe.Output.FlushAsync(this.TimeoutToken);
+
+		await Assert.ThrowsAsync<MessagePackSerializationException>(() => bob.Reader.Completion.WithCancellation(this.TimeoutToken));
+	}
+
+	[Fact]
 	public async Task InvalidPayloadClosesChannel()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();

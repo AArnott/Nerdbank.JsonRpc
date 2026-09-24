@@ -242,7 +242,7 @@ internal static class JsonRpcJsonCodec
 			writer.WriteStartObject();
 			writer.WriteNumber("code", error.Error.Code);
 			writer.WriteString("message", error.Error.Message);
-			if (error.Error.Data is JsonRpcValue data)
+			if (error.Error.Data is { HasValue: true } data)
 			{
 				writer.WritePropertyName("data");
 				WriteValue(writer, data);

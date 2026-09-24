@@ -5,6 +5,7 @@ using Nerdbank.MessagePack;
 
 namespace Nerdbank.JsonRpc;
 
+[MessagePackConverter(typeof(JsonRpcErrorDetailsConverter))]
 public class JsonRpcErrorDetails
 {
 	[PropertyShape(Name = "code")]
@@ -17,10 +18,10 @@ public class JsonRpcErrorDetails
 	public JsonRpcValue? Data { get; init; }
 
 	/// <summary>Gets the optional MessagePack representation used by the MessagePack envelope converter.</summary>
-	[PropertyShape(Name = "data")]
+	[PropertyShape(Ignore = true)]
 	public RawMessagePack? MessagePackData
 	{
-		get => this.Data is JsonRpcValue data ? data.AsMessagePack() : null;
+		get => this.Data is { HasValue: true } data ? data.AsMessagePack() : null;
 		init => this.Data = value.HasValue ? JsonRpcValue.FromMessagePack(value.Value) : null;
 	}
 }

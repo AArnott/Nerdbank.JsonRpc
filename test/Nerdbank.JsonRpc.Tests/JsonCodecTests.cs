@@ -142,6 +142,57 @@ public class JsonCodecTests : TestBase
 	}
 
 	[Theory]
+	[InlineData(JsonRpcEncoding.Json)]
+	[InlineData(JsonRpcEncoding.MessagePack)]
+	public async Task ErrorDataDistinguishesAbsentAndExplicitNull(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcPipeChannel client = encoding == JsonRpcEncoding.Json
+			? new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("client"))
+			: new JsonRpcMessagePackChannel(clientPipe, LoggerFactory.CreateLogger("client"));
+		await using JsonRpcPipeChannel server = encoding == JsonRpcEncoding.Json
+			? new JsonRpcJsonChannel(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("server"))
+			: new JsonRpcMessagePackChannel(serverPipe, LoggerFactory.CreateLogger("server"));
+		await client.Writer.WriteAsync(new JsonRpcError { Id = 1, Error = new() { Code = -32603, Message = "oops", Data = default(JsonRpcValue) } }, this.TimeoutToken);
+		JsonRpcError response = Assert.IsType<JsonRpcError>(await server.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Null(response.Error.Data);
+
+		JsonRpcValue explicitNull = encoding == JsonRpcEncoding.Json
+			? JsonRpcValue.FromJson("null"u8.ToArray())
+			: JsonRpcValue.FromMessagePack(NilMsgPack);
+		await client.Writer.WriteAsync(new JsonRpcError { Id = 2, Error = new() { Code = -32603, Message = "oops", Data = explicitNull } }, this.TimeoutToken);
+		response = Assert.IsType<JsonRpcError>(await server.Reader.ReadAsync(this.TimeoutToken));
+		Assert.True(response.Error.Data.HasValue);
+		Assert.Equal(explicitNull, response.Error.Data.Value);
+
+		JsonRpcValue payload = encoding == JsonRpcEncoding.Json
+			? JsonRpcValue.FromJson("[1,2]"u8.ToArray())
+			: JsonRpcValue.FromMessagePack((RawMessagePack)new byte[] { 0x92, 0x01, 0x02 });
+		await client.Writer.WriteAsync(new JsonRpcError { Id = 3, Error = new() { Code = -32603, Message = "oops", Data = payload } }, this.TimeoutToken);
+		response = Assert.IsType<JsonRpcError>(await server.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal(payload, response.Error.Data);
+	}
+
+	[Fact]
+	public void MessagePackErrorDataWirePresence()
+	{
+		MessagePackSerializer serializer = new();
+		JsonRpcErrorDetails error = new() { Code = -32603, Message = "oops" };
+		using (JsonDocument document = JsonDocument.Parse(serializer.ConvertToJson(serializer.Serialize(new JsonRpcError { Id = 1, Error = error }, this.TimeoutToken))))
+		{
+			Assert.Equal(2, document.RootElement.GetProperty("error").EnumerateObject().Count());
+			Assert.False(document.RootElement.GetProperty("error").TryGetProperty("data", out _));
+		}
+
+		error = new() { Code = -32603, Message = "oops", Data = JsonRpcValue.FromMessagePack(NilMsgPack) };
+		using (JsonDocument document = JsonDocument.Parse(serializer.ConvertToJson(serializer.Serialize(new JsonRpcError { Id = 1, Error = error }, this.TimeoutToken))))
+		{
+			Assert.Equal(3, document.RootElement.GetProperty("error").EnumerateObject().Count());
+			Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("error").GetProperty("data").ValueKind);
+		}
+	}
+
+	[Theory]
 	[InlineData("")]
 	[InlineData("  ")]
 	[InlineData("[1] true")]
