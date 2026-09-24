@@ -13,8 +13,10 @@ using ShapeProvider = PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRp
 
 public class GeneratedProxyTests
 {
-	[Fact]
-	public async Task GeneratedProxy_SupportsRequestsAndNotifications()
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public async Task GeneratedProxy_SupportsRequestsAndNotifications(bool useNamedArguments)
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 
@@ -23,7 +25,7 @@ public class GeneratedProxyTests
 
 		JsonRpc clientRpc = new(clientChannel);
 		clientRpc.Start();
-		ICalculator client = clientRpc.Attach<ICalculator>();
+		ICalculator client = clientRpc.Attach<ICalculator>(new JsonRpcProxyOptions { UseNamedArguments = useNamedArguments });
 
 		Calculator server = new();
 		JsonRpc serverRpc = new(serverChannel);
