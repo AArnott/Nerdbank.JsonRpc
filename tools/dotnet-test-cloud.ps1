@@ -90,17 +90,33 @@ if ($isMTP) {
     }
 
     $solutionPath = $solutionFiles[0].FullName
-    & $dotnet test $solutionPath `
-        --no-build `
-        -c $Configuration `
-        -bl:"$testBinLog" `
-        -- `
-        --filter-not-trait 'TestCategory=FailsInCloudTest' `
-        @mtpArgs `
-        @dumpSwitches `
-        @extraArgs
-    if ($LASTEXITCODE -ne 0) { $failedTests += 1 }
+    $testProjects = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'test') -Recurse -Filter '*.csproj')
+    $nonTUnitProjects = @(
+        foreach ($testProject in $testProjects) {
+            $isTestProject = (& $dotnet msbuild $testProject.FullName -getProperty:IsTestProject -nologo).Trim()
+            if ($isTestProject -eq 'true' -and -not (Select-String -LiteralPath $testProject.FullName -Pattern 'PackageReference Include="TUnit.Engine"' -Quiet)) {
+                $testProject
+            }
+        }
+    )
+    if ($nonTUnitProjects.Count -gt 0) {
+        foreach ($testProject in $nonTUnitProjects) {
+            & $dotnet test $testProject.FullName --no-build -c $Configuration -bl:"$testBinLog" -- --filter-not-trait 'TestCategory=FailsInCloudTest' @mtpArgs @dumpSwitches @extraArgs
+            if ($LASTEXITCODE -ne 0) { $failedTests += 1 }
+        }
+    }
 
+    $tunitProjects = @($testProjects | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'PackageReference Include="TUnit.Engine"' -Quiet })
+    foreach ($project in $tunitProjects) {
+        Write-Host "Running TUnit project '$($project.FullName)'." -ForegroundColor Cyan
+        $frameworkInfo = (& $dotnet msbuild $project.FullName -getProperty:TargetFrameworks -getProperty:TargetFramework -nologo | ConvertFrom-Json).Properties
+        $frameworks = @($frameworkInfo.TargetFrameworks, $frameworkInfo.TargetFramework) | Where-Object { $_ } | ForEach-Object { $_ -split ';' } | Select-Object -Unique
+        foreach ($framework in $frameworks) {
+            if ($framework -eq 'net472' -and -not $IsWindows) { continue }
+            & $dotnet run --project $project.FullName --no-build -c $Configuration --framework $framework -- @mtpArgs @dumpSwitches @extraArgs
+            if ($LASTEXITCODE -ne 0) { $failedTests += 1 }
+        }
+    }
     $trxFiles = Get-ChildItem -Recurse -Path $testLogs\*.trx
 } else {
     $testDiagLog = Join-Path $ArtifactStagingFolder (Join-Path test_logs diag.log)
