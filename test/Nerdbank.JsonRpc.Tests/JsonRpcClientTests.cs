@@ -24,6 +24,16 @@ public partial class JsonRpcClientTests : TestBase
 	}
 
 	[Fact]
+	public void LoggerDefaultsToNullLoggerAndCanBeConfigured()
+	{
+		Assert.Same(Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, this.jsonRpc.Logger);
+		Microsoft.Extensions.Logging.ILogger logger = LoggerFactory.CreateLogger("rpc");
+		using JsonRpc configured = new(new MockJsonRpcPipeChannel(Channel.CreateUnbounded<JsonRpcMessage>())) { Logger = logger };
+		Assert.Same(logger, configured.Logger);
+		Assert.Throws<ArgumentNullException>(() => new JsonRpc(new MockJsonRpcPipeChannel(Channel.CreateUnbounded<JsonRpcMessage>())) { Logger = null! });
+	}
+
+	[Fact]
 	public async Task InvalidEnvelopeFaultsEveryPendingDirectAndBatchRequest()
 	{
 		Task first = this.jsonRpc.RequestAsync("First", EmptyParamsMsgPack, this.TimeoutToken).AsTask();

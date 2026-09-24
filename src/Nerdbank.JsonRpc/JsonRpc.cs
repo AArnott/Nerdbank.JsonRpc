@@ -21,12 +21,12 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	private readonly ConcurrentDictionary<RequestId, PendingInboundRequest> pendingInboundRequests = [];
 	private readonly TaskCompletionSource<bool> completionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
 	private readonly object connectionSync = new();
-	private readonly ILogger logger;
 	private readonly CancellationTokenSource disposalSource = new();
 	private readonly ConcurrentDictionary<string, (object? Target, MethodInvoker Invoker)> handlers = new();
 	private readonly ConcurrentDictionary<RequestId, TaskCompletionSource<JsonRpcResponse>> pendingOutboundRequests = new();
 	private readonly Action<object?> cancelOutboundRequestDelegate;
 	private readonly JsonRpcPipeChannel channel;
+	private ILogger logger = NullLogger.Instance;
 	private Task? readerTask;
 	private int nextRequestId;
 
@@ -34,8 +34,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	/// Initializes a new instance of the <see cref="JsonRpc"/> class over a pipe channel.
 	/// </summary>
 	/// <param name="channel">The channel used to exchange messages.</param>
-	/// <param name="logger">An optional logger for request and protocol failures.</param>
-	public JsonRpc(JsonRpcPipeChannel channel, ILogger? logger = null)
+	public JsonRpc(JsonRpcPipeChannel channel)
 	{
 		this.channel = channel ?? throw new ArgumentNullException(nameof(channel));
 		JsonRpcSerializer serializer = channel.Serializer ?? throw new ArgumentException("The channel must supply a serializer.", nameof(channel));
@@ -44,12 +43,17 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 			throw new ArgumentException("The channel encoding must match its serializer.", nameof(channel));
 		}
 
-		this.logger = logger ?? NullLogger.Instance;
-
 		// Store a delegate we can reuse to avoid allocations.
 		this.cancelOutboundRequestDelegate = this.CancelOutboundRequest;
 
 		this.AddRpcTarget(new SpecialMethodsTarget(this));
+	}
+
+	/// <summary>Gets the logger for request and connection failures. Defaults to <see cref="NullLogger.Instance"/>.</summary>
+	public ILogger Logger
+	{
+		get => this.logger;
+		init => this.logger = value ?? throw new ArgumentNullException(nameof(value));
 	}
 
 	/// <inheritdoc/>
@@ -269,7 +273,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		return id;
 	}
 
-	internal void LogApplicationError(Exception exception) => this.logger.LogWarning(exception, "JSON-RPC request processing failed.");
+	internal void LogApplicationError(Exception exception) => this.Logger.LogWarning(exception, "JSON-RPC request processing failed.");
 
 	internal bool TryRegisterOutboundRequest(JsonRpcRequest request, TaskCompletionSource<JsonRpcResponse> responseTcs)
 	{
@@ -608,7 +612,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 			}
 
 			this.channel.Writer.TryComplete(exception);
-			this.logger.LogError(exception, "JSON-RPC connection terminated: {Reason}", exception.Message);
+			this.Logger.LogError(exception, "JSON-RPC connection terminated: {Reason}", exception.Message);
 			this.disposalSource.Cancel();
 		}
 	}
