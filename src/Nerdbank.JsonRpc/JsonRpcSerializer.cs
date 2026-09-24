@@ -84,13 +84,18 @@ public abstract class JsonRpcSerializer
 
 				break;
 			case JsonRpcMessageBatch batch:
-				if (batch.Messages.IsEmpty || batch.Messages.Any(static entry => entry is JsonRpcMessageBatch or JsonRpcInvalidMessage))
+				if (batch.Messages.IsEmpty)
 				{
 					throw new ArgumentException("A batch must not be empty.", nameof(message));
 				}
 
 				foreach (JsonRpcMessage entry in batch.Messages)
 				{
+					if (entry is JsonRpcMessageBatch)
+					{
+						throw new ArgumentException("A batch cannot contain nested batches.", nameof(message));
+					}
+
 					this.ValidateMessage(entry);
 				}
 

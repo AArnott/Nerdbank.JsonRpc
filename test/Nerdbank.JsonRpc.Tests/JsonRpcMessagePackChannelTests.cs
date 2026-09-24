@@ -49,10 +49,10 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 	}
 
 	[Theory]
-	[InlineData(0)]
-	[InlineData(1)]
-	[InlineData(2)]
-	public async Task DirectWriterRejectsInvalidMessages(int caseNumber)
+	[InlineData(0, "A batch must not be empty.")]
+	[InlineData(1, "A batch cannot contain nested batches.")]
+	[InlineData(2, "JSON-RPC params must be an array or object.")]
+	public async Task DirectWriterRejectsInvalidMessages(int caseNumber, string expectedMessage)
 	{
 		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
 		await using JsonRpcMessagePackChannel channel = new(local, LoggerFactory.CreateLogger<JsonRpcPipeChannel>());
@@ -63,7 +63,8 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 			_ => new JsonRpcRequest { Method = "method", Arguments = JsonRpcValue.FromMessagePack((RawMessagePack)new byte[] { 42 }) },
 		};
 		await channel.Writer.WriteAsync(message, this.TimeoutToken);
-		await Assert.ThrowsAsync<ArgumentException>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
+		ArgumentException error = await Assert.ThrowsAsync<ArgumentException>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
+		Assert.StartsWith(expectedMessage, error.Message);
 	}
 
 	[Fact]
