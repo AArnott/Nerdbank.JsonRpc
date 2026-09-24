@@ -17,12 +17,7 @@ Current highlights:
 
 MessagePack is the default. To use JSON, configure a `Nerdbank.Json.JsonSerializer`, pass it to the JSON pipe channel, and assign **the same instance** to `JsonRpc.Serializer` before calling `Start`:
 
-```csharp
-var configured = new Nerdbank.Json.JsonSerializer();
-var channel = new JsonRpcJsonChannel(pipe, configured, JsonRpcJsonFraming.ContentLength, logger);
-var rpc = new JsonRpc(channel) { Serializer = configured };
-rpc.Start();
-```
+[!code-csharp[](../../samples/cs/GettingStarted.cs#json-encoding)]
 
 `JsonRpcJsonFraming.NewlineDelimited` sends one compact JSON object or batch per line; `ContentLength` sends `Content-Length: <UTF-8 byte count>\r\n\r\n` followed by exactly that many bytes. Both peers must agree on the framing; neither endpoint sniffs the input or switches codecs mid-connection. An empty frame, oversized frame (more than 8 MiB), malformed header, or incomplete frame faults the connection. To customize MessagePack instead, assign your `MessagePackSerializer` to `JsonRpc.Serializer` before starting; it is wrapped automatically. The wrappers (`JsonSerializerPlugin` and `MessagePackSerializerPlugin`) retain the exact configured serializer instances.
 

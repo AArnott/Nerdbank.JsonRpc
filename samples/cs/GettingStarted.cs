@@ -1,7 +1,9 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.IO.Pipelines;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
 using Nerdbank.JsonRpc;
 using PolyType;
 using static GettingStarted.CompilationSupport;
@@ -33,6 +35,24 @@ namespace GettingStarted.GeneratedClientProxy
         ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken);
     }
     #endregion
+}
+
+namespace GettingStarted.JsonEncoding
+{
+    public static class Example
+    {
+        public static JsonRpc Start(IDuplexPipe pipe, ILogger logger)
+        {
+            #region json-encoding
+            var configured = new Nerdbank.Json.JsonSerializer();
+            var channel = new JsonRpcJsonChannel(pipe, configured, JsonRpcJsonFraming.ContentLength, logger);
+            var rpc = new JsonRpc(channel) { Serializer = configured };
+            rpc.Start();
+            #endregion
+
+            return rpc;
+        }
+    }
 }
 
 namespace GettingStarted.AttachProxy
