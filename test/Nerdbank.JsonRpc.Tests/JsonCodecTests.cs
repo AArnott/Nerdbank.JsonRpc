@@ -186,22 +186,31 @@ public class JsonCodecTests : TestBase
 	}
 
 	[Fact]
-	public void MessagePackErrorDataWirePresence()
+	public async Task MessagePackErrorDataWirePresence()
 	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcMessagePackChannel channel = new(local, LoggerFactory.CreateLogger("local"));
 		MessagePackSerializer serializer = new();
 		JsonRpcErrorDetails error = new() { Code = -32603, Message = "oops" };
-		using (JsonDocument document = JsonDocument.Parse(serializer.ConvertToJson(serializer.Serialize(new JsonRpcError { Id = 1, Error = error }, this.TimeoutToken))))
+		await channel.Writer.WriteAsync(new JsonRpcError { Id = 1, Error = error }, this.TimeoutToken);
+		ReadResult read = await peer.Input.ReadAsync(this.TimeoutToken);
+		using (JsonDocument document = JsonDocument.Parse(serializer.ConvertToJson(read.Buffer.ToArray())))
 		{
 			Assert.Equal(2, document.RootElement.GetProperty("error").EnumerateObject().Count());
 			Assert.False(document.RootElement.GetProperty("error").TryGetProperty("data", out _));
 		}
 
+		peer.Input.AdvanceTo(read.Buffer.End);
 		error = new() { Code = -32603, Message = "oops", Data = JsonRpcValue.FromMessagePack(NilMsgPack) };
-		using (JsonDocument document = JsonDocument.Parse(serializer.ConvertToJson(serializer.Serialize(new JsonRpcError { Id = 1, Error = error }, this.TimeoutToken))))
+		await channel.Writer.WriteAsync(new JsonRpcError { Id = 2, Error = error }, this.TimeoutToken);
+		read = await peer.Input.ReadAsync(this.TimeoutToken);
+		using (JsonDocument document = JsonDocument.Parse(serializer.ConvertToJson(read.Buffer.ToArray())))
 		{
 			Assert.Equal(3, document.RootElement.GetProperty("error").EnumerateObject().Count());
 			Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("error").GetProperty("data").ValueKind);
 		}
+
+		peer.Input.AdvanceTo(read.Buffer.End);
 	}
 
 	[Theory]

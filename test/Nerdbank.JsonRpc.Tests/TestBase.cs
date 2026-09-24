@@ -45,7 +45,20 @@ public abstract class TestBase : IDisposable
 	public ITestOutputHelper? Logger { get; }
 
 	public void Log(JsonRpcMessage message, JsonRpc jsonRpc)
-		=> this.Logger?.WriteLine(((MessagePackSerializerPlugin)jsonRpc.Serializer).Serializer.ConvertToJson(((MessagePackSerializerPlugin)jsonRpc.Serializer).Serializer.Serialize(message, TestContext.Current.CancellationToken)));
+	{
+		if (this.Logger is not { } logger)
+		{
+			return;
+		}
+
+		string description = message switch
+		{
+			JsonRpcRequest { Arguments.HasValue: true } request => $"{request.Method}: {((MessagePackSerializerPlugin)jsonRpc.Serializer).Serializer.ConvertToJson(request.Arguments.AsMessagePack())}",
+			JsonRpcRequest request => request.Method,
+			_ => message.GetType().Name,
+		};
+		logger.WriteLine(description);
+	}
 
 	public virtual void Dispose()
 	{

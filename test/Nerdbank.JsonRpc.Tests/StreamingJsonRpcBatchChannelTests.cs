@@ -23,6 +23,22 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 	}
 
 	[Fact]
+	public async Task OmittedAndPresentMessagePackParamsRemainDistinct()
+	{
+		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcMessagePackChannel alice = new(alicePipe, NullLogger.Instance);
+		await using JsonRpcMessagePackChannel bob = new(bobPipe, NullLogger.Instance);
+		await alice.Writer.WriteAsync(new JsonRpcRequest { Method = "testMethod" }, this.TimeoutToken);
+		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await bob.Reader.ReadAsync(this.TimeoutToken));
+		Assert.False(request.Arguments.HasValue);
+
+		JsonRpcValue emptyMap = JsonRpcValue.FromMessagePack((RawMessagePack)new byte[] { 0x80 });
+		await alice.Writer.WriteAsync(new JsonRpcRequest { Method = "testMethod", Arguments = emptyMap }, this.TimeoutToken);
+		request = Assert.IsType<JsonRpcRequest>(await bob.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal(emptyMap, request.Arguments);
+	}
+
+	[Fact]
 	public async Task SendAndReceiveBatchPayload()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
@@ -98,7 +114,7 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 		writer.Flush();
 		await alicePipe.Output.FlushAsync(this.TimeoutToken);
 
-		await Assert.ThrowsAsync<MessagePackSerializationException>(() => bob.Reader.Completion.WithCancellation(this.TimeoutToken));
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => bob.Reader.Completion.WithCancellation(this.TimeoutToken));
 	}
 
 	[Fact]

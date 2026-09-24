@@ -1,11 +1,8 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-using Nerdbank.MessagePack;
-
 namespace Nerdbank.JsonRpc;
 
-[MessagePackConverter(typeof(JsonRpcErrorDetailsConverter))]
 public class JsonRpcErrorDetails
 {
 	[PropertyShape(Name = "code")]
@@ -16,12 +13,4 @@ public class JsonRpcErrorDetails
 
 	[PropertyShape(Ignore = true)]
 	public JsonRpcValue? Data { get; init; }
-
-	/// <summary>Gets the optional MessagePack representation used by the MessagePack envelope converter.</summary>
-	[PropertyShape(Ignore = true)]
-	public RawMessagePack? MessagePackData
-	{
-		get => this.Data is { HasValue: true } data ? data.AsMessagePack() : null;
-		init => this.Data = value.HasValue ? JsonRpcValue.FromMessagePack(value.Value) : null;
-	}
 }

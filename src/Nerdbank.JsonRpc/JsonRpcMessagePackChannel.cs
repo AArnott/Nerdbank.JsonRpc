@@ -35,27 +35,15 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 	protected override async IAsyncEnumerable<JsonRpcMessage> ReceiveMessagesAsync(PipeReader reader, [EnumeratorCancellation] CancellationToken cancellationToken)
 	{
 		Requires.NotNull(reader);
-		await foreach (JsonRpcMessage? msg in Serializer.DeserializeEnumerableAsync<JsonRpcMessage>(reader, cancellationToken))
+		await foreach (JsonRpcMessagePackEnvelope envelope in Serializer.DeserializeEnumerableAsync<JsonRpcMessagePackEnvelope>(reader, cancellationToken))
 		{
-			if (msg is null)
-			{
-				throw new ProtocolViolationException("Unexpected null value where a JSON-RPC message was expected.");
-			}
-
-			yield return msg;
+			yield return envelope.Message;
 		}
 	}
 
 	/// <inheritdoc/>
 	protected override ValueTask SendMessageAsync(PipeWriter writer, JsonRpcMessage message, CancellationToken cancellationToken)
 	{
-		return message switch
-		{
-			JsonRpcRequest request => Serializer.SerializeAsync(writer, request, cancellationToken),
-			JsonRpcResult result => Serializer.SerializeAsync(writer, result, cancellationToken),
-			JsonRpcError error => Serializer.SerializeAsync(writer, error, cancellationToken),
-			JsonRpcMessageBatch batch => Serializer.SerializeAsync<JsonRpcMessage>(writer, batch, cancellationToken),
-			_ => throw new ArgumentException($"Unrecognized JSON-RPC message type: {message.GetType().FullName}", nameof(message)),
-		};
+		return Serializer.SerializeAsync(writer, new JsonRpcMessagePackEnvelope(message), cancellationToken);
 	}
 }
