@@ -13,6 +13,7 @@ using Nerdbank.MessagePack;
 
 namespace Nerdbank.JsonRpc;
 
+[TypeShape(Kind = TypeShapeKind.None)]
 public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 {
 	internal const string SpecialCancelMethodName = "$/cancelRequest";

@@ -5,8 +5,6 @@ using System.Buffers;
 using System.IO.Pipelines;
 using System.Net;
 using System.Runtime.CompilerServices;
-using System.Text;
-using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 
 namespace Nerdbank.JsonRpc;
@@ -14,14 +12,14 @@ namespace Nerdbank.JsonRpc;
 /// <summary>Defines the framing of UTF-8 JSON-RPC messages.</summary>
 public enum JsonRpcJsonFraming
 {
-	/// <summary>One compact JSON payload per line.</summary>
+	/// <summary>One compact JSON payload per line (aka NDJSON, JSONL).</summary>
 	NewlineDelimited,
 
-	/// <summary>ASCII Content-Length header followed by its UTF-8 body.</summary>
+	/// <summary>ASCII <c>Content-Length</c> header followed by its UTF-8 body.</summary>
 	ContentLength,
 }
 
-/// <summary>Transports JSON-RPC messages as UTF-8 JSON with explicit framing.</summary>
+/// <summary>Encodes JSON-RPC messages as UTF-8 JSON with explicit framing.</summary>
 public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 {
 	private const int MaximumFrameSize = 8 * 1024 * 1024;
