@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup>
+    <RidOsPrefix Condition="$([MSBuild]::IsOsPlatform('Windows'))">win</RidOsPrefix>
+    <RidOsPrefix Condition="$([MSBuild]::IsOsPlatform('Linux'))">linux</RidOsPrefix>
+    <RidOsPrefix Condition="$([MSBuild]::IsOsPlatform('OSX'))">osx</RidOsPrefix>
+
+    <RidOsArchitecture Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'x64'">x64</RidOsArchitecture>
+    <RidOsArchitecture Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'ARM64'">arm64</RidOsArchitecture>
+
+    <OutputType>Exe</OutputType>
+    <SelfContained>true</SelfContained>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <RuntimeIdentifier>$(RidOsPrefix)-$(RidOsArchitecture)</RuntimeIdentifier>
+  </PropertyGroup>
+</Project>
