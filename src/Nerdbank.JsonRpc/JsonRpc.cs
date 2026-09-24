@@ -641,7 +641,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		}
 	}
 
-	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+	[GenerateShape(Kind = TypeShapeKind.None, IncludeMethods = MethodShapeFlags.PublicInstance)]
 	internal partial class SpecialMethodsTarget(JsonRpc owner)
 	{
 		[MethodShape(Name = SpecialCancelMethodName)]
