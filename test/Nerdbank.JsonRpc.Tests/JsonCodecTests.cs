@@ -138,6 +138,28 @@ public class JsonCodecTests : TestBase
 	}
 
 	[Theory]
+	[InlineData("")]
+	[InlineData("  ")]
+	[InlineData("[1] true")]
+	[InlineData("[1] garbage")]
+	[InlineData("[1,")]
+	[InlineData("{\"key\":}")]
+	[InlineData("\"unterminated")]
+	public void RawJsonRejectsIncompleteOrMultipleValues(string json)
+	{
+		Assert.ThrowsAny<System.Text.Json.JsonException>(() => JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(json)));
+	}
+
+	[Theory]
+	[InlineData("null ")]
+	[InlineData("  {\"name\": [1, 2]} \n")]
+	[InlineData("\"hello\"")]
+	public void RawJsonAcceptsCompleteValueWithWhitespace(string json)
+	{
+		Assert.Equal(json, Encoding.UTF8.GetString(JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(json)).Bytes.ToArray()));
+	}
+
+	[Theory]
 	[InlineData(JsonRpcJsonFraming.NewlineDelimited)]
 	[InlineData(JsonRpcJsonFraming.ContentLength)]
 	public async Task BatchCancellationUsesSelectedSerializer(JsonRpcJsonFraming framing)

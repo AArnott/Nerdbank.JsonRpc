@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
+using System.Text.Json;
 using Nerdbank.MessagePack;
 
 namespace Nerdbank.JsonRpc;
@@ -52,7 +53,17 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	/// <returns>The owned value.</returns>
 	public static JsonRpcValue FromJson(ReadOnlyMemory<byte> utf8)
 	{
-		using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse(utf8);
+		Utf8JsonReader reader = new(utf8.Span);
+		if (!reader.Read())
+		{
+			throw new JsonException("A raw JSON value must contain exactly one complete value.");
+		}
+
+		// Read to the end to reject incomplete or trailing JSON without building a document.
+		while (reader.Read())
+		{
+		}
+
 		return new(utf8.ToArray(), JsonRpcEncoding.Json);
 	}
 
