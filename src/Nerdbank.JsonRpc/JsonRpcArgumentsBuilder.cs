@@ -11,6 +11,7 @@ namespace Nerdbank.JsonRpc;
 public ref struct JsonRpcArgumentsBuilder
 {
 	private readonly JsonRpcSerializer serializer;
+	private readonly Func<IDisposable, JsonRpcValue>? marshalDisposable;
 	private readonly bool named;
 	private readonly int count;
 	private readonly CancellationToken cancellationToken;
@@ -24,9 +25,11 @@ public ref struct JsonRpcArgumentsBuilder
 	/// <param name="named">Whether to encode named parameters.</param>
 	/// <param name="count">The exact number of parameters to write.</param>
 	/// <param name="cancellationToken">A token used when serializing every parameter.</param>
-	internal JsonRpcArgumentsBuilder(JsonRpcSerializer serializer, bool named, int count, CancellationToken cancellationToken)
+	/// <param name="marshalDisposable">A callback that encodes disposable values as marshaled handles.</param>
+	internal JsonRpcArgumentsBuilder(JsonRpcSerializer serializer, bool named, int count, CancellationToken cancellationToken, Func<IDisposable, JsonRpcValue>? marshalDisposable = null)
 	{
 		this.serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
+		this.marshalDisposable = marshalDisposable;
 		if (count < 0)
 		{
 			throw new ArgumentOutOfRangeException(nameof(count));
@@ -92,6 +95,31 @@ public ref struct JsonRpcArgumentsBuilder
 		this.serializer.SerializeTo(this.buffer, value, shape, this.cancellationToken);
 		this.written++;
 		this.failed = false;
+	}
+	/// <summary>Writes a disposable as a marshaled object handle.</summary>
+	/// <param name="name">The name for a named parameter; ignored for positional parameters.</param>
+	/// <param name="value">The disposable object to marshal.</param>
+	public void AddMarshaled(string? name, IDisposable value)
+	{
+		this.ThrowIfUnavailable();
+		if (this.marshalDisposable is null) throw new InvalidOperationException("This argument builder is not connected to an RPC marshaler.");
+		this.WritePrefix(name);
+		JsonRpcValue marker = this.marshalDisposable(value);
+		foreach (ReadOnlyMemory<byte> segment in marker.OwnedBytes.IsEmpty ? [] : new[] { marker.OwnedBytes }) segment.Span.CopyTo(this.buffer.GetSpan(segment.Length));
+		this.buffer.Advance(marker.OwnedBytes.Length);
+		this.written++;
+		this.failed = false;
+	}
+
+	private void WritePrefix(string? name)
+	{
+		if (this.written > 0 && this.serializer.Encoding == JsonRpcEncoding.Json) this.WriteByte((byte)',' );
+		if (this.named)
+		{
+			if (name is null) throw new ArgumentNullException(nameof(name));
+			this.serializer.WriteArgumentName(this.buffer, name);
+			if (this.serializer.Encoding == JsonRpcEncoding.Json) this.WriteByte((byte)':');
+		}
 	}
 
 	/// <summary>Builds an owned JSON-RPC params value after every declared parameter has been added.</summary>

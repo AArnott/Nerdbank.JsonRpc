@@ -28,9 +28,19 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable
 
 	/// <inheritdoc/>
 	public JsonRpcSerializer Serializer => this.owner.Channel.Serializer;
+	/// <inheritdoc/>
+	public JsonRpcValue MarshalDisposable(IDisposable value) => this.owner.MarshalDisposable(value);
 
 	/// <inheritdoc/>
-	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this.Serializer, named, count, cancellationToken);
+	public async ValueTask<IDisposable> RequestDisposableAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
+	{
+		JsonRpcRequest request = new() { Id = this.owner.GetNextRequestId(), Method = method, Arguments = arguments };
+		JsonRpcResponse response = await this.AddRequestAsync(request, cancellationToken).ConfigureAwait(false);
+		return response is JsonRpcResult result ? this.owner.UnmarshalDisposable(result.Result) : throw new JsonRpcException(((JsonRpcError)response).Error);
+	}
+
+	/// <inheritdoc/>
+	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this.Serializer, named, count, cancellationToken, this.owner.MarshalDisposable);
 
 	/// <summary>
 	/// Attaches a generated client proxy for an RPC contract interface to this batch.

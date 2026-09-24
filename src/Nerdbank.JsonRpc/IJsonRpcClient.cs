@@ -54,5 +54,15 @@ public interface IJsonRpcClient
 	/// <param name="arguments">The pre-serialized arguments payload.</param>
 	/// <param name="cancellationToken">A token whose cancellation is observed before the notification is posted.</param>
 	/// <returns>A task that completes when the notification has been accepted by the outbound channel.</returns>
-	ValueTask NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken);
+	ValueTask NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken);	/// <summary>Marshals a disposable object into an encoded RPC value.</summary>
+	/// <param name="value">The object to marshal.</param>
+	/// <returns>An encoded marshaled-object marker.</returns>
+	JsonRpcValue MarshalDisposable(IDisposable value);
+
+	/// <summary>Sends a request whose result is a marshaled disposable object.</summary>
+	/// <param name="method">The remote method name.</param>
+	/// <param name="arguments">The encoded arguments.</param>
+	/// <param name="cancellationToken">A cancellation token.</param>
+	/// <returns>The remote disposable proxy.</returns>
+	ValueTask<IDisposable> RequestDisposableAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken);
 }

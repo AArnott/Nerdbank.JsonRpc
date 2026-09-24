@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using Nerdbank.MessagePack;
@@ -150,7 +150,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 						response = new JsonRpcResult
 						{
 							Id = id,
-							Result = dispatch.UserDataSerializer.Serialize(result, methodShape.ReturnType, dispatch.JsonRpc.DisposalToken),
+							Result = methodShape.ReturnType.Type == typeof(IDisposable) ? dispatch.JsonRpc.MarshalDisposable((IDisposable)(object)result!) : dispatch.UserDataSerializer.Serialize(result, methodShape.ReturnType, dispatch.JsonRpc.DisposalToken),
 						};
 					}
 					else
@@ -202,6 +202,11 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 		if (typeof(TParameterType) == typeof(CancellationToken))
 		{
 			return new SpecialParameterSetter<TParameterType, TArgumentState>((in TParameterType argument, ref TArgumentState argState) => setter(ref argState, argument));
+		}
+
+		if (typeof(TParameterType) == typeof(IDisposable))
+		{
+			return new ParameterSetter<TArgumentState>((DispatchRequest request, JsonRpcValue argument, ref TArgumentState argState) => setter(ref argState, (TParameterType)(object)request.JsonRpc.UnmarshalDisposable(argument)));
 		}
 
 		return new ParameterSetter<TArgumentState>((DispatchRequest request, JsonRpcValue argument, ref TArgumentState argState) =>
