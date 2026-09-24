@@ -364,14 +364,22 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		if (method.Kind is not ProxyMethodKind.Unsupported)
 		{
-			builder.Append("\t\tusing global::Nerdbank.JsonRpc.JsonRpcArgumentsBuilder argumentsBuilder = this.jsonRpc.CreateArguments(").Append(method.ArgumentMatch == ProxyArgumentMatch.Named ? "true" : "false").Append(", ").Append(method.PayloadParameters.Length).AppendLine(");");
+			builder.Append("\t\tusing global::Nerdbank.JsonRpc.JsonRpcArgumentsBuilder argumentsBuilder = this.jsonRpc.CreateArguments(").Append(method.ArgumentMatch == ProxyArgumentMatch.Named ? "true" : "false").Append(", ").Append(method.PayloadParameters.Length).Append(", ").Append(cancellationToken).AppendLine(");");
 			foreach (IParameterSymbol parameter in method.PayloadParameters)
 			{
 				builder.Append("\t\targumentsBuilder.Add(");
-				if (method.ArgumentMatch == ProxyArgumentMatch.Named) AppendQuoted(builder, parameter.Name); else builder.Append("null");
+				if (method.ArgumentMatch == ProxyArgumentMatch.Named)
+				{
+					AppendQuoted(builder, parameter.Name);
+				}
+				else
+				{
+					builder.Append("null");
+				}
+
 				builder.Append(", ").Append(EscapeIdentifier(parameter.Name)).Append(", this.")
 					.Append(GetShapeFieldName(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), shapeFields))
-					.Append(", ").Append(cancellationToken).AppendLine(");");
+					.AppendLine(");");
 			}
 
 			builder.AppendLine("\t\tglobal::Nerdbank.JsonRpc.JsonRpcValue arguments = argumentsBuilder.Build();");

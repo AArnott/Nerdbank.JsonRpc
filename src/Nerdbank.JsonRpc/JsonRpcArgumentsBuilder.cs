@@ -13,6 +13,7 @@ public ref struct JsonRpcArgumentsBuilder
 	private readonly JsonRpcSerializer serializer;
 	private readonly bool named;
 	private readonly int count;
+	private readonly CancellationToken cancellationToken;
 	private readonly Sequence<byte> buffer;
 	private int written;
 	private bool built;
@@ -22,7 +23,8 @@ public ref struct JsonRpcArgumentsBuilder
 	/// <param name="serializer">The selected serializer.</param>
 	/// <param name="named">Whether to encode named parameters.</param>
 	/// <param name="count">The exact number of parameters to write.</param>
-	internal JsonRpcArgumentsBuilder(JsonRpcSerializer serializer, bool named, int count)
+	/// <param name="cancellationToken">A token used when serializing every parameter.</param>
+	internal JsonRpcArgumentsBuilder(JsonRpcSerializer serializer, bool named, int count, CancellationToken cancellationToken)
 	{
 		this.serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
 		if (count < 0)
@@ -32,6 +34,7 @@ public ref struct JsonRpcArgumentsBuilder
 
 		this.named = named;
 		this.count = count;
+		this.cancellationToken = cancellationToken;
 		this.buffer = new();
 		if (serializer.Encoding == JsonRpcEncoding.Json)
 		{
@@ -58,8 +61,7 @@ public ref struct JsonRpcArgumentsBuilder
 	/// <param name="name">The name for a named parameter, or null for positional parameters.</param>
 	/// <param name="value">The parameter value.</param>
 	/// <param name="shape">The parameter type shape.</param>
-	/// <param name="cancellationToken">A cancellation token.</param>
-	public void Add<T>(string? name, in T value, ITypeShape<T> shape, CancellationToken cancellationToken = default)
+	public void Add<T>(string? name, in T value, ITypeShape<T> shape)
 	{
 		this.ThrowIfUnavailable();
 		if (this.written == this.count)
@@ -87,7 +89,7 @@ public ref struct JsonRpcArgumentsBuilder
 			}
 		}
 
-		this.serializer.SerializeTo(this.buffer, value, shape, cancellationToken);
+		this.serializer.SerializeTo(this.buffer, value, shape, this.cancellationToken);
 		this.written++;
 		this.failed = false;
 	}

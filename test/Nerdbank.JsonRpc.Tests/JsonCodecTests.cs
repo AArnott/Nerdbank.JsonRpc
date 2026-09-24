@@ -190,10 +190,10 @@ public class JsonCodecTests : TestBase
 		using JsonRpc rpc = new(System.Threading.Channels.Channel.CreateUnbounded<JsonRpcMessage>()) { Serializer = serializer };
 		const string Name = "a\"\\\n";
 		JsonRpcValue result;
-		using (JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named, 2))
+		using (JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named, 2, this.TimeoutToken))
 		{
-			builder.Add(named ? Name : null, 13, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
-			builder.Add(named ? "second" : null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken);
+			builder.Add(named ? Name : null, 13, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
+			builder.Add(named ? "second" : null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
 			result = builder.Build();
 		}
 
@@ -240,6 +240,7 @@ public class JsonCodecTests : TestBase
 		Assert.Throws<InvalidOperationException>(() => BuildTwice(rpc));
 		Assert.Throws<ArgumentNullException>(() => AddUnnamedToNamed(rpc));
 		Assert.ThrowsAny<OperationCanceledException>(() => AddCanceled(rpc));
+		Assert.ThrowsAny<OperationCanceledException>(() => CancelBetweenArguments(rpc));
 
 		static void CreateNegativeCount(JsonRpc rpc)
 		{
@@ -255,8 +256,8 @@ public class JsonCodecTests : TestBase
 		static void AddTooMany(JsonRpc rpc)
 		{
 			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(false, 1);
-			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, TestContext.Current.CancellationToken);
-			builder.Add(null, 13, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, TestContext.Current.CancellationToken);
+			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
+			builder.Add(null, 13, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
 		}
 
 		static void BuildTwice(JsonRpc rpc)
@@ -269,15 +270,24 @@ public class JsonCodecTests : TestBase
 		static void AddUnnamedToNamed(JsonRpc rpc)
 		{
 			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(true, 1);
-			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, TestContext.Current.CancellationToken);
+			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
 		}
 
 		static void AddCanceled(JsonRpc rpc)
 		{
 			using CancellationTokenSource source = new();
 			source.Cancel();
-			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(false, 1);
-			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, source.Token);
+			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(false, 1, source.Token);
+			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
+		}
+
+		static void CancelBetweenArguments(JsonRpc rpc)
+		{
+			using CancellationTokenSource source = new();
+			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(false, 2, source.Token);
+			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
+			source.Cancel();
+			builder.Add(null, 13, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
 		}
 	}
 

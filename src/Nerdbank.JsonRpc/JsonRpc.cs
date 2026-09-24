@@ -73,7 +73,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	internal CancellationToken DisposalToken => this.disposalSource.Token;
 
 	/// <inheritdoc/>
-	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count) => new(this.Serializer, named, count);
+	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this.Serializer, named, count, cancellationToken);
 
 #if NET
 	public void AddRpcTarget<T>(T target)
