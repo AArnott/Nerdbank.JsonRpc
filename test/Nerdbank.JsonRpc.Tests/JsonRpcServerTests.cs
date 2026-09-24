@@ -211,10 +211,10 @@ public partial class JsonRpcServerTests : TestBase
 		this.Logger?.Invoke(error.Error.Message);
 	}
 
-	public override void Dispose()
+	[After(Test)]
+	public void DisposeJsonRpc()
 	{
 		this.jsonRpc.Dispose();
-		base.Dispose();
 	}
 
 	private JsonRpcRequest CreateCancellationRequest(RequestId id)

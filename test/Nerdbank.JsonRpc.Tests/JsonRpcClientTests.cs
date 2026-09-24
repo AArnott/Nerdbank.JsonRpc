@@ -191,10 +191,10 @@ public partial class JsonRpcClientTests : TestBase
 		Assert.False(this.channel.Reader.TryRead(out _));
 	}
 
-	public override void Dispose()
+	[After(Test)]
+	public void DisposeJsonRpc()
 	{
 		this.jsonRpc.Dispose();
-		base.Dispose();
 	}
 
 	[GenerateShape]

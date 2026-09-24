@@ -4,7 +4,7 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 
-public abstract class TestBase : IDisposable
+public abstract class TestBase
 {
 	protected static readonly RawMessagePack NilMsgPack = WriteNil();
 
@@ -22,7 +22,7 @@ public abstract class TestBase : IDisposable
 			this.Logger?.Invoke($"The test has exceeded the unexpected timeout of {UnexpectedTimeout.TotalSeconds} seconds.");
 		});
 
-		this.timeoutJoinedSource = CancellationTokenSource.CreateLinkedTokenSource(this.timeoutSource.Token, TestContext.Current.Execution.CancellationToken);
+		this.timeoutJoinedSource = CancellationTokenSource.CreateLinkedTokenSource(this.timeoutSource.Token, TestContext.Current?.Execution.CancellationToken ?? default);
 	}
 
 	public static TimeSpan UnexpectedTimeout => Debugger.IsAttached ? Timeout.InfiniteTimeSpan : TimeSpan.FromSeconds(5);
@@ -55,7 +55,8 @@ public abstract class TestBase : IDisposable
 		logger(description);
 	}
 
-	public virtual void Dispose()
+	[After(Test)]
+	public void Cleanup()
 	{
 		this.timeoutSource.Dispose();
 		this.timeoutJoinedSource.Dispose();

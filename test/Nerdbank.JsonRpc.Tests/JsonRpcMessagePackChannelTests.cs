@@ -8,6 +8,7 @@ using Microsoft.VisualStudio.Threading;
 using Nerdbank.JsonRpc;
 using Nerdbank.Streams;
 
+[InheritsTests]
 public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(CreateTransports())
 {
 	[Test]
