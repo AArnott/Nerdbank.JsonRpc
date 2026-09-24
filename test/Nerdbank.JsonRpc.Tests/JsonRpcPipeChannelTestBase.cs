@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 #pragma warning disable NBMsgPack051 // Prefer modern .NET APIs - Remove this when https://github.com/AArnott/Nerdbank.MessagePack/pull/771 merges
@@ -7,7 +7,7 @@ using Nerdbank.Streams;
 
 public abstract class JsonRpcPipeChannelTestBase((JsonRpcPipeChannel Alice, JsonRpcPipeChannel Bob) pair) : TestBase
 {
-	[Fact]
+	[Test]
 	public async Task SendAndReceiveOneRequest()
 	{
 		JsonRpcRequest sent = new() { Id = 1, Method = "testMethod" };
@@ -17,7 +17,7 @@ public abstract class JsonRpcPipeChannelTestBase((JsonRpcPipeChannel Alice, Json
 		Assert.Equal(sent.Method, recv.Method);
 	}
 
-	[Fact]
+	[Test]
 	public async Task SendAndReceiveOneResult()
 	{
 		Sequence<byte> seq = new();
@@ -32,7 +32,7 @@ public abstract class JsonRpcPipeChannelTestBase((JsonRpcPipeChannel Alice, Json
 		Assert.Equal(sent.Result, recv.Result);
 	}
 
-	[Fact]
+	[Test]
 	public async Task SendAndReceiveOneError()
 	{
 		Sequence<byte> seq = new();
@@ -48,7 +48,7 @@ public abstract class JsonRpcPipeChannelTestBase((JsonRpcPipeChannel Alice, Json
 		Assert.Equal(sent.Error.Data, recv.Error.Data);
 	}
 
-	[Fact]
+	[Test]
 	public async Task SendAndReceiveMultipleMessages()
 	{
 		JsonRpcRequest sent1 = new() { Id = 1, Method = "testMethod" };

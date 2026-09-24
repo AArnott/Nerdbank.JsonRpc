@@ -13,9 +13,9 @@ using ShapeProvider = PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRp
 
 public class GeneratedProxyTests
 {
-	[Theory]
-	[InlineData(false)]
-	[InlineData(true)]
+	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
 	public async Task GeneratedProxy_SupportsRequestsAndNotifications(bool useNamedArguments)
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
@@ -48,7 +48,7 @@ public class GeneratedProxyTests
 		Assert.Equal(7, notificationValue);
 	}
 
-	[Fact]
+	[Test]
 	public async Task GeneratedProxy_IncludesInheritedInterfaceMethods()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
@@ -70,7 +70,7 @@ public class GeneratedProxyTests
 		Assert.Equal(5, sum);
 	}
 
-	[Fact]
+	[Test]
 	public async Task GeneratedProxy_CanPackArgumentsPositionally()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
@@ -101,7 +101,7 @@ public class GeneratedProxyTests
 		Assert.Equal(5, await resultTask.WithCancellation(cts.Token));
 	}
 
-	[Fact]
+	[Test]
 	public async Task GeneratedProxy_EscapesKeywordParameterNames()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
@@ -131,7 +131,7 @@ public class GeneratedProxyTests
 		Assert.Equal(9, await resultTask.WithCancellation(cts.Token));
 	}
 
-	[Fact]
+	[Test]
 	public async Task GeneratedProxy_CanPackArgumentsByNameWhenRequested()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
@@ -164,7 +164,7 @@ public class GeneratedProxyTests
 		Assert.Equal(5, await resultTask.WithCancellation(cts.Token));
 	}
 
-	[Fact]
+	[Test]
 	public async Task GeneratedProxy_SameContractCanUseBothArgumentModes()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
@@ -195,7 +195,7 @@ public class GeneratedProxyTests
 		Assert.Equal(5, await namedResult.WithCancellation(cts.Token));
 	}
 
-	[Fact]
+	[Test]
 	public void GeneratedProxy_AttachRequiresGeneratedProxyMetadata()
 	{
 		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
@@ -205,7 +205,7 @@ public class GeneratedProxyTests
 		Assert.Contains(nameof(INotGeneratedProxy), ex.Message);
 	}
 
-	[Fact]
+	[Test]
 	public void GeneratedProxy_AttachRequiresInterfaceType()
 	{
 		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();

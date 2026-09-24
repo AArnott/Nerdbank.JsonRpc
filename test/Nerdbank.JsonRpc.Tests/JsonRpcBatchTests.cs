@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Threading.Channels;
@@ -8,7 +8,7 @@ using PolyType;
 
 public partial class JsonRpcBatchTests : TestBase
 {
-	[Fact]
+	[Test]
 	public async Task ClientBatch_MixedRequestsAndNotifications()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
@@ -48,7 +48,7 @@ public partial class JsonRpcBatchTests : TestBase
 		Assert.Equal(JsonRpcErrorCode.InternalError, ex.ErrorDetails.Code);
 	}
 
-	[Fact]
+	[Test]
 	public async Task ClientRejectsNilParamsForDirectAndBatchedRequests()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
@@ -68,7 +68,7 @@ public partial class JsonRpcBatchTests : TestBase
 		}
 	}
 
-	[Fact]
+	[Test]
 	public async Task ClientBatch_RejectsEmptyDuplicateAndMutationAfterSend()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
@@ -84,7 +84,7 @@ public partial class JsonRpcBatchTests : TestBase
 		await Assert.ThrowsAsync<InvalidOperationException>(() => batch.NotifyAsync("Notify", EmptyParamsMsgPack, this.TimeoutToken).AsTask());
 	}
 
-	[Fact]
+	[Test]
 	public async Task ClientBatch_DisposeBeforeSendCancelsPendingRequests()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
@@ -97,7 +97,7 @@ public partial class JsonRpcBatchTests : TestBase
 		Assert.False(channel.Reader.TryRead(out _));
 	}
 
-	[Fact]
+	[Test]
 	public async Task ClientBatch_CancellationBeforeSendOmitsRequest()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
@@ -115,7 +115,7 @@ public partial class JsonRpcBatchTests : TestBase
 		await Assert.ThrowsAsync<TaskCanceledException>(() => requestTask.WithCancellation(this.TimeoutToken));
 	}
 
-	[Fact]
+	[Test]
 	public async Task ClientBatch_SendBeforeStartThrows()
 	{
 		(_, Channel<JsonRpcMessage> jsonRpcChannel) = MockChannel<JsonRpcMessage>.CreatePair();
@@ -129,7 +129,7 @@ public partial class JsonRpcBatchTests : TestBase
 		await Assert.ThrowsAsync<InvalidOperationException>(() => requestTask.WithCancellation(this.TimeoutToken));
 	}
 
-	[Fact]
+	[Test]
 	public async Task ClientBatch_CancelAllAfterSendUsesBatchedCancelRequests()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
@@ -170,7 +170,7 @@ public partial class JsonRpcBatchTests : TestBase
 		Assert.Equal(JsonRpcErrorCode.RequestCancelled, secondEx.ErrorDetails.Code);
 	}
 
-	[Fact]
+	[Test]
 	public async Task ClientBatch_CancelAllWriteFailureFaultsPendingRequests()
 	{
 		JsonRpc jsonRpc = new(new MockJsonRpcPipeChannel(new FailingSecondWriteChannel(), writeDirectly: true));
@@ -183,7 +183,7 @@ public partial class JsonRpcBatchTests : TestBase
 		await Assert.ThrowsAsync<InvalidOperationException>(() => requestTask.WithCancellation(this.TimeoutToken));
 	}
 
-	[Fact]
+	[Test]
 	public async Task ClientBatch_CancellationAfterSendUsesCancelRequest()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
@@ -211,7 +211,7 @@ public partial class JsonRpcBatchTests : TestBase
 		Assert.Equal(JsonRpcErrorCode.RequestCancelled, ex.ErrorDetails.Code);
 	}
 
-	[Fact]
+	[Test]
 	public async Task ClientBatch_CancellationAfterSendWriteFailureFaultsPendingRequest()
 	{
 		JsonRpc jsonRpc = new(new MockJsonRpcPipeChannel(new FailingSecondWriteChannel(), writeDirectly: true));
@@ -226,7 +226,7 @@ public partial class JsonRpcBatchTests : TestBase
 		await Assert.ThrowsAsync<InvalidOperationException>(() => requestTask.WithCancellation(this.TimeoutToken));
 	}
 
-	[Fact]
+	[Test]
 	public async Task ServerBatch_EmptyBatchFaultsConnection()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedServerPair();
@@ -234,7 +234,7 @@ public partial class JsonRpcBatchTests : TestBase
 		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => jsonRpc.Completion.WithCancellation(this.TimeoutToken));
 	}
 
-	[Fact]
+	[Test]
 	public async Task ServerBatch_NestedBatchFaultsConnection()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedServerPair();
@@ -242,7 +242,7 @@ public partial class JsonRpcBatchTests : TestBase
 		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => jsonRpc.Completion.WithCancellation(this.TimeoutToken));
 	}
 
-	[Fact]
+	[Test]
 	public async Task Server_ExplicitNilIdCanBeReusedSequentially()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedServerPair();
@@ -256,7 +256,7 @@ public partial class JsonRpcBatchTests : TestBase
 		Assert.False(jsonRpc.Completion.IsCompleted);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Server_StringAndIntegerIdsRemainDistinct()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedServerPair();
@@ -272,7 +272,7 @@ public partial class JsonRpcBatchTests : TestBase
 		Assert.False(jsonRpc.Completion.IsCompleted);
 	}
 
-	[Fact]
+	[Test]
 	public async Task ServerBatch_InvalidArgumentValuesReturnErrorWithoutDroppingOtherResponses()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedServerPair();
@@ -292,7 +292,7 @@ public partial class JsonRpcBatchTests : TestBase
 		Assert.False(jsonRpc.Completion.IsCompleted);
 	}
 
-	[Fact]
+	[Test]
 	public async Task ServerBatch_MixedRequestsAndNotificationsAggregatesResponses()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedServerPair();
@@ -314,7 +314,7 @@ public partial class JsonRpcBatchTests : TestBase
 		Assert.Equal(42, ((MessagePackSerializerPlugin)((IJsonRpcClient)jsonRpc).Serializer).Serializer.Deserialize<int, Witness>(second.Result.AsMessagePack(), this.TimeoutToken));
 	}
 
-	[Fact]
+	[Test]
 	public async Task ServerBatch_NotificationOnlySendsNoResponse()
 	{
 		(_, Channel<JsonRpcMessage> channel) = CreateStartedServerPair();
@@ -329,7 +329,7 @@ public partial class JsonRpcBatchTests : TestBase
 		Assert.False(responseTask.IsCompleted);
 	}
 
-	[Fact]
+	[Test]
 	public async Task ClientBatch_ResponseBatchFansOutToPendingRequests()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();

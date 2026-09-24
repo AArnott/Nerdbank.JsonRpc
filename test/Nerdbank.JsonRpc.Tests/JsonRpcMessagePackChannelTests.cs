@@ -8,9 +8,10 @@ using Microsoft.VisualStudio.Threading;
 using Nerdbank.JsonRpc;
 using Nerdbank.Streams;
 
+[InheritsTests]
 public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(CreateTransports())
 {
-	[Fact]
+	[Test]
 	public async Task MessagePackChannelDeclaresItsEncoding()
 	{
 		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
@@ -22,7 +23,7 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 		Assert.Same(channel.Serializer, ((IJsonRpcClient)rpc).Serializer);
 	}
 
-	[Fact]
+	[Test]
 	public async Task ConfiguredSerializerIsUsedForTypedRequestsAndEnvelopes()
 	{
 		(IDuplexPipe local, IDuplexPipe remote) = FullDuplexStream.CreatePipePair();
@@ -33,14 +34,14 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 		client.Start();
 
 		JsonRpcValue arguments;
-		using (JsonRpcArgumentsBuilder builder = client.CreateArguments(false, 1, TestContext.Current.CancellationToken))
+		using (JsonRpcArgumentsBuilder builder = client.CreateArguments(false, 1, TestContext.Current!.Execution.CancellationToken))
 		{
 			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
 			arguments = builder.Build();
 		}
 
-		await client.NotifyAsync("example", arguments, TestContext.Current.CancellationToken);
-		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await serverChannel.Reader.ReadAsync(TestContext.Current.CancellationToken));
+		await client.NotifyAsync("example", arguments, TestContext.Current!.Execution.CancellationToken);
+		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await serverChannel.Reader.ReadAsync(TestContext.Current!.Execution.CancellationToken));
 		Nerdbank.MessagePack.MessagePackReader reader = new(request.Arguments.AsMessagePack());
 		Assert.Equal(1, reader.ReadArrayHeader());
 		Assert.Equal(42, reader.ReadInt32());
@@ -48,10 +49,10 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 		Assert.Same(configured, Assert.IsType<MessagePackSerializerPlugin>(((IJsonRpcClient)client).Serializer).Serializer);
 	}
 
-	[Theory]
-	[InlineData(0, "A batch must not be empty.")]
-	[InlineData(1, "A batch cannot contain nested batches.")]
-	[InlineData(2, "JSON-RPC params must be an array or object.")]
+	[Test]
+	[Arguments(0, "A batch must not be empty.")]
+	[Arguments(1, "A batch cannot contain nested batches.")]
+	[Arguments(2, "JSON-RPC params must be an array or object.")]
 	public async Task DirectWriterRejectsInvalidMessages(int caseNumber, string expectedMessage)
 	{
 		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
@@ -67,7 +68,7 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 		Assert.StartsWith(expectedMessage, error.Message);
 	}
 
-	[Fact]
+	[Test]
 	public async Task NullSerializerDoesNotStartTransport()
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();

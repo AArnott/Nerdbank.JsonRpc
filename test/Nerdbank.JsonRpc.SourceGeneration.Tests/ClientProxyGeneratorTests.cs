@@ -2,11 +2,12 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using Microsoft.CodeAnalysis.Testing;
+using TUnit.Core;
 using Xunit;
 
 public class ClientProxyGeneratorTests
 {
-	[Fact]
+	[Test]
 	public async Task UnsupportedMethodSignaturesProduceDiagnosticsAndNoProxy()
 	{
 		const string Source = """
@@ -53,7 +54,7 @@ public class ClientProxyGeneratorTests
 		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, genericMethod, optionalParameter, paramsParameter, refParameter, cancellationTokenNotLast, unsupportedReturn);
 	}
 
-	[Fact]
+	[Test]
 	public async Task UnsupportedInterfacesProduceDiagnosticsAndNoProxy()
 	{
 		const string Source = """
@@ -87,7 +88,7 @@ public class ClientProxyGeneratorTests
 		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, genericInterface, nestedInterface);
 	}
 
-	[Fact]
+	[Test]
 	public async Task NonPartialInterfaceProducesDiagnosticAndNoProxy()
 	{
 		const string Source = """
@@ -109,7 +110,7 @@ public class ClientProxyGeneratorTests
 		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, nonPartialInterface);
 	}
 
-	[Fact]
+	[Test]
 	public async Task MatchingProxyNamesInDifferentNamespacesDoNotCollide()
 	{
 		const string Source = """
@@ -142,7 +143,7 @@ public class ClientProxyGeneratorTests
 		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source);
 	}
 
-	[Fact]
+	[Test]
 	public async Task KeywordIdentifiersAreEscapedInGeneratedProxy()
 	{
 		const string Source = """

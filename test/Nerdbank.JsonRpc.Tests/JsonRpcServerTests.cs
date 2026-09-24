@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Threading.Channels;
@@ -25,7 +25,7 @@ public partial class JsonRpcServerTests : TestBase
 		this.jsonRpc.Start();
 	}
 
-	[Fact]
+	[Test]
 	public async Task SimpleRequestResponse()
 	{
 		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.GetMagicNumber) }, this.TimeoutToken);
@@ -34,7 +34,7 @@ public partial class JsonRpcServerTests : TestBase
 		Assert.Equal(42, resultValue);
 	}
 
-	[Fact]
+	[Test]
 	public async Task SimpleRequestResponse_StringId()
 	{
 		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = "Abc", Method = nameof(MockServer.GetMagicNumber) }, this.TimeoutToken);
@@ -44,7 +44,7 @@ public partial class JsonRpcServerTests : TestBase
 		Assert.Equal(42, resultValue);
 	}
 
-	[Fact]
+	[Test]
 	public async Task PauseAsync_Unpause()
 	{
 		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.PauseAsync) }, this.TimeoutToken);
@@ -62,7 +62,7 @@ public partial class JsonRpcServerTests : TestBase
 		Assert.Equal(42, resultValue);
 	}
 
-	[Fact]
+	[Test]
 	public async Task PauseAsync_Cancel()
 	{
 		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.PauseAsync) }, this.TimeoutToken);
@@ -73,11 +73,11 @@ public partial class JsonRpcServerTests : TestBase
 
 		JsonRpcMessage responseMessage = await this.channel.Reader.ReadAsync(this.TimeoutToken);
 		JsonRpcError error = Assert.IsType<JsonRpcError>(responseMessage);
-		this.Logger?.WriteLine($"Received error: {error.Error.Message}");
+		this.Logger?.Invoke($"Received error: {error.Error.Message}");
 		Assert.Contains(MockServer.CancellationAcknowledgementMessage, error.Error.Message);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Add_PositionalArgs()
 	{
 		Sequence<byte> seq = new();
@@ -93,7 +93,7 @@ public partial class JsonRpcServerTests : TestBase
 		Assert.Equal(5, resultValue);
 	}
 
-	[Fact]
+	[Test]
 	public async Task AddValueTask_PositionalArgs()
 	{
 		Sequence<byte> seq = new();
@@ -109,7 +109,7 @@ public partial class JsonRpcServerTests : TestBase
 		Assert.Equal(5, resultValue);
 	}
 
-	[Fact]
+	[Test]
 	public async Task AddTask_PositionalArgs()
 	{
 		Sequence<byte> seq = new();
@@ -125,7 +125,7 @@ public partial class JsonRpcServerTests : TestBase
 		Assert.Equal(5, resultValue);
 	}
 
-	[Fact]
+	[Test]
 	public async Task AddTask_PositionalArgs_TooFew()
 	{
 		Sequence<byte> seq = new();
@@ -137,10 +137,10 @@ public partial class JsonRpcServerTests : TestBase
 		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.AddTask), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
 		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
-		this.Logger?.WriteLine(error.Error.Message);
+		this.Logger?.Invoke(error.Error.Message);
 	}
 
-	[Fact]
+	[Test]
 	public async Task AddTask_PositionalArgs_TooMany()
 	{
 		Sequence<byte> seq = new();
@@ -154,10 +154,10 @@ public partial class JsonRpcServerTests : TestBase
 		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.AddTask), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
 		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
-		this.Logger?.WriteLine(error.Error.Message);
+		this.Logger?.Invoke(error.Error.Message);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Add_NamedArgs()
 	{
 		Sequence<byte> seq = new();
@@ -175,7 +175,7 @@ public partial class JsonRpcServerTests : TestBase
 		Assert.Equal(5, resultValue);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Add_NamedArgs_TooFewArguments()
 	{
 		Sequence<byte> seq = new();
@@ -188,10 +188,10 @@ public partial class JsonRpcServerTests : TestBase
 		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.Add), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
 		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
-		this.Logger?.WriteLine(error.Error.Message);
+		this.Logger?.Invoke(error.Error.Message);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Add_NamedArgs_TooManyArguments()
 	{
 		Sequence<byte> seq = new();
@@ -208,13 +208,13 @@ public partial class JsonRpcServerTests : TestBase
 		await this.channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = nameof(MockServer.Add), Arguments = (RawMessagePack)seq.AsReadOnlySequence }, this.TimeoutToken);
 		JsonRpcError error = Assert.IsType<JsonRpcError>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
-		this.Logger?.WriteLine(error.Error.Message);
+		this.Logger?.Invoke(error.Error.Message);
 	}
 
-	public override void Dispose()
+	[After(Test)]
+	public void DisposeJsonRpc()
 	{
 		this.jsonRpc.Dispose();
-		base.Dispose();
 	}
 
 	private JsonRpcRequest CreateCancellationRequest(RequestId id)
