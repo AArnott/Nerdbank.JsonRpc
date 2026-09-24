@@ -6,7 +6,7 @@ using BenchmarkDotNet.Attributes;
 
 namespace Benchmarks;
 
-/// <summary>Measures the cost of taking ownership of a validated raw JSON value.</summary>
+/// <summary>Measures the cost of taking ownership of a raw JSON value.</summary>
 [MemoryDiagnoser]
 public class JsonRpcValueBenchmarks
 {
@@ -38,7 +38,7 @@ public class JsonRpcValueBenchmarks
 		}
 	}
 
-	/// <summary>Creates an owned, validated raw JSON value.</summary>
+	/// <summary>Creates an owned raw JSON value.</summary>
 	/// <returns>The owned raw value.</returns>
 	[Benchmark]
 	public JsonRpcValue FromJson() => JsonRpcValue.FromJson(this.json);

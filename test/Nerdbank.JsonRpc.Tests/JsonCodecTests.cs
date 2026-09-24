@@ -116,14 +116,12 @@ public class JsonCodecTests : TestBase
 		buffer[1] = (byte)'9';
 		Assert.Equal("[1]", Encoding.UTF8.GetString(json.Bytes.ToArray()));
 		Assert.Throws<InvalidOperationException>(() => json.AsMessagePack());
-		Assert.ThrowsAny<Exception>(() => JsonRpcValue.FromJson("[1] garbage"u8.ToArray()));
 		Assert.False(default(JsonRpcValue).HasValue);
 		Assert.True(JsonRpcValue.FromJson("null"u8.ToArray()).HasValue);
 		byte[] msgpackBytes = [(byte)MessagePackCode.Nil];
 		JsonRpcValue msgpack = JsonRpcValue.FromMessagePack((RawMessagePack)msgpackBytes);
 		msgpackBytes[0] = 1;
 		Assert.Equal((byte)MessagePackCode.Nil, msgpack.Bytes.Span[0]);
-		Assert.ThrowsAny<Exception>(() => JsonRpcValue.FromMessagePack((RawMessagePack)new byte[] { (byte)MessagePackCode.Nil, (byte)MessagePackCode.Nil }));
 
 		JsonSerializerPlugin plugin = new(new Nerdbank.Json.JsonSerializer());
 		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
@@ -145,9 +143,23 @@ public class JsonCodecTests : TestBase
 	[InlineData("[1,")]
 	[InlineData("{\"key\":}")]
 	[InlineData("\"unterminated")]
-	public void RawJsonRejectsIncompleteOrMultipleValues(string json)
+	public void RawJsonCopiesWithoutValidating(string json)
 	{
-		Assert.ThrowsAny<System.Text.Json.JsonException>(() => JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(json)));
+		byte[] input = Encoding.UTF8.GetBytes(json);
+		JsonRpcValue value = JsonRpcValue.FromJson(input);
+		Assert.True(value.HasValue);
+		Assert.Equal(input, value.Bytes.ToArray());
+	}
+
+	[Fact]
+	public void RawMessagePackCopiesWithoutValidating()
+	{
+		byte[] input = [(byte)MessagePackCode.Nil, (byte)MessagePackCode.Nil];
+		JsonRpcValue value = JsonRpcValue.FromMessagePack((RawMessagePack)input);
+		input[0] = 1;
+		Assert.True(value.HasValue);
+		Assert.Equal(new byte[] { (byte)MessagePackCode.Nil, (byte)MessagePackCode.Nil }, value.Bytes.ToArray());
+		Assert.True(JsonRpcValue.FromMessagePack((RawMessagePack)Array.Empty<byte>()).HasValue);
 	}
 
 	[Theory]

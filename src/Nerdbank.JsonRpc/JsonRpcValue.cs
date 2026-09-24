@@ -2,7 +2,6 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
-using System.Text.Json;
 using Nerdbank.MessagePack;
 
 namespace Nerdbank.JsonRpc;
@@ -48,39 +47,15 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	/// <param name="value">The tagged value.</param>
 	public static implicit operator RawMessagePack(JsonRpcValue value) => value.AsMessagePack();
 
-	/// <summary>Copies one encoded JSON value into an owned buffer.</summary>
-	/// <param name="utf8">A complete UTF-8 JSON value.</param>
+	/// <summary>Copies raw UTF-8 JSON bytes into an owned buffer without validating them.</summary>
+	/// <param name="utf8">A complete UTF-8 JSON value supplied by the caller.</param>
 	/// <returns>The owned value.</returns>
-	public static JsonRpcValue FromJson(ReadOnlyMemory<byte> utf8)
-	{
-		Utf8JsonReader reader = new(utf8.Span);
-		if (!reader.Read())
-		{
-			throw new JsonException("A raw JSON value must contain exactly one complete value.");
-		}
+	public static JsonRpcValue FromJson(ReadOnlyMemory<byte> utf8) => new(utf8.ToArray(), JsonRpcEncoding.Json);
 
-		// Read to the end to reject incomplete or trailing JSON without building a document.
-		while (reader.Read())
-		{
-		}
-
-		return new(utf8.ToArray(), JsonRpcEncoding.Json);
-	}
-
-	/// <summary>Copies one encoded MessagePack value into an owned buffer.</summary>
-	/// <param name="value">A complete MessagePack value.</param>
+	/// <summary>Copies raw MessagePack bytes into an owned buffer without validating them.</summary>
+	/// <param name="value">A complete MessagePack value supplied by the caller.</param>
 	/// <returns>The owned value.</returns>
-	public static JsonRpcValue FromMessagePack(RawMessagePack value)
-	{
-		MessagePackReader reader = new(value);
-		reader.ReadRaw(new SerializationContext());
-		if (!reader.End)
-		{
-			throw new ArgumentException("A raw MessagePack value must contain exactly one complete value.", nameof(value));
-		}
-
-		return new(value.MsgPack.ToArray(), JsonRpcEncoding.MessagePack);
-	}
+	public static JsonRpcValue FromMessagePack(RawMessagePack value) => new(value.MsgPack.ToArray(), JsonRpcEncoding.MessagePack);
 
 	/// <summary>Returns this value as MessagePack, rejecting any other encoding.</summary>
 	/// <returns>The MessagePack value.</returns>
