@@ -301,6 +301,8 @@ public class JsonCodecTests : TestBase
 	[Theory]
 	[InlineData(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"params\":42}")]
 	[InlineData(JsonRpcJsonFraming.ContentLength, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"params\":42}")]
+	[InlineData(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"params\":null}")]
+	[InlineData(JsonRpcJsonFraming.ContentLength, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"params\":null}")]
 	[InlineData(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"jsonrpc\":\"2.0\",\"method\":\"echo\"}")]
 	[InlineData(JsonRpcJsonFraming.ContentLength, "{\"jsonrpc\":\"2.0\",\"id\":1e0,\"method\":\"echo\"}")]
 	[InlineData(JsonRpcJsonFraming.NewlineDelimited, "[{\"jsonrpc\":\"2.0\",\"method\":\"echo\"},42]")]

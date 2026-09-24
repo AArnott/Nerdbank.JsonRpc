@@ -49,6 +49,26 @@ public partial class JsonRpcBatchTests : TestBase
 	}
 
 	[Fact]
+	public async Task ClientRejectsNilParamsForDirectAndBatchedRequests()
+	{
+		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
+		using (jsonRpc)
+		{
+			ArgumentException direct = await Assert.ThrowsAsync<ArgumentException>(() => jsonRpc.RequestAsync("Ping", NilMsgPack, this.TimeoutToken).AsTask());
+			Assert.Contains("params must be an array or object", direct.Message);
+
+			using JsonRpcBatch batch = jsonRpc.CreateBatch();
+			ArgumentException batched = Assert.Throws<ArgumentException>(() => batch.RequestAsync("Ping", NilMsgPack, this.TimeoutToken));
+			Assert.Contains("params must be an array or object", batched.Message);
+			Assert.False(channel.Reader.TryRead(out _));
+
+			await batch.NotifyAsync("Ping", EmptyParamsMsgPack, this.TimeoutToken);
+			await batch.SendAsync(this.TimeoutToken);
+			Assert.Single(Assert.IsType<JsonRpcMessageBatch>(await channel.Reader.ReadAsync(this.TimeoutToken)).Messages);
+		}
+	}
+
+	[Fact]
 	public async Task ClientBatch_RejectsEmptyDuplicateAndMutationAfterSend()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
