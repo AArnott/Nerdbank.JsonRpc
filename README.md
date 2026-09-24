@@ -11,9 +11,19 @@ Nerdbank.JsonRpc is a .NET library for building strongly typed JSON-RPC clients 
 dotnet add package Nerdbank.JsonRpc
 ```
 
-## Quick start
+## Generated client proxy quick start
 
-Define a shared contract and annotate it for PolyType method-shape and proxy generation:
+Generated proxies require the source generator, which is currently built from this repository rather than included in the NuGet package. Add it to your project as an analyzer:
+
+```xml
+<ItemGroup>
+  <ProjectReference Include="path-to-Nerdbank.JsonRpc/src/Nerdbank.JsonRpc.SourceGeneration/Nerdbank.JsonRpc.SourceGeneration.csproj"
+                  OutputItemType="Analyzer"
+                  ReferenceOutputAssembly="false" />
+</ItemGroup>
+```
+
+Then define a shared contract and annotate it for PolyType method-shape and proxy generation:
 
 ```csharp
 using Nerdbank.JsonRpc;
