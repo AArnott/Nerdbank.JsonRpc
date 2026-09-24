@@ -460,6 +460,20 @@ public class JsonCodecTests : TestBase
 		peer.Input.AdvanceTo(read.Buffer.End);
 	}
 
+	[Fact]
+	public async Task InvalidJsonChannelConfigurationDoesNotStartTransport()
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		JsonSerializerPlugin serializer = new(new Nerdbank.Json.JsonSerializer());
+		Assert.Throws<ArgumentOutOfRangeException>(() => new JsonRpcJsonChannel(local, serializer, (JsonRpcJsonFraming)int.MaxValue, LoggerFactory.CreateLogger("local")));
+		Assert.Throws<ArgumentNullException>(() => new JsonRpcJsonChannel(local, (JsonSerializerPlugin)null!, JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("local")));
+		peer.Output.Write("still available"u8);
+		await peer.Output.FlushAsync(this.TimeoutToken);
+		ReadResult read = await local.Input.ReadAsync(this.TimeoutToken);
+		Assert.Equal("still available", Encoding.UTF8.GetString(read.Buffer.ToArray()));
+		local.Input.AdvanceTo(read.Buffer.End);
+	}
+
 	[Theory]
 	[InlineData(JsonRpcJsonFraming.NewlineDelimited)]
 	[InlineData(JsonRpcJsonFraming.ContentLength)]

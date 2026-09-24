@@ -34,15 +34,10 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 	/// <param name="inboundCapacity">The inbound queue limit.</param>
 	/// <param name="outboundCapacity">The outbound queue limit.</param>
 	public JsonRpcJsonChannel(IDuplexPipe pipe, JsonSerializerPlugin serializer, JsonRpcJsonFraming framing, ILogger logger, int? inboundCapacity = 100, int? outboundCapacity = null)
-		: base(pipe, CreateInboundChannel(inboundCapacity), CreateOutboundChannel(outboundCapacity), logger, startImmediately: false)
+		: base(pipe, CreateValidatedInboundChannel(inboundCapacity, serializer, framing), CreateOutboundChannel(outboundCapacity), logger)
 	{
-		this.Serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
+		this.Serializer = serializer;
 		this.framing = framing;
-		if (!Enum.IsDefined(typeof(JsonRpcJsonFraming), framing))
-		{
-			throw new ArgumentOutOfRangeException(nameof(framing));
-		}
-
 		this.StartTransport();
 	}
 
@@ -120,6 +115,21 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 		}
 
 		return default;
+	}
+
+	private static System.Threading.Channels.Channel<JsonRpcMessage> CreateValidatedInboundChannel(int? capacity, JsonSerializerPlugin serializer, JsonRpcJsonFraming framing)
+	{
+		if (serializer is null)
+		{
+			throw new ArgumentNullException(nameof(serializer));
+		}
+
+		if (!Enum.IsDefined(typeof(JsonRpcJsonFraming), framing))
+		{
+			throw new ArgumentOutOfRangeException(nameof(framing));
+		}
+
+		return CreateInboundChannel(capacity);
 	}
 
 	private bool TryReadFrame(ReadOnlySequence<byte> buffer, out byte[]? payload, out SequencePosition consumed)

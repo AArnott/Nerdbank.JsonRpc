@@ -8,7 +8,9 @@ For JSON, configure a <xref:Nerdbank.Json.JsonSerializer>, pass it to a <xref:Ne
 
 [!code-csharp[](../../samples/cs/encodings.cs#json-encoding)]
 
-To customize MessagePack, supply a configured <xref:Nerdbank.MessagePack.MessagePackSerializer> through the `serializer` parameter of <xref:Nerdbank.JsonRpc.JsonRpcMessagePackChannel>. Otherwise the channel uses <xref:Nerdbank.JsonRpc.JsonRpcMessagePackChannel.DefaultSerializer>. The same serializer instance handles MessagePack application values and protocol envelopes. Each channel exposes a <xref:Nerdbank.JsonRpc.JsonRpcPipeChannel.Serializer> plugin for typed values; <xref:Nerdbank.JsonRpc.JsonRpc> obtains it directly from the channel. MessagePack streams self-delimiting values without additional framing. The original <xref:Nerdbank.JsonRpc.StreamingJsonRpcMessageChannel> name remains available for compatibility.
+To customize MessagePack, supply a configured <xref:Nerdbank.MessagePack.MessagePackSerializer> through the `serializer` parameter of <xref:Nerdbank.JsonRpc.JsonRpcMessagePackChannel>. Otherwise the channel uses <xref:Nerdbank.JsonRpc.JsonRpcMessagePackChannel.DefaultSerializer>. The same serializer instance handles MessagePack application values and protocol envelopes. Each channel exposes a <xref:Nerdbank.JsonRpc.JsonRpcPipeChannel.Serializer> plugin for typed values; <xref:Nerdbank.JsonRpc.JsonRpc> obtains it directly from the channel. MessagePack streams self-delimiting values without additional framing.
+
+Replace uses of `StreamingJsonRpcMessageChannel` with <xref:Nerdbank.JsonRpc.JsonRpcMessagePackChannel>. Custom <xref:Nerdbank.JsonRpc.JsonRpcPipeChannel> subclasses must now provide <xref:Nerdbank.JsonRpc.JsonRpcPipeChannel.Encoding> and <xref:Nerdbank.JsonRpc.JsonRpcPipeChannel.Serializer> and call `StartTransport` after initializing their state. The former MessagePack-specific protected field and serialization helpers are not part of the encoding-neutral channel API.
 
 ## JSON framing
 

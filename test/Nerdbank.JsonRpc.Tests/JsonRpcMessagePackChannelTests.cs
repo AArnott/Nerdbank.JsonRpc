@@ -1,6 +1,7 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.Buffers;
 using System.IO.Pipelines;
 using Microsoft.Extensions.Logging;
 using Microsoft.VisualStudio.Threading;
@@ -66,14 +67,15 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 	}
 
 	[Fact]
-	public async Task OriginalChannelNameRemainsMessagePackCompatible()
+	public async Task NullSerializerDoesNotStartTransport()
 	{
-		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
-#pragma warning disable CS0618 // Verify the original public name still works.
-		await using StreamingJsonRpcMessageChannel channel = new(local, LoggerFactory.CreateLogger<JsonRpcPipeChannel>());
-#pragma warning restore CS0618
-		Assert.Equal(JsonRpcEncoding.MessagePack, channel.Encoding);
-		Assert.Same(JsonRpcMessagePackChannel.DefaultSerializer, Assert.IsType<MessagePackSerializerPlugin>(channel.Serializer).Serializer);
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		Assert.Throws<ArgumentNullException>(() => new JsonRpcMessagePackChannel(local, LoggerFactory.CreateLogger<JsonRpcPipeChannel>(), serializer: null!));
+		peer.Output.Write("still available"u8.ToArray());
+		await peer.Output.FlushAsync(this.TimeoutToken);
+		ReadResult read = await local.Input.ReadAsync(this.TimeoutToken);
+		Assert.Equal("still available", System.Text.Encoding.UTF8.GetString(read.Buffer.ToArray()));
+		local.Input.AdvanceTo(read.Buffer.End);
 	}
 
 	private static (JsonRpcPipeChannel Alice, JsonRpcPipeChannel Bob) CreateTransports()

@@ -18,7 +18,7 @@ internal sealed class MockJsonRpcPipeChannel : JsonRpcPipeChannel
 	/// <param name="serializer">The serializer to bind to this channel.</param>
 	/// <param name="writeDirectly">Whether writes should bypass the transport queue to observe writer failures synchronously.</param>
 	internal MockJsonRpcPipeChannel(Channel<JsonRpcMessage> messages, JsonRpcSerializer? serializer = null, bool writeDirectly = false)
-		: base(FullDuplexStream.CreatePipePair().Item1, CreateInboundChannel(null), CreateOutboundChannel(null), NullLogger.Instance, startImmediately: false)
+		: base(FullDuplexStream.CreatePipePair().Item1, CreateInboundChannel(null), CreateOutboundChannel(null), NullLogger.Instance)
 	{
 		this.messages = messages;
 		if (writeDirectly)

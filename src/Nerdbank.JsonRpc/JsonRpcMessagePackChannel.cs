@@ -35,9 +35,9 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 	/// <param name="inboundCapacity">The inbound queue limit, or null for an unbounded queue.</param>
 	/// <param name="outboundCapacity">The outbound queue limit, or null for an unbounded queue.</param>
 	public JsonRpcMessagePackChannel(IDuplexPipe pipe, ILogger logger, MessagePackSerializer serializer, int? inboundCapacity = 100, int? outboundCapacity = null)
-		: base(pipe, CreateInboundChannel(inboundCapacity), CreateOutboundChannel(outboundCapacity), logger, startImmediately: false)
+		: base(pipe, CreateValidatedInboundChannel(inboundCapacity, serializer), CreateOutboundChannel(outboundCapacity), logger)
 	{
-		this.messagePackSerializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
+		this.messagePackSerializer = serializer;
 		this.Serializer = new MessagePackSerializerPlugin(this.messagePackSerializer);
 		this.StartTransport();
 	}
@@ -66,5 +66,15 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 	{
 		this.Serializer.ValidateMessage(message);
 		return this.messagePackSerializer.SerializeAsync(writer, new JsonRpcMessagePackEnvelope(message), cancellationToken);
+	}
+
+	private static System.Threading.Channels.Channel<JsonRpcMessage> CreateValidatedInboundChannel(int? capacity, MessagePackSerializer serializer)
+	{
+		if (serializer is null)
+		{
+			throw new ArgumentNullException(nameof(serializer));
+		}
+
+		return CreateInboundChannel(capacity);
 	}
 }
