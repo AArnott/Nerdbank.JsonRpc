@@ -1,4 +1,4 @@
-# Features
+﻿# Features
 
 ## Core protocol
 
@@ -31,6 +31,12 @@ Batch execution follows JSON-RPC semantics:
 Generated proxies can be attached to either a <xref:Nerdbank.JsonRpc.JsonRpc> instance or a <xref:Nerdbank.JsonRpc.JsonRpcBatch>, so callers can use the same contract interface for ordinary and batched calls.
 
 Servers do not need special target methods or registration changes to support batching. Batched requests are dispatched through the same server method binding path as ordinary requests; the server-side consideration is simply that independent batch entries may be processed concurrently, so target objects that share mutable state should already be safe for concurrent calls.
+
+## Protocol failures and request IDs
+
+The MessagePack transport rejects an invalid JSON-RPC envelope or batch, logs the error, and faults the connection and every pending request (including requests queued in a batch). It does not try to match a malformed response to a request without a trustworthy `id`. A valid response with a value that cannot be converted to the expected return type instead fails only that request; other calls can continue. A valid request whose arguments cannot be converted receives an `InvalidParams` error with its original `id`; a notification receives no reply. Application exception details are not returned to peers.
+
+Outbound request IDs are increasing integers. Inbound requests may use integer, string, or explicitly nil IDs; responses echo the same kind and value. Only an *omitted* `id` denotes a notification. Sequential requests may reuse an explicitly nil ID once the earlier request has completed.
 
 ## Generated client proxies
 

@@ -106,17 +106,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	protected abstract ValueTask SendMessageAsync(PipeWriter writer, JsonRpcMessage message, CancellationToken cancellationToken);
 
 	private static string FormatLoggedMessage(JsonRpcMessage message, Exception? exception)
-	{
-		try
-		{
-			byte[] msgpack = Serializer.Serialize(message, CancellationToken.None);
-			return Serializer.ConvertToJson(msgpack);
-		}
-		catch (ArgumentException) when (message is JsonRpcInvalidMessage or JsonRpcMessageBatch)
-		{
-			return message is JsonRpcInvalidMessage invalid ? $"Invalid JSON-RPC message: {invalid.Message}" : "JSON-RPC batch contains an invalid message.";
-		}
-	}
+		=> $"JSON-RPC {message.GetType().Name}";
 
 	private async Task HandleInboundMessagesAsync(PipeReader reader, CancellationToken cancellationToken)
 	{
@@ -128,10 +118,19 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 				await this.inboundMessageWriter.WriteAsync(message, cancellationToken).ConfigureAwait(false);
 			}
 
+			this.inboundMessageWriter.TryComplete();
 			await reader.CompleteAsync().ConfigureAwait(false);
 		}
 		catch (Exception ex)
 		{
+			this.Logger.LogError(ex, "JSON-RPC inbound transport failed.");
+			this.inboundMessageWriter.TryComplete(ex);
+			this.Writer.TryComplete(ex);
+#if NET
+			await this.disposalSource.CancelAsync().ConfigureAwait(false);
+#else
+			this.disposalSource.Cancel();
+#endif
 			await reader.CompleteAsync(ex).ConfigureAwait(false);
 		}
 	}
@@ -153,6 +152,14 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 		}
 		catch (Exception ex)
 		{
+			this.Logger.LogError(ex, "JSON-RPC outbound transport failed.");
+			this.inboundMessageWriter.TryComplete(ex);
+			this.Writer.TryComplete(ex);
+#if NET
+			await this.disposalSource.CancelAsync().ConfigureAwait(false);
+#else
+			this.disposalSource.Cancel();
+#endif
 			await writer.CompleteAsync(ex).ConfigureAwait(false);
 		}
 	}

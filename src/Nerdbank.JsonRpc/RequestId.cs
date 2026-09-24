@@ -13,6 +13,7 @@ public partial struct RequestId : IEquatable<RequestId>
 {
 	private ReadOnlyMemory<byte>? utf8Value;
 	private long? numberValue;
+	private ulong? unsignedValue;
 	private string? stringCache;
 
 	/// <summary>
@@ -48,6 +49,23 @@ public partial struct RequestId : IEquatable<RequestId>
 		this.numberValue = value;
 	}
 
+	/// <summary>
+	/// Initializes a new instance of the <see cref="RequestId"/> struct with an unsigned integer value.
+	/// </summary>
+	/// <param name="value">The integer request ID.</param>
+	public RequestId(ulong value)
+		: this()
+	{
+		if (value <= long.MaxValue)
+		{
+			this.numberValue = (long)value;
+		}
+		else
+		{
+			this.unsignedValue = value;
+		}
+	}
+
 	private readonly ReadOnlySpan<byte> Utf8Value => (this.utf8Value ?? default).Span;
 
 	public static implicit operator RequestId(ReadOnlyMemory<byte> value) => new RequestId(value);
@@ -56,7 +74,7 @@ public partial struct RequestId : IEquatable<RequestId>
 
 	public static implicit operator RequestId(long value) => new RequestId(value);
 
-	public override string ToString() => this.stringCache ??= this.numberValue?.ToString() ?? (this.utf8Value.HasValue ? Encoding.UTF8.GetString(this.utf8Value.Value.Span) : "null");
+	public override string ToString() => this.stringCache ??= this.numberValue?.ToString() ?? this.unsignedValue?.ToString() ?? (this.utf8Value.HasValue ? Encoding.UTF8.GetString(this.utf8Value.Value.Span) : "null");
 
 	public readonly override int GetHashCode()
 	{
@@ -64,6 +82,13 @@ public partial struct RequestId : IEquatable<RequestId>
 		{
 			HashCode hash = default;
 			hash.Add(n);
+			hash.Add(false);
+			return hash.ToHashCode();
+		}
+		else if (this.unsignedValue is ulong unsigned)
+		{
+			HashCode hash = default;
+			hash.Add(unsigned);
 			hash.Add(false);
 			return hash.ToHashCode();
 		}
@@ -91,17 +116,19 @@ public partial struct RequestId : IEquatable<RequestId>
 
 	public readonly bool Equals(RequestId other)
 		=> this.numberValue == other.numberValue
+		&& this.unsignedValue == other.unsignedValue
 		&& this.utf8Value.HasValue == other.utf8Value.HasValue
 		&& this.Utf8Value.SequenceEqual(other.Utf8Value);
 
 	[EditorBrowsable(EditorBrowsableState.Never)]
+#pragma warning disable NBMsgPack031 // Exactly one of the scalar ID encodings is written.
 	public class Converter : MessagePackConverter<RequestId>
 	{
 		public override RequestId Read(ref MessagePackReader reader, SerializationContext context)
 		{
 			return reader.NextMessagePackType switch
 			{
-				MessagePackType.Integer => new RequestId(reader.ReadInt64()),
+				MessagePackType.Integer => ReadInteger(ref reader),
 				MessagePackType.String => new RequestId(reader.ReadStringSpan().ToArray()),
 				MessagePackType.Nil when reader.TryReadNil() => default,
 				_ => throw new MessagePackSerializationException($"Cannot convert {reader.NextMessagePackType} to RequestId."),
@@ -114,6 +141,10 @@ public partial struct RequestId : IEquatable<RequestId>
 			{
 				writer.Write(n);
 			}
+			else if (value.unsignedValue is ulong unsigned)
+			{
+				writer.Write(unsigned);
+			}
 			else if (value.utf8Value is { Span: { } span })
 			{
 				writer.WriteString(span);
@@ -123,5 +154,22 @@ public partial struct RequestId : IEquatable<RequestId>
 				writer.WriteNil();
 			}
 		}
+
+		private static RequestId ReadInteger(ref MessagePackReader reader)
+		{
+			MessagePackReader peek = reader.CreatePeekReader();
+			try
+			{
+				long signed = peek.ReadInt64();
+				reader = peek;
+				return new RequestId(signed);
+			}
+			catch (OverflowException)
+			{
+				return new RequestId(reader.ReadUInt64());
+			}
+		}
 	}
+
+#pragma warning restore NBMsgPack031
 }

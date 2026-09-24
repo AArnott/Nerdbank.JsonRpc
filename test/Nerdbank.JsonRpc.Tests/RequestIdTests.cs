@@ -48,6 +48,15 @@ public class RequestIdTests
 	}
 
 	[Fact]
+	public void UInt64_MaxValueRoundTrips()
+	{
+		RequestId maximum = new(ulong.MaxValue);
+		Assert.Equal(ulong.MaxValue.ToString(), maximum.ToString());
+		Assert.NotEqual(new RequestId(long.MaxValue), maximum);
+		AssertRoundTrip(maximum);
+	}
+
+	[Fact]
 	public void String_Value()
 	{
 		RequestId id1 = "a", id2 = "b";

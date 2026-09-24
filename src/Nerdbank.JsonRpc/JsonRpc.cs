@@ -1,10 +1,13 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Collections.Concurrent;
+using System.Net;
 using System.Reflection;
 using System.Threading.Channels;
 using Microsoft;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.Threading;
 using Nerdbank.MessagePack;
 
@@ -15,7 +18,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	internal const string SpecialCancelMethodName = "$/cancelRequest";
 
 	private readonly ConcurrentDictionary<RequestId, PendingInboundRequest> pendingInboundRequests = [];
-	private readonly TaskCompletionSource<bool> completionSource = new();
+	private readonly TaskCompletionSource<bool> completionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
+	private readonly object connectionSync = new();
+	private readonly ILogger logger;
 	private readonly CancellationTokenSource disposalSource = new();
 	private readonly ConcurrentDictionary<string, (object? Target, MethodInvoker Invoker)> handlers = new();
 	private readonly ConcurrentDictionary<RequestId, TaskCompletionSource<JsonRpcResponse>> pendingOutboundRequests = new();
@@ -24,8 +29,15 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	private Task? readerTask;
 	private int nextRequestId;
 
-	public JsonRpc(Channel<JsonRpcMessage> channel)
+	/// <summary>
+	/// Initializes a new instance of the <see cref="JsonRpc"/> class over a message channel.
+	/// </summary>
+	/// <param name="channel">The channel used to exchange messages.</param>
+	/// <param name="logger">An optional logger for request and protocol failures.</param>
+	public JsonRpc(Channel<JsonRpcMessage> channel, ILogger? logger = null)
 	{
+		this.logger = logger ?? NullLogger.Instance;
+
 		// Store a delegate we can reuse to avoid allocations.
 		this.cancelOutboundRequestDelegate = this.CancelOutboundRequest;
 
@@ -47,8 +59,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	public MessagePackSerializer Serializer { get; init; } = DefaultSerializer;
 
 	public JsonRpcState State =>
-		this.IsDisposed ? JsonRpcState.Disposed :
 		this.Completion.IsFaulted ? JsonRpcState.Faulted :
+		this.IsDisposed ? JsonRpcState.Disposed :
 		this.readerTask is not null ? JsonRpcState.Running :
 		JsonRpcState.NotStarted;
 
@@ -202,6 +214,18 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	public void Dispose()
 	{
 		this.disposalSource.Cancel();
+		lock (this.connectionSync)
+		{
+			this.completionSource.TrySetCanceled();
+			this.channel.Writer.TryComplete();
+			foreach ((RequestId id, TaskCompletionSource<JsonRpcResponse> pending) in this.pendingOutboundRequests)
+			{
+				if (this.pendingOutboundRequests.TryRemove(id, out _))
+				{
+					pending.TrySetException(new ObjectDisposedException(nameof(JsonRpc)));
+				}
+			}
+		}
 	}
 
 	internal static object AttachCore(IJsonRpcClient client, Type interfaceType, JsonRpcProxyOptions? options = null)
@@ -231,12 +255,31 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		return constructor.Invoke([client]);
 	}
 
-	internal RequestId GetNextRequestId() => Interlocked.Increment(ref this.nextRequestId);
+	internal RequestId GetNextRequestId()
+	{
+		int id = Interlocked.Increment(ref this.nextRequestId);
+		if (id <= 0)
+		{
+			throw new InvalidOperationException("The JSON-RPC request ID space is exhausted.");
+		}
+
+		return id;
+	}
+
+	internal void LogApplicationError(Exception exception) => this.logger.LogWarning(exception, "JSON-RPC request processing failed.");
 
 	internal bool TryRegisterOutboundRequest(JsonRpcRequest request, TaskCompletionSource<JsonRpcResponse> responseTcs)
 	{
 		Requires.Argument(request.Id.HasValue, nameof(request), "Request must have an ID for tracking the response.");
-		return this.pendingOutboundRequests.TryAdd(request.Id.Value, responseTcs);
+		lock (this.connectionSync)
+		{
+			if (this.Completion.IsCompleted || this.IsDisposed)
+			{
+				throw new InvalidOperationException("The JSON-RPC connection is closed.");
+			}
+
+			return this.pendingOutboundRequests.TryAdd(request.Id.Value, responseTcs);
+		}
 	}
 
 	internal bool TryUnregisterOutboundRequest(RequestId id) => this.pendingOutboundRequests.TryRemove(id, out _);
@@ -325,7 +368,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 					CancellationTokenSource = new(),
 				};
 
-				Assumes.True(this.pendingInboundRequests.TryAdd(id, tracker));
+				if (!this.pendingInboundRequests.TryAdd(id, tracker))
+				{
+					tracker.Dispose();
+					throw new ProtocolViolationException($"A request with ID {id} is already pending.");
+				}
 			}
 			else
 			{
@@ -369,17 +416,25 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		}
 	}
 
-	private void FaultOnFailure(Task task) => task.ContinueWith(static (t, s) => ((JsonRpc)s!).Fault(t.Exception!), this, this.DisposalToken, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default).Forget();
+	private void FaultOnFailure(Task task) => task.ContinueWith(static (t, s) => ((JsonRpc)s!).Fault(t.Exception!), this, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default).Forget();
 
 	private void ProcessResponse(JsonRpcResponse response)
 	{
-		if (this.pendingOutboundRequests.TryRemove(response.Id, out TaskCompletionSource<JsonRpcResponse>? tcs))
+		lock (this.connectionSync)
 		{
-			tcs.SetResult(response);
-		}
-		else
-		{
-			this.Fault(new InvalidOperationException($"Received a response with ID {response.Id} that does not match any pending requests."));
+			if (this.Completion.IsCompleted)
+			{
+				return;
+			}
+
+			if (this.pendingOutboundRequests.TryRemove(response.Id, out TaskCompletionSource<JsonRpcResponse>? tcs))
+			{
+				tcs.TrySetResult(response);
+			}
+			else
+			{
+				this.Fault(new ProtocolViolationException($"Received a response with ID {response.Id} that does not match any pending requests."));
+			}
 		}
 	}
 
@@ -397,7 +452,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 				this.ProcessBatch(batch.Messages);
 				break;
 			case JsonRpcInvalidMessage invalid:
-				this.PostMessage(this.CreateProtocolError(invalid));
+				this.Fault(new ProtocolViolationException(invalid.Message));
 				break;
 		}
 	}
@@ -406,7 +461,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	{
 		if (messages is [])
 		{
-			this.PostMessage(this.CreateProtocolError(new JsonRpcInvalidMessage(JsonRpcErrorCode.InvalidRequest, "A JSON-RPC batch must contain at least one entry.")));
+			this.Fault(new ProtocolViolationException("A JSON-RPC batch must not be empty."));
 			return;
 		}
 
@@ -414,13 +469,18 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		{
 			if (message is JsonRpcMessageBatch)
 			{
-				this.PostMessage(this.CreateProtocolError(new JsonRpcInvalidMessage(JsonRpcErrorCode.InvalidRequest, "A JSON-RPC batch entry must be a message object, not another batch.")));
+				this.Fault(new ProtocolViolationException("A JSON-RPC batch entry must be a message object."));
 				return;
 			}
 		}
 
+		if (messages.Any(static m => m is JsonRpcInvalidMessage))
+		{
+			this.Fault(new ProtocolViolationException("A JSON-RPC batch contains an invalid entry."));
+			return;
+		}
+
 		List<Task<JsonRpcResponse?>> requestTasks = [];
-		List<JsonRpcResponse> immediateResponses = [];
 
 		foreach (JsonRpcMessage message in messages)
 		{
@@ -432,22 +492,19 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 				case JsonRpcResponse response:
 					this.ProcessResponse(response);
 					break;
-				case JsonRpcInvalidMessage invalid:
-					immediateResponses.Add(this.CreateProtocolError(invalid));
-					break;
 			}
 		}
 
-		if (requestTasks.Count > 0 || immediateResponses.Count > 0)
+		if (requestTasks.Count > 0)
 		{
-			this.FaultOnFailure(this.SendBatchResponsesAsync(requestTasks, immediateResponses));
+			this.FaultOnFailure(this.SendBatchResponsesAsync(requestTasks));
 		}
 	}
 
-	private async Task SendBatchResponsesAsync(List<Task<JsonRpcResponse?>> requestTasks, List<JsonRpcResponse> immediateResponses)
+	private async Task SendBatchResponsesAsync(List<Task<JsonRpcResponse?>> requestTasks)
 	{
 		JsonRpcResponse?[] dispatchedResponses = requestTasks.Count > 0 ? await Task.WhenAll(requestTasks).ConfigureAwait(false) : [];
-		List<JsonRpcMessage> responses = [.. immediateResponses];
+		List<JsonRpcMessage> responses = [];
 		foreach (JsonRpcResponse? response in dispatchedResponses)
 		{
 			if (response is not null)
@@ -478,7 +535,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		Verify.Operation(this.State == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.State}.");
 
 		TaskCompletionSource<JsonRpcResponse> responseTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-		Assumes.True(this.TryRegisterOutboundRequest(request, responseTcs));
+		Verify.Operation(this.TryRegisterOutboundRequest(request, responseTcs), "A request with this ID is already pending.");
 		try
 		{
 			await this.PostMessageAsync(request, cancellationToken).ConfigureAwait(false);
@@ -501,29 +558,52 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 
 	private async Task ReadAsync(ChannelReader<JsonRpcMessage> inbound)
 	{
-		while (!inbound.Completion.IsCompleted)
+		try
 		{
-			JsonRpcMessage message = await inbound.ReadAsync(this.DisposalToken).ConfigureAwait(false);
-			this.ProcessIncomingMessage(message);
+			while (await inbound.WaitToReadAsync(this.DisposalToken).ConfigureAwait(false))
+			{
+				while (inbound.TryRead(out JsonRpcMessage? message))
+				{
+					this.ProcessIncomingMessage(message);
+					if (this.Completion.IsFaulted)
+					{
+						return;
+					}
+				}
+			}
+
+			this.Fault(new EndOfStreamException("The JSON-RPC connection closed."));
+		}
+		catch (OperationCanceledException) when (this.IsDisposed)
+		{
+		}
+		catch (Exception ex)
+		{
+			this.Fault(ex);
 		}
 	}
 
 	private void Fault(Exception exception)
 	{
-		this.completionSource.TrySetException(exception);
-	}
-
-	private JsonRpcError CreateProtocolError(JsonRpcInvalidMessage invalid)
-	{
-		return new JsonRpcError
+		lock (this.connectionSync)
 		{
-			Id = default,
-			Error = new JsonRpcErrorDetails
+			if (!this.completionSource.TrySetException(exception))
 			{
-				Code = invalid.Code,
-				Message = invalid.Message,
-			},
-		};
+				return;
+			}
+
+			foreach ((RequestId id, TaskCompletionSource<JsonRpcResponse> pending) in this.pendingOutboundRequests)
+			{
+				if (this.pendingOutboundRequests.TryRemove(id, out _))
+				{
+					pending.TrySetException(exception);
+				}
+			}
+
+			this.channel.Writer.TryComplete(exception);
+			this.logger.LogError(exception, "JSON-RPC connection terminated: {Reason}", exception.Message);
+			this.disposalSource.Cancel();
+		}
 	}
 
 	[GenerateShape]

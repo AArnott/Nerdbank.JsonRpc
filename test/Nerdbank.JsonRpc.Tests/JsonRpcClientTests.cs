@@ -24,6 +24,36 @@ public partial class JsonRpcClientTests : TestBase
 	}
 
 	[Fact]
+	public async Task InvalidEnvelopeFaultsEveryPendingDirectAndBatchRequest()
+	{
+		Task first = this.jsonRpc.RequestAsync("First", NilMsgPack, this.TimeoutToken).AsTask();
+		await this.channel.Reader.ReadAsync(this.TimeoutToken);
+		JsonRpcBatch batch = this.jsonRpc.CreateBatch();
+		Task second = batch.RequestAsync("Second", NilMsgPack, this.TimeoutToken).AsTask();
+		await batch.SendAsync(this.TimeoutToken);
+		await this.channel.Reader.ReadAsync(this.TimeoutToken);
+
+		await this.channel.Writer.WriteAsync(new JsonRpcMessageBatch([]), this.TimeoutToken);
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => first.WithCancellation(this.TimeoutToken));
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => second.WithCancellation(this.TimeoutToken));
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => this.jsonRpc.Completion.WithCancellation(this.TimeoutToken));
+	}
+
+	[Fact]
+	public async Task UnreadableResultFaultsOnlyTheMatchingRequest()
+	{
+		Task<int> first = this.jsonRpc.RequestAsync<AddNamedArguments, int, Witness>("First", new AddNamedArguments { A = 1, B = 2 }, this.TimeoutToken).AsTask();
+		JsonRpcRequest firstRequest = Assert.IsType<JsonRpcRequest>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
+		Task<int> second = this.jsonRpc.RequestAsync<AddNamedArguments, int, Witness>("Second", new AddNamedArguments { A = 3, B = 4 }, this.TimeoutToken).AsTask();
+		JsonRpcRequest secondRequest = Assert.IsType<JsonRpcRequest>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
+		await this.channel.Writer.WriteAsync(new JsonRpcResult { Id = firstRequest.Id!.Value, Result = (RawMessagePack)new byte[] { 0xa1, 0x78 } }, this.TimeoutToken);
+		await Assert.ThrowsAnyAsync<Exception>(() => first.WithCancellation(this.TimeoutToken));
+		Assert.False(this.jsonRpc.Completion.IsCompleted);
+		await this.channel.Writer.WriteAsync(new JsonRpcResult { Id = secondRequest.Id!.Value, Result = (RawMessagePack)this.jsonRpc.Serializer.Serialize<int, Witness>(7, this.TimeoutToken) }, this.TimeoutToken);
+		Assert.Equal(7, await second.WithCancellation(this.TimeoutToken));
+	}
+
+	[Fact]
 	public async Task RequestWithoutStartingFirst()
 	{
 		(_, Channel<JsonRpcMessage> jsonRpcChannel) = MockChannel<JsonRpcMessage>.CreatePair();

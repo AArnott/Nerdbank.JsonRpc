@@ -67,20 +67,47 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 		return new MethodInvoker(
 			async dispatch =>
 			{
-				TArgumentState argState = argStateCtor();
-
-				if (!dispatch.Request.Arguments.MsgPack.IsEmpty)
+				TArgumentState argState;
+				try
 				{
-					MessagePackReader reader = new(dispatch.Request.Arguments);
-					switch (reader.NextMessagePackType)
+					argState = argStateCtor();
+
+					if (!dispatch.Request.Arguments.MsgPack.IsEmpty)
 					{
-						case MessagePackType.Map:
-							int argCount = reader.ReadMapHeader();
-							for (int i = 0; i < argCount; i++)
-							{
-								// Read the key, without decoding it.
-								ReadOnlySpan<byte> parameterNameUtf8 = reader.ReadStringSpan();
-								if (!parameterNameToIndex.TryGetValue(parameterNameUtf8, out IParameterShape? parameterShape))
+						MessagePackReader reader = new(dispatch.Request.Arguments);
+						switch (reader.NextMessagePackType)
+						{
+							case MessagePackType.Map:
+								int argCount = reader.ReadMapHeader();
+								for (int i = 0; i < argCount; i++)
+								{
+									// Read the key, without decoding it.
+									ReadOnlySpan<byte> parameterNameUtf8 = reader.ReadStringSpan();
+									if (!parameterNameToIndex.TryGetValue(parameterNameUtf8, out IParameterShape? parameterShape))
+									{
+										return new DispatchResponse
+										{
+											Response = dispatch.Request.Id is RequestId id
+												? new JsonRpcError
+												{
+													Id = id,
+													Error = new JsonRpcErrorDetails
+													{
+														Code = JsonRpcErrorCode.InvalidParams,
+														Message = $"Unknown parameter name: '{StringEncoding.UTF8.GetString(parameterNameUtf8.ToArray())}'.",
+													},
+												}
+												: null,
+										};
+									}
+
+									parameterSetters.Span[parameterShape.Position](dispatch, ref reader, ref argState);
+								}
+
+								break;
+							case MessagePackType.Array:
+								argCount = reader.ReadArrayHeader();
+								if (argCount > parameterSetters.Length)
 								{
 									return new DispatchResponse
 									{
@@ -91,80 +118,67 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 												Error = new JsonRpcErrorDetails
 												{
 													Code = JsonRpcErrorCode.InvalidParams,
-													Message = $"Unknown parameter name: '{StringEncoding.UTF8.GetString(parameterNameUtf8.ToArray())}'.",
+													Message = $"Expected at most {parameterSetters.Length} arguments but received {argCount}.",
 												},
 											}
 											: null,
 									};
 								}
 
-								parameterSetters.Span[parameterShape.Position](dispatch, ref reader, ref argState);
-							}
-
-							break;
-						case MessagePackType.Array:
-							argCount = reader.ReadArrayHeader();
-							if (argCount > parameterSetters.Length)
-							{
-								return new DispatchResponse
+								for (int i = 0; i < argCount; i++)
 								{
-									Response = dispatch.Request.Id is RequestId id
-										? new JsonRpcError
-										{
-											Id = id,
-											Error = new JsonRpcErrorDetails
-											{
-												Code = JsonRpcErrorCode.InvalidParams,
-												Message = $"Expected at most {parameterSetters.Length} arguments but received {argCount}.",
-											},
-										}
-										: null,
-								};
-							}
+									parameterSetters.Span[i](dispatch, ref reader, ref argState);
+								}
 
-							for (int i = 0; i < argCount; i++)
-							{
-								parameterSetters.Span[i](dispatch, ref reader, ref argState);
-							}
-
-							break;
-						default:
-							{
-								return new DispatchResponse
+								break;
+							default:
 								{
-									Response = dispatch.Request.Id is RequestId id
-										? new JsonRpcError
-										{
-											Id = id,
-											Error = new JsonRpcErrorDetails
+									return new DispatchResponse
+									{
+										Response = dispatch.Request.Id is RequestId id
+											? new JsonRpcError
 											{
-												Code = JsonRpcErrorCode.InvalidParams,
-												Message = "params must be either an object or an array.",
-											},
-										}
-										: null,
-									IsProtocolViolation = true,
-								};
-							}
+												Id = id,
+												Error = new JsonRpcErrorDetails
+												{
+													Code = JsonRpcErrorCode.InvalidParams,
+													Message = "params must be either an object or an array.",
+												},
+											}
+											: null,
+										IsProtocolViolation = true,
+									};
+								}
+						}
+					}
+
+					setCancellationToken?.Invoke(dispatch.CancellationToken, ref argState);
+
+					if (!argState.AreRequiredArgumentsSet)
+					{
+						return new DispatchResponse
+						{
+							Response = dispatch.Request.Id is RequestId id
+								? new JsonRpcError
+								{
+									Id = id,
+									Error = new JsonRpcErrorDetails
+									{
+										Code = JsonRpcErrorCode.InvalidParams,
+										Message = "Not all required parameters were provided.",
+									},
+								}
+								: null,
+						};
 					}
 				}
-
-				setCancellationToken?.Invoke(dispatch.CancellationToken, ref argState);
-
-				if (!argState.AreRequiredArgumentsSet)
+				catch (Exception ex) when (ex is not OperationCanceledException)
 				{
+					dispatch.JsonRpc.LogApplicationError(ex);
 					return new DispatchResponse
 					{
 						Response = dispatch.Request.Id is RequestId id
-							? new JsonRpcError
-							{
-								Id = id,
-								Error = new JsonRpcErrorDetails
-								{
-									Code = JsonRpcErrorCode.InvalidParams,
-									Message = "Not all required parameters were provided.",
-								},
-							}
+							? new JsonRpcError { Id = id, Error = new JsonRpcErrorDetails { Code = JsonRpcErrorCode.InvalidParams, Message = "Could not deserialize request parameters." } }
 							: null,
 					};
 				}
@@ -202,6 +216,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 				}
 				catch (Exception ex)
 				{
+					dispatch.JsonRpc.LogApplicationError(ex);
 					if (dispatch.Request.Id is RequestId id)
 					{
 						response = new JsonRpcError
@@ -209,7 +224,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 							Id = id,
 							Error = new JsonRpcErrorDetails
 							{
-								Message = ex.Message,
+								Message = "The request could not be completed.",
 								Code = JsonRpcErrorCode.InternalError,
 							},
 						};

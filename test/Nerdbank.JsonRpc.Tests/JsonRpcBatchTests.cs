@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Threading.Channels;
@@ -207,30 +207,69 @@ public partial class JsonRpcBatchTests : TestBase
 	}
 
 	[Fact]
-	public async Task ServerBatch_EmptyBatchReturnsInvalidRequest()
+	public async Task ServerBatch_EmptyBatchFaultsConnection()
 	{
-		(_, Channel<JsonRpcMessage> channel) = CreateStartedServerPair();
+		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedServerPair();
 		await channel.Writer.WriteAsync(new JsonRpcMessageBatch([]), this.TimeoutToken);
-
-		JsonRpcError error = Assert.IsType<JsonRpcError>(await channel.Reader.ReadAsync(this.TimeoutToken));
-		Assert.Equal(JsonRpcErrorCode.InvalidRequest, error.Error.Code);
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => jsonRpc.Completion.WithCancellation(this.TimeoutToken));
 	}
 
 	[Fact]
-	public async Task ServerBatch_NestedBatchEntryReturnsInvalidRequest()
+	public async Task ServerBatch_NestedBatchFaultsConnection()
 	{
-		(_, Channel<JsonRpcMessage> channel) = CreateStartedServerPair();
-		JsonRpcMessageBatch requestBatch = new(
-			[
-				new JsonRpcMessageBatch(
-					[
-						new JsonRpcRequest { Id = 1, Method = nameof(MockServer.GetMagicNumber) },
-					]),
-			]);
-		await channel.Writer.WriteAsync(requestBatch, this.TimeoutToken);
+		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedServerPair();
+		await channel.Writer.WriteAsync(new JsonRpcMessageBatch([new JsonRpcMessageBatch([new JsonRpcRequest { Id = 1, Method = nameof(MockServer.GetMagicNumber) }])]), this.TimeoutToken);
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => jsonRpc.Completion.WithCancellation(this.TimeoutToken));
+	}
 
-		JsonRpcError error = Assert.IsType<JsonRpcError>(await channel.Reader.ReadAsync(this.TimeoutToken));
-		Assert.Equal(JsonRpcErrorCode.InvalidRequest, error.Error.Code);
+	[Fact]
+	public async Task Server_ExplicitNilIdCanBeReusedSequentially()
+	{
+		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedServerPair();
+		for (int i = 0; i < 2; i++)
+		{
+			await channel.Writer.WriteAsync(new JsonRpcRequest { Id = default(RequestId), Method = nameof(MockServer.GetMagicNumber) }, this.TimeoutToken);
+			JsonRpcResult result = Assert.IsType<JsonRpcResult>(await channel.Reader.ReadAsync(this.TimeoutToken));
+			Assert.Equal(default(RequestId), result.Id);
+		}
+
+		Assert.False(jsonRpc.Completion.IsCompleted);
+	}
+
+	[Fact]
+	public async Task Server_StringAndIntegerIdsRemainDistinct()
+	{
+		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedServerPair();
+		JsonRpcMessageBatch requests = new(
+		[
+			new JsonRpcRequest { Id = "15", Method = nameof(MockServer.GetMagicNumber) },
+			new JsonRpcRequest { Id = 15, Method = nameof(MockServer.GetMagicNumber) },
+		]);
+		await channel.Writer.WriteAsync(requests, this.TimeoutToken);
+		JsonRpcMessageBatch batch = Assert.IsType<JsonRpcMessageBatch>(await channel.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal((RequestId)"15", Assert.IsType<JsonRpcResult>(batch.Messages[0]).Id);
+		Assert.Equal((RequestId)15, Assert.IsType<JsonRpcResult>(batch.Messages[1]).Id);
+		Assert.False(jsonRpc.Completion.IsCompleted);
+	}
+
+	[Fact]
+	public async Task ServerBatch_InvalidArgumentValuesReturnErrorWithoutDroppingOtherResponses()
+	{
+		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedServerPair();
+		JsonRpcMessageBatch requests = new(
+		[
+			new JsonRpcRequest { Id = "15", Method = nameof(MockServer.Add), Arguments = (RawMessagePack)new byte[] { 0x92, 0xa1, 0x78, 0x03 } },
+			new JsonRpcRequest { Id = 16, Method = nameof(MockServer.GetMagicNumber) },
+		]);
+		await channel.Writer.WriteAsync(requests, this.TimeoutToken);
+
+		JsonRpcMessageBatch batch = Assert.IsType<JsonRpcMessageBatch>(await channel.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal(2, batch.Messages.Length);
+		JsonRpcError error = Assert.IsType<JsonRpcError>(batch.Messages[0]);
+		Assert.Equal((RequestId)"15", error.Id);
+		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
+		Assert.Equal((RequestId)16, Assert.IsType<JsonRpcResult>(batch.Messages[1]).Id);
+		Assert.False(jsonRpc.Completion.IsCompleted);
 	}
 
 	[Fact]

@@ -1,13 +1,27 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO.Pipelines;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.VisualStudio.Threading;
 using Nerdbank.MessagePack;
 using Nerdbank.Streams;
 
 public class StreamingJsonRpcBatchChannelTests : TestBase
 {
+	[Fact]
+	public async Task ExplicitNilIdIsNotANotification()
+	{
+		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
+		StreamingJsonRpcMessageChannel alice = new(alicePipe, NullLogger.Instance);
+		StreamingJsonRpcMessageChannel bob = new(bobPipe, NullLogger.Instance);
+		await alice.Writer.WriteAsync(new JsonRpcRequest { Id = default(RequestId), Method = "testMethod" }, this.TimeoutToken);
+
+		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await bob.Reader.ReadAsync(this.TimeoutToken));
+		Assert.True(request.HasId);
+		Assert.Equal(default(RequestId), request.Id);
+	}
+
 	[Fact]
 	public async Task SendAndReceiveBatchPayload()
 	{
@@ -29,7 +43,7 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 	}
 
 	[Fact]
-	public async Task ReceiveNestedBatchPayloadMarksEntryInvalid()
+	public async Task ReceiveNestedBatchPayloadClosesChannel()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
 		StreamingJsonRpcMessageChannel alice = new(alicePipe, NullLogger.Instance);
@@ -44,12 +58,11 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 
 		await alice.Writer.WriteAsync(sent, this.TimeoutToken);
 
-		JsonRpcMessage invalid = await bob.Reader.ReadAsync(this.TimeoutToken);
-		Assert.Equal("JsonRpcInvalidMessage", invalid.GetType().Name);
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => bob.Reader.Completion.WithCancellation(this.TimeoutToken));
 	}
 
 	[Fact]
-	public async Task InvalidPayloadLoggingDoesNotFaultChannel()
+	public async Task InvalidPayloadClosesChannel()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
 		StreamingJsonRpcMessageChannel bob = new(bobPipe, NullLogger.Instance);
@@ -59,7 +72,6 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 		writer.Flush();
 		await alicePipe.Output.FlushAsync(this.TimeoutToken);
 
-		JsonRpcMessage invalid = await bob.Reader.ReadAsync(this.TimeoutToken);
-		Assert.Equal("JsonRpcInvalidMessage", invalid.GetType().Name);
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => bob.Reader.Completion.WithCancellation(this.TimeoutToken));
 	}
 }
