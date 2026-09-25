@@ -80,6 +80,7 @@ public partial class MarshaledObjectManagerTests : TestBase
 	[Test]
 	public async Task NamedReleaseNotificationReleasesLocalObject()
 	{
+		NativeAotTestHelper.SkipNerdbankJsonOnNativeAot();
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 		using JsonRpc clientRpc = new(new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
 		using JsonRpc serverRpc = new(new JsonRpcJsonChannel(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
@@ -89,8 +90,7 @@ public partial class MarshaledObjectManagerTests : TestBase
 		clientRpc.Start();
 		IDisposableContract client = clientRpc.Attach<IDisposableContract>();
 		IDisposable remoteDisposable = await client.GetDisposableAsync(this.TimeoutToken);
-		FieldInfo handleField = Assert.Single(remoteDisposable.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic), static field => field.FieldType == typeof(long));
-		long handle = (long)handleField.GetValue(remoteDisposable)!;
+		long handle = GetRemoteHandle(remoteDisposable);
 		JsonRpcValue namedReleaseArguments = JsonRpcValue.FromJson(Encoding.UTF8.GetBytes($$"""{"handle":{{handle}},"ownedBySender":false}"""));
 
 		await clientRpc.NotifyAsync("$/releaseMarshaledObject", namedReleaseArguments, this.TimeoutToken);
@@ -102,6 +102,7 @@ public partial class MarshaledObjectManagerTests : TestBase
 	[Test]
 	public async Task ReleaseNotificationForSenderOwnedHandleDoesNotReleaseLocalObject()
 	{
+		NativeAotTestHelper.SkipNerdbankJsonOnNativeAot();
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 		using JsonRpc clientRpc = new(new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
 		using JsonRpc serverRpc = new(new JsonRpcJsonChannel(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
@@ -111,8 +112,7 @@ public partial class MarshaledObjectManagerTests : TestBase
 		clientRpc.Start();
 		IDisposableContract client = clientRpc.Attach<IDisposableContract>();
 		IDisposable remoteDisposable = await client.GetDisposableAsync(this.TimeoutToken);
-		FieldInfo handleField = Assert.Single(remoteDisposable.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic), static field => field.FieldType == typeof(long));
-		long handle = (long)handleField.GetValue(remoteDisposable)!;
+		long handle = GetRemoteHandle(remoteDisposable);
 		JsonRpcValue senderOwnedReleaseArguments = JsonRpcValue.FromJson(Encoding.UTF8.GetBytes($$"""{"handle":{{handle}},"ownedBySender":true}"""));
 
 		await clientRpc.NotifyAsync("$/releaseMarshaledObject", senderOwnedReleaseArguments, this.TimeoutToken);
@@ -130,6 +130,7 @@ public partial class MarshaledObjectManagerTests : TestBase
 	[Test]
 	public void DisposingUnsentRawBatchDoesNotScanMarkerShapedPayload()
 	{
+		NativeAotTestHelper.SkipNerdbankJsonOnNativeAot();
 		(IDuplexPipe localPipe, _) = FullDuplexStream.CreatePipePair();
 		using JsonRpc rpc = new(new JsonRpcJsonChannel(localPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
 		TestDisposable disposable = new();
@@ -165,6 +166,15 @@ public partial class MarshaledObjectManagerTests : TestBase
 		await disposable.Disposed.WithCancellation(this.TimeoutToken);
 		Assert.True(disposable.IsDisposed);
 		await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pendingRequest.WithCancellation(this.TimeoutToken));
+	}
+
+#if NET
+	[System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2075", Justification = "The reflected field is read by RemoteDisposable.Dispose and therefore cannot be trimmed.")]
+#endif
+	private static long GetRemoteHandle(IDisposable remoteDisposable)
+	{
+		FieldInfo handleField = Assert.Single(remoteDisposable.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic), static field => field.FieldType == typeof(long));
+		return (long)handleField.GetValue(remoteDisposable)!;
 	}
 
 	[GenerateShapeFor<IDisposable>]

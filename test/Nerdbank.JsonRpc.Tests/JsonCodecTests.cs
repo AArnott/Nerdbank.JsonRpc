@@ -57,6 +57,7 @@ public class JsonCodecTests : TestBase
 	[Arguments(JsonRpcJsonFraming.ContentLength)]
 	public async Task PreservesIdTypesAndValidatesEnvelope(JsonRpcJsonFraming framing)
 	{
+		NativeAotTestHelper.SkipNerdbankJsonOnNativeAot();
 		(IDuplexPipe firstPipe, IDuplexPipe secondPipe) = FullDuplexStream.CreatePipePair();
 		JsonSerializerPlugin firstPlugin = new(new Nerdbank.Json.JsonSerializer { WriteIndented = true });
 		JsonSerializerPlugin secondPlugin = new(new Nerdbank.Json.JsonSerializer());
