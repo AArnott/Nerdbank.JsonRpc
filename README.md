@@ -62,7 +62,7 @@ MessagePack is the default encoding. Configure a `JsonRpcJsonChannel` when your 
 - [Getting started](https://aarnott.github.io/Nerdbank.JsonRpc/docs/getting-started.html)
 - [Feature overview](https://aarnott.github.io/Nerdbank.JsonRpc/docs/features.html)
 - [Encodings and framing](https://aarnott.github.io/Nerdbank.JsonRpc/docs/encodings.html)
-- [API reference](https://aarnott.github.io/Nerdbank.JsonRpc/api/index.html)
+- [API reference](https://aarnott.github.io/Nerdbank.JsonRpc/api/Nerdbank.JsonRpc.html)
 
 ## Contributing
 
