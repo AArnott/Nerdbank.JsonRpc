@@ -3,7 +3,6 @@
 
 using System.Buffers;
 using System.IO.Pipelines;
-using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -101,8 +100,8 @@ public class JsonCodecTests : TestBase
 		using JsonRpc client = new(clientChannel);
 		client.Start();
 		ITypeShape<int> intShape = PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32;
-		Task<int> first = ((IJsonRpcClient)client).RequestAsync("first", JsonRpcValue.FromJson("[]"u8.ToArray()), intShape, this.TimeoutToken).AsTask();
-		Task<int> second = ((IJsonRpcClient)client).RequestAsync("second", JsonRpcValue.FromJson("[]"u8.ToArray()), intShape, this.TimeoutToken).AsTask();
+		Task<int> first = client.RequestAsync("first", JsonRpcValue.FromJson("[]"u8.ToArray()), intShape, this.TimeoutToken).AsTask();
+		Task<int> second = client.RequestAsync("second", JsonRpcValue.FromJson("[]"u8.ToArray()), intShape, this.TimeoutToken).AsTask();
 		JsonRpcRequest firstRequest = Assert.IsType<JsonRpcRequest>(await serverChannel.Reader.ReadAsync(this.TimeoutToken));
 		JsonRpcRequest secondRequest = Assert.IsType<JsonRpcRequest>(await serverChannel.Reader.ReadAsync(this.TimeoutToken));
 		JsonRpcMessageBatch results = new([
@@ -146,14 +145,14 @@ public class JsonCodecTests : TestBase
 		JsonRpcJsonChannel channel = new(local, plugin, JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("local"));
 		using JsonRpc rpc = new(channel);
 		rpc.Start();
-		ArgumentException jsonMismatch = Assert.Throws<ArgumentException>(() => ((IJsonRpcClient)rpc).NotifyAsync("method", JsonRpcValue.FromMessagePack(NilMsgPack), this.TimeoutToken));
+		ArgumentException jsonMismatch = Assert.Throws<ArgumentException>(() => rpc.NotifyAsync("method", JsonRpcValue.FromMessagePack(NilMsgPack), this.TimeoutToken));
 		Assert.Contains("expected Json, actual MessagePack", jsonMismatch.Message);
 		using JsonRpc messagePackRpc = new(new MockJsonRpcPipeChannel(Channel.CreateUnbounded<JsonRpcMessage>()));
-		ArgumentException messagePackMismatch = Assert.Throws<ArgumentException>(() => ((IJsonRpcClient)messagePackRpc).NotifyAsync("method", JsonRpcValue.FromJson("[]"u8.ToArray()), this.TimeoutToken));
+		ArgumentException messagePackMismatch = Assert.Throws<ArgumentException>(() => messagePackRpc.NotifyAsync("method", JsonRpcValue.FromJson("[]"u8.ToArray()), this.TimeoutToken));
 		Assert.Contains("expected MessagePack, actual Json", messagePackMismatch.Message);
-		Assert.Throws<ArgumentException>(() => ((IJsonRpcClient)rpc).NotifyAsync("method", JsonRpcValue.FromJson("42"u8.ToArray()), this.TimeoutToken));
+		Assert.Throws<ArgumentException>(() => rpc.NotifyAsync("method", JsonRpcValue.FromJson("42"u8.ToArray()), this.TimeoutToken));
 		JsonRpcBatch batch = rpc.CreateBatch();
-		Assert.Throws<ArgumentException>(() => ((IJsonRpcClient)batch).RequestAsync("method", JsonRpcValue.FromMessagePack(NilMsgPack), this.TimeoutToken));
+		Assert.Throws<ArgumentException>(() => batch.RequestAsync("method", JsonRpcValue.FromMessagePack(NilMsgPack), this.TimeoutToken));
 		await channel.DisposeAsync();
 	}
 
@@ -266,7 +265,7 @@ public class JsonCodecTests : TestBase
 		using JsonRpc rpc = new(new MockJsonRpcPipeChannel(System.Threading.Channels.Channel.CreateUnbounded<JsonRpcMessage>(), serializer));
 		const string Name = "a\"\\\n";
 		JsonRpcValue result;
-		using (JsonRpcArgumentsBuilder builder = ((IJsonRpcClient)rpc).CreateArguments(named, 2, this.TimeoutToken))
+		using (JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named, 2, this.TimeoutToken))
 		{
 			builder.Add(named ? Name : null, 13, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
 			builder.Add(named ? "second" : null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
@@ -320,32 +319,32 @@ public class JsonCodecTests : TestBase
 
 		static void CreateNegativeCount(JsonRpc rpc)
 		{
-			using JsonRpcArgumentsBuilder builder = ((IJsonRpcClient)rpc).CreateArguments(false, -1);
+			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(false, -1);
 		}
 
 		static void BuildIncomplete(JsonRpc rpc)
 		{
-			using JsonRpcArgumentsBuilder builder = ((IJsonRpcClient)rpc).CreateArguments(false, 1);
+			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(false, 1);
 			builder.Build();
 		}
 
 		static void AddTooMany(JsonRpc rpc)
 		{
-			using JsonRpcArgumentsBuilder builder = ((IJsonRpcClient)rpc).CreateArguments(false, 1);
+			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(false, 1);
 			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
 			builder.Add(null, 13, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
 		}
 
 		static void BuildTwice(JsonRpc rpc)
 		{
-			using JsonRpcArgumentsBuilder builder = ((IJsonRpcClient)rpc).CreateArguments(false, 0);
+			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(false, 0);
 			Assert.True(builder.Build().HasValue);
 			builder.Build();
 		}
 
 		static void AddUnnamedToNamed(JsonRpc rpc)
 		{
-			using JsonRpcArgumentsBuilder builder = ((IJsonRpcClient)rpc).CreateArguments(true, 1);
+			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(true, 1);
 			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
 		}
 
@@ -353,14 +352,14 @@ public class JsonCodecTests : TestBase
 		{
 			using CancellationTokenSource source = new();
 			source.Cancel();
-			using JsonRpcArgumentsBuilder builder = ((IJsonRpcClient)rpc).CreateArguments(false, 1, source.Token);
+			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(false, 1, source.Token);
 			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
 		}
 
 		static void CancelBetweenArguments(JsonRpc rpc)
 		{
 			using CancellationTokenSource source = new();
-			using JsonRpcArgumentsBuilder builder = ((IJsonRpcClient)rpc).CreateArguments(false, 2, source.Token);
+			using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(false, 2, source.Token);
 			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
 			source.Cancel();
 			builder.Add(null, 13, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
@@ -381,7 +380,7 @@ public class JsonCodecTests : TestBase
 		client.Start();
 
 		JsonRpcBatch batch = client.CreateBatch();
-		Task<int> pending = ((IJsonRpcClient)batch).RequestAsync<int>("slow", JsonRpcValue.FromJson("[]"u8.ToArray()), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken).AsTask();
+		Task<int> pending = batch.RequestAsync<int>("slow", JsonRpcValue.FromJson("[]"u8.ToArray()), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken).AsTask();
 		await batch.SendAsync(this.TimeoutToken);
 		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(Assert.Single(Assert.IsType<JsonRpcMessageBatch>(await serverChannel.Reader.ReadAsync(this.TimeoutToken)).Messages));
 		await batch.CancelAllAsync();
@@ -411,7 +410,7 @@ public class JsonCodecTests : TestBase
 		client.Start();
 
 		JsonRpcBatch batch = client.CreateBatch();
-		Task<int> pending = ((IJsonRpcClient)batch).RequestAsync<int>(nameof(ICancellableTarget.WaitAsync), JsonRpcValue.FromJson("[]"u8.ToArray()), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken).AsTask();
+		Task<int> pending = batch.RequestAsync<int>(nameof(ICancellableTarget.WaitAsync), JsonRpcValue.FromJson("[]"u8.ToArray()), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken).AsTask();
 		await batch.SendAsync(this.TimeoutToken);
 		await target.Started.Task.WithCancellation(this.TimeoutToken);
 		await batch.CancelAllAsync();
@@ -553,7 +552,7 @@ public class JsonCodecTests : TestBase
 		await using JsonRpcJsonChannel channel = new(clientPipe, plugin, framing, LoggerFactory.CreateLogger("client"));
 		using JsonRpc client = new(channel);
 		client.Start();
-		Task<int> pending = ((IJsonRpcClient)client).RequestAsync<int>("method", JsonRpcValue.FromJson("[]"u8.ToArray()), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken).AsTask();
+		Task<int> pending = client.RequestAsync<int>("method", JsonRpcValue.FromJson("[]"u8.ToArray()), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken).AsTask();
 		byte[] invalid = Encoding.UTF8.GetBytes("{\"jsonrpc\":\"2.0\",\"result\":4} ");
 		if (framing == JsonRpcJsonFraming.NewlineDelimited)
 		{

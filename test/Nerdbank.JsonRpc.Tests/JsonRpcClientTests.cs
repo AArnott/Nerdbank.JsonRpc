@@ -10,12 +10,12 @@ using PolyType;
 /// in order to directly analyze the requests made by the client and test its handling
 /// of particular server responses.
 /// </summary>
-public partial class IJsonRpcClientTests : TestBase
+public partial class JsonRpcClientTests : TestBase
 {
 	private readonly JsonRpc jsonRpc;
 	private readonly Channel<JsonRpcMessage> channel;
 
-	public IJsonRpcClientTests()
+	public JsonRpcClientTests()
 	{
 		(this.channel, Channel<JsonRpcMessage> jsonRpcChannel) = MockChannel<JsonRpcMessage>.CreatePair();
 		this.jsonRpc = new(new MockJsonRpcPipeChannel(jsonRpcChannel));
@@ -36,10 +36,10 @@ public partial class IJsonRpcClientTests : TestBase
 	[Test]
 	public async Task InvalidEnvelopeFaultsEveryPendingDirectAndBatchRequest()
 	{
-		Task first = ((IJsonRpcClient)this.jsonRpc).RequestAsync("First", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
+		Task first = this.jsonRpc.RequestAsync("First", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
 		await this.channel.Reader.ReadAsync(this.TimeoutToken);
 		JsonRpcBatch batch = this.jsonRpc.CreateBatch();
-		Task second = ((IJsonRpcClient)batch).RequestAsync("Second", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
+		Task second = batch.RequestAsync("Second", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
 		await batch.SendAsync(this.TimeoutToken);
 		await this.channel.Reader.ReadAsync(this.TimeoutToken);
 
@@ -187,7 +187,7 @@ public partial class IJsonRpcClientTests : TestBase
 		using CancellationTokenSource cts = new();
 		cts.Cancel();
 
-		await Assert.ThrowsAsync<OperationCanceledException>(() => ((IJsonRpcClient)this.jsonRpc).NotifyAsync("Add", EmptyParamsMsgPack, cts.Token).AsTask());
+		await Assert.ThrowsAsync<OperationCanceledException>(() => this.jsonRpc.NotifyAsync("Add", EmptyParamsMsgPack, cts.Token).AsTask());
 		Assert.False(this.channel.Reader.TryRead(out _));
 	}
 

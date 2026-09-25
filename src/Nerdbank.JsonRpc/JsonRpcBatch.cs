@@ -46,7 +46,7 @@ public sealed class JsonRpcBatch : IJsonRpcClient, IDisposable, IJsonRpcClientPr
 	}
 
 	/// <inheritdoc/>
-	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken) => new(this, named, count, cancellationToken);
+	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);
 
 	/// <summary>
 	/// Attaches a generated client proxy for an RPC contract interface to this batch.

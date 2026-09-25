@@ -5,7 +5,6 @@ using System.Buffers;
 using System.IO.Pipelines;
 using Microsoft.Extensions.Logging;
 using Microsoft.VisualStudio.Threading;
-using Nerdbank.JsonRpc;
 using Nerdbank.Streams;
 
 [InheritsTests]
@@ -34,13 +33,13 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 		client.Start();
 
 		JsonRpcValue arguments;
-		using (JsonRpcArgumentsBuilder builder = ((IJsonRpcClient)client).CreateArguments(false, 1, TestContext.Current!.Execution.CancellationToken))
+		using (JsonRpcArgumentsBuilder builder = client.CreateArguments(false, 1, TestContext.Current!.Execution.CancellationToken))
 		{
 			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
 			arguments = builder.Build();
 		}
 
-		await ((IJsonRpcClient)client).NotifyAsync("example", arguments, TestContext.Current!.Execution.CancellationToken);
+		await client.NotifyAsync("example", arguments, TestContext.Current!.Execution.CancellationToken);
 		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await serverChannel.Reader.ReadAsync(TestContext.Current!.Execution.CancellationToken));
 		Nerdbank.MessagePack.MessagePackReader reader = new(request.Arguments.AsMessagePack());
 		Assert.Equal(1, reader.ReadArrayHeader());
