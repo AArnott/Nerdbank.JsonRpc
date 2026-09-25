@@ -56,6 +56,7 @@ MessagePack is the default encoding. Configure a `JsonRpcJsonChannel` when your 
 - **MessagePack or JSON:** Select MessagePack or UTF-8 JSON; choose newline-delimited or `Content-Length` framing for JSON.
 - **Batching:** Send independent requests and notifications in one JSON-RPC payload.
 - **Robust protocol behavior:** Propagate cancellation and distinguish malformed protocol messages from application value failures.
+- **Deadlock mitigation:** Propagate `JoinableTaskFactory` context across processes, compatible with StreamJsonRpc.
 
 ## Documentation
 

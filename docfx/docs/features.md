@@ -7,3 +7,4 @@ Nerdbank.JsonRpc provides strongly typed JSON-RPC requests, notifications, and s
 - **Generated client proxies:** Attach an interface-backed proxy instead of constructing requests manually, with positional or named arguments. [Use client proxies](client-proxies.md).
 - **Batching:** Send several independent requests or notifications in one JSON-RPC payload. [Send a batch](batching.md).
 - **Cancellation and failure handling:** Propagate cancellation and distinguish malformed protocol envelopes from application-value conversion failures. [Understand protocol behavior](protocol-behavior.md).
+- **Main-thread deadlock mitigation:** Set a `JoinableTaskFactory` to propagate `JoinableTask` context across processes, compatible with StreamJsonRpc. [Learn more](protocol-behavior.md#deadlock-mitigation-with-joinabletaskfactory).

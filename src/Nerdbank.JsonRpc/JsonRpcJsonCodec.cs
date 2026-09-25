@@ -123,6 +123,7 @@ internal static class JsonRpcJsonCodec
 
 		JsonElement version = default, method = default, idElement = default, parameters = default, result = default, error = default;
 		bool hasVersion = false, hasMethod = false, hasId = false, hasParams = false, hasResult = false, hasError = false;
+		TopLevelProperties? extensions = null;
 		foreach (JsonProperty property in element.EnumerateObject())
 		{
 			switch (property.Name)
@@ -133,6 +134,7 @@ internal static class JsonRpcJsonCodec
 				case "params": SetOnce(ref hasParams); parameters = property.Value; break;
 				case "result": SetOnce(ref hasResult); result = property.Value; break;
 				case "error": SetOnce(ref hasError); error = property.Value; break;
+				default: ReadExtension(property, ref extensions); break;
 			}
 		}
 
@@ -147,7 +149,7 @@ internal static class JsonRpcJsonCodec
 		RequestId id = hasId ? ReadId(idElement) : default;
 		if (hasMethod)
 		{
-			JsonRpcRequest request = new() { Method = method.GetString()!, Arguments = hasParams ? Raw(parameters) : default };
+			JsonRpcRequest request = new() { Method = method.GetString()!, Arguments = hasParams ? Raw(parameters) : default, TopLevelProperties = extensions };
 			if (hasId)
 			{
 				request.SetReceivedId(id);
@@ -158,10 +160,33 @@ internal static class JsonRpcJsonCodec
 
 		if (hasResult)
 		{
-			return new JsonRpcResult { Id = id, Result = Raw(result) };
+			return new JsonRpcResult { Id = id, Result = Raw(result), TopLevelProperties = extensions };
 		}
 
-		return new JsonRpcError { Id = id, Error = ReadError(error) };
+		return new JsonRpcError { Id = id, Error = ReadError(error), TopLevelProperties = extensions };
+	}
+
+	/// <summary>Retains a primitive extension property, ignoring values of other types.</summary>
+	/// <param name="property">The non-reserved top-level property.</param>
+	/// <param name="extensions">The lazily created property bag.</param>
+	private static void ReadExtension(JsonProperty property, ref TopLevelProperties? extensions)
+	{
+		JsonElement value = property.Value;
+		TopLevelPropertyValue? primitive = value.ValueKind switch
+		{
+			JsonValueKind.String => value.GetString()!,
+			JsonValueKind.Number when IsIntegerToken(value) && value.TryGetInt64(out long integer) => integer,
+			_ => null,
+		};
+
+		if (primitive is { } retained)
+		{
+			(extensions ??= new()).AddReceived(property.Name, retained);
+		}
+		else if (value.ValueKind != JsonValueKind.Null && TopLevelProperties.TryGetRequiredKind(property.Name, out TopLevelPropertyKind kind))
+		{
+			throw new ProtocolViolationException($"The JSON-RPC '{property.Name}' property must be a {kind} value.");
+		}
 	}
 
 	private static JsonRpcErrorDetails ReadError(JsonElement error)
@@ -260,6 +285,21 @@ internal static class JsonRpcJsonCodec
 			writer.WritePropertyName("id");
 			RequestId id = message.Id!.Value;
 			WriteId(writer, id);
+		}
+
+		if (message.TopLevelProperties is { Count: > 0 } extensions)
+		{
+			foreach (KeyValuePair<string, TopLevelPropertyValue> property in extensions.Properties)
+			{
+				if (property.Value.Int64Value is long integer)
+				{
+					writer.WriteNumber(property.Key, integer);
+				}
+				else
+				{
+					writer.WriteString(property.Key, property.Value.StringValue);
+				}
+			}
 		}
 
 		writer.WriteEndObject();

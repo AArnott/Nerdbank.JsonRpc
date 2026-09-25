@@ -64,6 +64,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 		string? methodName = null;
 		JsonRpcValue arguments = default, resultValue = default;
 		JsonRpcErrorDetails? errorDetails = null;
+		TopLevelProperties? extensions = null;
 		for (int i = 0; i < count; i++)
 		{
 			if (reader.NextMessagePackType != MessagePackType.String)
@@ -133,7 +134,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 			}
 			else
 			{
-				reader.Skip(context);
+				ReadExtension(ref reader, name, ref extensions, context);
 			}
 		}
 
@@ -143,18 +144,62 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 		}
 
 		return method
-			? new JsonRpcRequest { Method = methodName!, Arguments = arguments, Id = idPresent ? id : (RequestId?)null }
+			? new JsonRpcRequest { Method = methodName!, Arguments = arguments, Id = idPresent ? id : (RequestId?)null, TopLevelProperties = extensions }
 			: result
-				? new JsonRpcResult { Id = id, Result = resultValue }
-				: new JsonRpcError { Id = id, Error = errorDetails! };
+				? new JsonRpcResult { Id = id, Result = resultValue, TopLevelProperties = extensions }
+				: new JsonRpcError { Id = id, Error = errorDetails!, TopLevelProperties = extensions };
+	}
+
+	/// <summary>Retains a primitive extension property, skipping values of other types.</summary>
+	/// <param name="reader">The reader, positioned at the property value.</param>
+	/// <param name="name">The UTF-8 property name.</param>
+	/// <param name="extensions">The lazily created property bag.</param>
+	/// <param name="context">The serialization context.</param>
+	private static void ReadExtension(ref MessagePackReader reader, ReadOnlySpan<byte> name, ref TopLevelProperties? extensions, SerializationContext context)
+	{
+		TopLevelPropertyValue? primitive = null;
+		switch (reader.NextMessagePackType)
+		{
+			case MessagePackType.String:
+				primitive = reader.ReadString()!;
+				break;
+			case MessagePackType.Integer when reader.NextCode != MessagePackCode.UInt64:
+				primitive = reader.ReadInt64();
+				break;
+			case MessagePackType.Integer:
+				ulong unsigned = reader.ReadUInt64();
+				if (unsigned <= long.MaxValue)
+				{
+					primitive = (long)unsigned;
+				}
+
+				break;
+			case MessagePackType.Nil:
+				reader.ReadNil();
+				return;
+			default:
+				reader.Skip(context);
+				break;
+		}
+
+		string propertyName = StringEncoding.UTF8.GetString(name);
+		if (primitive is { } retained)
+		{
+			(extensions ??= new()).AddReceived(propertyName, retained);
+		}
+		else if (TopLevelProperties.TryGetRequiredKind(propertyName, out TopLevelPropertyKind kind))
+		{
+			throw new ProtocolViolationException($"The JSON-RPC '{propertyName}' property must be a {kind} value.");
+		}
 	}
 
 	private static void WriteMessage(ref MessagePackWriter writer, JsonRpcMessage message, SerializationContext context)
 	{
+		int extensionCount = message.TopLevelProperties?.Count ?? 0;
 		switch (message)
 		{
 			case JsonRpcRequest request:
-				writer.WriteMapHeader(2 + (request.HasId ? 1 : 0) + (request.Arguments.HasValue ? 1 : 0));
+				writer.WriteMapHeader(2 + (request.HasId ? 1 : 0) + (request.Arguments.HasValue ? 1 : 0) + extensionCount);
 				writer.Write("jsonrpc");
 				writer.Write(request.Version);
 				writer.Write("method");
@@ -170,22 +215,25 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 					WriteId(ref writer, request.Id!.Value, context);
 				}
 
+				WriteExtensions(ref writer, message);
 				break;
 			case JsonRpcResult result:
-				writer.WriteMapHeader(3);
+				writer.WriteMapHeader(3 + extensionCount);
 				writer.Write("jsonrpc");
 				writer.Write(result.Version);
 				writer.Write("result");
 				writer.WriteRaw(result.Result.AsMessagePack().MsgPack);
 				WriteId(ref writer, result.Id, context);
+				WriteExtensions(ref writer, message);
 				break;
 			case JsonRpcError error:
-				writer.WriteMapHeader(3);
+				writer.WriteMapHeader(3 + extensionCount);
 				writer.Write("jsonrpc");
 				writer.Write(error.Version);
 				writer.Write("error");
 				ErrorConverter.Write(ref writer, error.Error, context);
 				WriteId(ref writer, error.Id, context);
+				WriteExtensions(ref writer, message);
 				break;
 			case JsonRpcMessageBatch batch:
 				writer.WriteArrayHeader(batch.Messages.Length);
@@ -208,5 +256,24 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 	{
 		writer.Write("id");
 		context.GetConverter<RequestId>().Write(ref writer, id, context);
+	}
+
+	private static void WriteExtensions(ref MessagePackWriter writer, JsonRpcMessage message)
+	{
+		if (message.TopLevelProperties is { Count: > 0 } extensions)
+		{
+			foreach (KeyValuePair<string, TopLevelPropertyValue> property in extensions.Properties)
+			{
+				writer.Write(property.Key);
+				if (property.Value.Int64Value is long integer)
+				{
+					writer.Write(integer);
+				}
+				else
+				{
+					writer.Write(property.Value.StringValue);
+				}
+			}
+		}
 	}
 }
