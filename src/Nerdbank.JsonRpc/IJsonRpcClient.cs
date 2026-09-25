@@ -68,4 +68,9 @@ public interface IJsonRpcClient
 	/// <param name="cancellationToken">A cancellation token.</param>
 	/// <returns>The remote disposable proxy.</returns>
 	ValueTask<IDisposable> RequestDisposableAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken);
+
+	/// <summary>Unmarshals a marshaled disposable result into a disposable proxy.</summary>
+	/// <param name="value">The encoded marshaled-object marker.</param>
+	/// <returns>A disposable proxy for the remote object.</returns>
+	IDisposable UnmarshalDisposable(JsonRpcValue value);
 }

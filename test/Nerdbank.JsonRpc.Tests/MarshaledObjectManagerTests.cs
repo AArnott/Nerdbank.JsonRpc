@@ -26,7 +26,7 @@ public class MarshaledObjectManagerTests
 		using JsonRpc rpc = new(channel);
 		JsonRpcValue marker = ((IJsonRpcClient)rpc).MarshalDisposable(new TestDisposable());
 
-		rpc.UnmarshalDisposable(marker).Dispose();
+		((IJsonRpcClient)rpc).UnmarshalDisposable(marker).Dispose();
 
 		JsonRpcRequest release = Assert.IsType<JsonRpcRequest>(await messages.Reader.ReadAsync());
 		Assert.Equal("$/releaseMarshaledObject", release.Method);

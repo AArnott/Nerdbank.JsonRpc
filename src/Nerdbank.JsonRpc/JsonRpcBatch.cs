@@ -36,11 +36,13 @@ public sealed class JsonRpcBatch : IJsonRpcClient, IDisposable, IJsonRpcClientPr
 	JsonRpcValue IJsonRpcClientProvider.MarshalDisposable(IDisposable value) => ((IJsonRpcClient)this.owner).MarshalDisposable(value);
 
 	/// <inheritdoc/>
+	IDisposable IJsonRpcClient.UnmarshalDisposable(JsonRpcValue value) => ((IJsonRpcClient)this.owner).UnmarshalDisposable(value);
+
 	async ValueTask<IDisposable> IJsonRpcClient.RequestDisposableAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		JsonRpcRequest request = new() { Id = this.owner.GetNextRequestId(), Method = method, Arguments = arguments };
 		JsonRpcResponse response = await this.AddRequestAsync(request, cancellationToken).ConfigureAwait(false);
-		return response is JsonRpcResult result ? this.owner.UnmarshalDisposable(result.Result) : throw new JsonRpcException(((JsonRpcError)response).Error);
+		return response is JsonRpcResult result ? ((IJsonRpcClient)this).UnmarshalDisposable(result.Result) : throw new JsonRpcException(((JsonRpcError)response).Error);
 	}
 
 	/// <inheritdoc/>

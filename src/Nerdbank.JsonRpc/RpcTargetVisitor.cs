@@ -206,7 +206,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 
 		if (typeof(TParameterType) == typeof(IDisposable))
 		{
-			return new ParameterSetter<TArgumentState>((DispatchRequest request, JsonRpcValue argument, ref TArgumentState argState) => setter(ref argState, (TParameterType)(object)request.JsonRpc.UnmarshalDisposable(argument)));
+			return new ParameterSetter<TArgumentState>((DispatchRequest request, JsonRpcValue argument, ref TArgumentState argState) => setter(ref argState, (TParameterType)(object)((IJsonRpcClient)request.JsonRpc).UnmarshalDisposable(argument)));
 		}
 
 		return new ParameterSetter<TArgumentState>((DispatchRequest request, JsonRpcValue argument, ref TArgumentState argState) =>

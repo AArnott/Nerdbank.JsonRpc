@@ -224,7 +224,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 		JsonRpcResponse response = await this.RequestAsync(new JsonRpcRequest { Id = this.GetNextRequestId(), Method = method, Arguments = arguments }, cancellationToken).ConfigureAwait(false);
 		return response switch
 		{
-			JsonRpcResult result => this.UnmarshalDisposable(result.Result),
+			JsonRpcResult result => ((IJsonRpcClient)this).UnmarshalDisposable(result.Result),
 			JsonRpcError error => throw new JsonRpcException(error.Error),
 			_ => throw new InvalidOperationException("Received an unknown response type."),
 		};
@@ -259,7 +259,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 
 	JsonRpcValue IJsonRpcClientProvider.MarshalDisposable(IDisposable value) => this.marshaledObjects.Marshal(value, this.channel.Encoding);
 
-	public IDisposable UnmarshalDisposable(JsonRpcValue value) => this.marshaledObjects.Unmarshal(value);
+	IDisposable IJsonRpcClient.UnmarshalDisposable(JsonRpcValue value) => this.marshaledObjects.Unmarshal(value);
 
 	internal static object AttachCore(IJsonRpcClient client, Type interfaceType, JsonRpcProxyOptions? options = null)
 	{
