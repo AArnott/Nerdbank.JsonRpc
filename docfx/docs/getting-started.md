@@ -4,7 +4,7 @@
 
 Consume Nerdbank.JsonRpc via its NuGet package. The badge links to the latest version and installation instructions.
 
-[![NuGet package](https://img.shields.io/nuget/v/Nerdbank.JsonRpc.svg)](https://nuget.org/packages/Nerdbank.JsonRpc)
+[![NuGet package](https://img.shields.io/nuget/v/Nerdbank.JsonRpc.svg)](https://www.nuget.org/packages?q=Nerdbank.JsonRpc)
 
 ## Server setup
 
