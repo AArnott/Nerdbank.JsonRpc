@@ -38,13 +38,11 @@ public partial class EventNotificationTests : TestBase
 		clientRpc.AddRpcTarget(receiver);
 		clientRpc.Start();
 
-		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
-
 		eventSource.RaiseValueChanged(42);
-		Assert.Equal(42, await receiver.ValueChangedInvocation.Task.WithCancellation(cts.Token));
+		Assert.Equal(42, await receiver.ValueChangedInvocation.Task.WithCancellation(this.TimeoutToken));
 
 		eventSource.RaisePairRaised(3, 4);
-		(int First, int Second) pair = await receiver.PairRaisedInvocation.Task.WithCancellation(cts.Token);
+		(int First, int Second) pair = await receiver.PairRaisedInvocation.Task.WithCancellation(this.TimeoutToken);
 		Assert.Equal((3, 4), pair);
 	}
 
