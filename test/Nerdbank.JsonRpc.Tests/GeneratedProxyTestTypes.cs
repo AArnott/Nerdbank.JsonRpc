@@ -43,6 +43,13 @@ internal interface INotGeneratedProxy
 {
 }
 
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IGeneratedMemberNameCollision
+{
+	Task NerdbankJsonRpc_TransformedRpcName0(CancellationToken cancellationToken);
+}
+
 internal sealed class Calculator : ICalculator
 {
 	internal TaskCompletionSource<int> NotificationReceived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
