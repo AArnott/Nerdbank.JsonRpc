@@ -309,8 +309,12 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 		{
 			using Sequence<byte> buffer = new();
 			using Utf8JsonWriter writer = new(buffer);
-			writer.WriteStartArray(); writer.WriteNumberValue(handle); writer.WriteBooleanValue(true); writer.WriteEndArray(); writer.Flush();
-			return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
+			writer.WriteStartArray();
+			writer.WriteNumberValue(handle);
+			writer.WriteBooleanValue(true);
+			writer.WriteEndArray();
+			writer.Flush();
+			return JsonRpcValue.FromJson(buffer.AsReadOnlySequence);
 		}
 
 		using Sequence<byte> msgpackBuffer = new();
