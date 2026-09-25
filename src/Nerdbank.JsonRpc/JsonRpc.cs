@@ -498,6 +498,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	private void ProcessResponse(JsonRpcResponse response)
 	{
+		ProtocolViolationException? unmatchedResponseException = null;
 		lock (this.connectionSync)
 		{
 			if (this.Completion.IsCompleted)
@@ -511,8 +512,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			}
 			else
 			{
-				this.Fault(new ProtocolViolationException($"Received a response with ID {response.Id} that does not match any pending requests."));
+				unmatchedResponseException = new ProtocolViolationException($"Received a response with ID {response.Id} that does not match any pending requests.");
 			}
+		}
+
+		if (unmatchedResponseException is not null)
+		{
+			this.Fault(unmatchedResponseException);
 		}
 	}
 
