@@ -226,7 +226,15 @@ public partial class EventNotificationTests : TestBase
 
 		public void ValueChanged(int value) => this.ValueChangedInvocation.TrySetResult(value);
 
-		public void PairRaised(int first, int second) => this.PairRaisedInvocation.TrySetResult((first, second));
+		// Named with the "Async" suffix and returning Task to confirm that receiving methods are
+		// treated like any other RPC method: the suffix is stripped (matching the "pairRaised" wire
+		// name) and the returned Task, though its result is discarded since notifications carry no
+		// reply, is awaited before dispatch completes.
+		public async Task PairRaisedAsync(int first, int second)
+		{
+			await Task.Yield();
+			this.PairRaisedInvocation.TrySetResult((first, second));
+		}
 	}
 
 	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]

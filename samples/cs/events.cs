@@ -63,9 +63,13 @@ public partial class WatcherEventReceiver
 
     // Matches the "rangeChanged" notification: both of RangeChanged's forwarded parameters are
     // received positionally, by name or position depending on how the sender formats arguments.
-    public void RangeChanged(int low, int high)
+    // A receiving method may also be asynchronous, as here: the trailing "Async" is stripped by the
+    // default method name transform (just like any other RPC method), and its result is discarded
+    // since notifications carry no reply, but the method still runs to completion.
+    public async Task RangeChangedAsync(int low, int high)
     {
         // Handle the range change here.
+        await Task.CompletedTask;
     }
 }
 #endregion

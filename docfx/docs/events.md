@@ -27,6 +27,8 @@ Set <xref:Nerdbank.JsonRpc.JsonRpcTargetOptions.NotifyClientOfEvents> to `false`
 
 A notification is just a request without an `id`, so the remote party receives it the same way it would any other RPC call: by registering a target object whose method names and parameter shapes match the notification. Method name mapping works exactly like [regular RPC methods](method-naming.md) — the default camelCase transform turns a method named `PriceChanged` into the wire name `priceChanged`, matching the notification sent above.
 
+Because it's an ordinary RPC method, a receiving method may also be declared asynchronously: naming it `PriceChangedAsync` (with the trailing `Async` stripped by the default <xref:Nerdbank.JsonRpc.JsonRpcTargetOptions.MethodNameTransform>, just like any other method) and returning `Task` or `ValueTask` both work. The notification carries no reply, so the returned task's result (if any) is discarded, but the method still runs to completion and any exception it throws is logged the same way a fire-and-forget request's would be.
+
 [!code-csharp[](../../samples/cs/events.cs#remote-receiver-contract)]
 
 [!code-csharp[](../../samples/cs/events.cs#remote-receiver-registration)]
