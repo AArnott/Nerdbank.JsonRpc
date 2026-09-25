@@ -3,7 +3,7 @@
 
 namespace Nerdbank.JsonRpc.Tests;
 
-public class MarshaledObjectManagerTests
+public class MarshaledObjectManagerTests : TestBase
 {
 	[Test]
 	public async Task DisposeReleasesLocallyOwnedObjects()
@@ -28,7 +28,7 @@ public class MarshaledObjectManagerTests
 
 		((IJsonRpcClient)rpc).UnmarshalDisposable(marker).Dispose();
 
-		JsonRpcRequest release = Assert.IsType<JsonRpcRequest>(await messages.Reader.ReadAsync());
+		JsonRpcRequest release = Assert.IsType<JsonRpcRequest>(await messages.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal("$/releaseMarshaledObject", release.Method);
 	}
 }
