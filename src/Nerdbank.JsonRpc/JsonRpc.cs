@@ -63,7 +63,7 @@ public sealed partial class JsonRpc : IJsonRpcClient, IDisposableObservable
 	}
 
 	/// <inheritdoc/>
-	JsonRpcSerializer IJsonRpcClient.Serializer => this.channel.Serializer;
+	public JsonRpcSerializer Serializer => this.channel.Serializer;
 
 	public JsonRpcState State =>
 		this.Completion.IsFaulted ? JsonRpcState.Faulted :
@@ -81,7 +81,7 @@ public sealed partial class JsonRpc : IJsonRpcClient, IDisposableObservable
 	internal JsonRpcPipeChannel Channel => this.channel;
 
 	/// <inheritdoc/>
-	JsonRpcArgumentsBuilder IJsonRpcClient.CreateArguments(bool named, int count, CancellationToken cancellationToken) => new(this.channel.Serializer, named, count, cancellationToken, ((IJsonRpcClient)this).MarshalDisposable);
+	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken) => new(this.channel.Serializer, named, count, cancellationToken, ((IJsonRpcClient)this).MarshalDisposable);
 
 #if NET
 	public void AddRpcTarget<T>(T target)
@@ -176,7 +176,7 @@ public sealed partial class JsonRpc : IJsonRpcClient, IDisposableObservable
 	}
 
 	/// <inheritdoc/>
-	ValueTask IJsonRpcClient.RequestAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
+	public ValueTask RequestAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		JsonRpcRequest request = new()
 		{
@@ -189,7 +189,7 @@ public sealed partial class JsonRpc : IJsonRpcClient, IDisposableObservable
 	}
 
 	/// <inheritdoc/>
-	ValueTask<TResult> IJsonRpcClient.RequestAsync<TResult>(string method, JsonRpcValue arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
+	public ValueTask<TResult> RequestAsync<TResult>(string method, JsonRpcValue arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
 		Requires.NotNull(resultShape);
 
@@ -204,7 +204,7 @@ public sealed partial class JsonRpc : IJsonRpcClient, IDisposableObservable
 	}
 
 	/// <inheritdoc/>
-	ValueTask IJsonRpcClient.NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
+	public ValueTask NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
 		JsonRpcRequest request = new() { Id = null, Method = method, Arguments = arguments };

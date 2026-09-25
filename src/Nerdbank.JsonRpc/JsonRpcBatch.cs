@@ -27,7 +27,7 @@ public sealed class JsonRpcBatch : IJsonRpcClient, IDisposable
 	}
 
 	/// <inheritdoc/>
-	JsonRpcSerializer IJsonRpcClient.Serializer => this.owner.Channel.Serializer;
+	public JsonRpcSerializer Serializer => this.owner.Channel.Serializer;
 	/// <inheritdoc/>
 	JsonRpcValue IJsonRpcClient.MarshalDisposable(IDisposable value) => ((IJsonRpcClient)this.owner).MarshalDisposable(value);
 
@@ -40,7 +40,7 @@ public sealed class JsonRpcBatch : IJsonRpcClient, IDisposable
 	}
 
 	/// <inheritdoc/>
-	JsonRpcArgumentsBuilder IJsonRpcClient.CreateArguments(bool named, int count, CancellationToken cancellationToken) => new(((IJsonRpcClient)this).Serializer, named, count, cancellationToken, ((IJsonRpcClient)this.owner).MarshalDisposable);
+	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken) => new(this.Serializer, named, count, cancellationToken, ((IJsonRpcClient)this.owner).MarshalDisposable);
 
 	/// <summary>
 	/// Attaches a generated client proxy for an RPC contract interface to this batch.
@@ -190,7 +190,7 @@ public sealed class JsonRpcBatch : IJsonRpcClient, IDisposable
 
 	/// <inheritdoc/>
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
-	ValueTask IJsonRpcClient.RequestAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
+	public ValueTask RequestAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		JsonRpcRequest request = new()
 		{
@@ -204,7 +204,7 @@ public sealed class JsonRpcBatch : IJsonRpcClient, IDisposable
 
 	/// <inheritdoc/>
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
-	ValueTask<TResult> IJsonRpcClient.RequestAsync<TResult>(string method, JsonRpcValue arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
+	public ValueTask<TResult> RequestAsync<TResult>(string method, JsonRpcValue arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
 		Requires.NotNull(resultShape);
 
@@ -220,7 +220,7 @@ public sealed class JsonRpcBatch : IJsonRpcClient, IDisposable
 
 	/// <inheritdoc/>
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
-	ValueTask IJsonRpcClient.NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
+	public ValueTask NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		JsonRpcRequest request = new()
 		{
