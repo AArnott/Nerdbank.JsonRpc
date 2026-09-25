@@ -15,6 +15,8 @@ internal sealed class DisposableTarget : IDisposableContract
 		return Task.CompletedTask;
 	}
 
+	public Task<bool> IsReturnedDisposableAsync(IDisposable value, CancellationToken cancellationToken) => Task.FromResult(ReferenceEquals(this.ReturnedDisposable, value));
+
 	public Task UseDisposableContainerAsync(DisposableContainer value, CancellationToken cancellationToken)
 	{
 		value.Value.Dispose();

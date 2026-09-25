@@ -119,6 +119,25 @@ public class GeneratedProxyTests
 	[Test]
 	[Arguments(JsonRpcEncoding.MessagePack)]
 	[Arguments(JsonRpcEncoding.Json)]
+	public async Task GeneratedProxy_PreservesRemoteDisposableWhenSentBack(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		DisposableTarget target = new();
+		serverRpc.AddRpcTarget<IDisposableContract>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IDisposableContract client = clientRpc.Attach<IDisposableContract>();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		IDisposable disposable = await client.GetDisposableAsync(cts.Token);
+
+		Assert.True(await client.IsReturnedDisposableAsync(disposable, cts.Token));
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
 	public async Task GeneratedProxy_MarshalsDisposablePropertyEndToEnd(JsonRpcEncoding encoding)
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();

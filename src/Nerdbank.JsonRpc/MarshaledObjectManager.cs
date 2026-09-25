@@ -26,6 +26,11 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new ArgumentNullException(nameof(value));
 		}
 
+		if (value is RemoteDisposable { Owner: var remoteOwner, Handle: long remoteHandle } && ReferenceEquals(remoteOwner, this))
+		{
+			return encoding == JsonRpcEncoding.Json ? WriteJson(remoteHandle, direction: 0) : WriteMessagePack(remoteHandle, direction: 0);
+		}
+
 		long handle = Interlocked.Increment(ref this.nextHandle);
 		lock (this.sync)
 		{
@@ -33,7 +38,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		}
 
 		this.activeScope.Value?.Add(handle);
-		return encoding == JsonRpcEncoding.Json ? WriteJson(handle) : WriteMessagePack(handle);
+		return encoding == JsonRpcEncoding.Json ? WriteJson(handle, direction: 1) : WriteMessagePack(handle, direction: 1);
 	}
 
 	internal IDisposable Unmarshal(JsonRpcValue value)
@@ -110,18 +115,31 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			this.localObjects.Clear();
 		}
 
+		List<Exception>? exceptions = null;
 		foreach (IDisposable value in values)
 		{
-			value.Dispose();
+			try
+			{
+				value.Dispose();
+			}
+			catch (Exception ex)
+			{
+				(exceptions ??= []).Add(ex);
+			}
+		}
+
+		if (exceptions is not null)
+		{
+			throw new AggregateException("One or more marshaled objects failed to dispose.", exceptions);
 		}
 	}
 
-	private static JsonRpcValue WriteJson(long handle)
+	private static JsonRpcValue WriteJson(long handle, int direction)
 	{
 		using Sequence<byte> buffer = new();
 		using Utf8JsonWriter writer = new(buffer);
 		writer.WriteStartObject();
-		writer.WriteNumber(Marker, 1);
+		writer.WriteNumber(Marker, direction);
 		writer.WriteNumber(Handle, handle);
 		writer.WriteString(Lifetime, "explicit");
 		writer.WriteEndObject();
@@ -129,13 +147,13 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
 	}
 
-	private static JsonRpcValue WriteMessagePack(long handle)
+	private static JsonRpcValue WriteMessagePack(long handle, int direction)
 	{
 		using Sequence<byte> buffer = new();
 		MessagePackWriter writer = new(buffer);
 		writer.WriteMapHeader(3);
 		writer.Write(Marker);
-		writer.Write(1);
+		writer.Write(direction);
 		writer.Write(Handle);
 		writer.Write(handle);
 		writer.Write(Lifetime);
@@ -359,6 +377,10 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	private sealed class RemoteDisposable(MarshaledObjectManager manager, long handle) : IDisposable
 	{
 		private int disposed;
+
+		internal MarshaledObjectManager Owner => manager;
+
+		internal long Handle => handle;
 
 		public void Dispose()
 		{

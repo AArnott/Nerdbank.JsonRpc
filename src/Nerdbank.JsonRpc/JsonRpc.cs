@@ -255,7 +255,15 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <inheritdoc/>
 	public void Dispose()
 	{
-		this.marshaledObjects.DisposeAll();
+		Exception? disposalException = null;
+		try
+		{
+			this.marshaledObjects.DisposeAll();
+		}
+		catch (Exception ex)
+		{
+			disposalException = ex;
+		}
 
 		this.disposalSource.Cancel();
 		lock (this.connectionSync)
@@ -269,6 +277,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 					pending.TrySetException(new ObjectDisposedException(nameof(JsonRpc)));
 				}
 			}
+		}
+
+		if (disposalException is not null)
+		{
+			throw disposalException;
 		}
 	}
 
@@ -705,7 +718,15 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			this.Logger.LogError(exception, "JSON-RPC connection terminated: {Reason}", exception.Message);
 		}
 
-		this.marshaledObjects.DisposeAll();
+		try
+		{
+			this.marshaledObjects.DisposeAll();
+		}
+		catch (Exception ex)
+		{
+			this.Logger.LogError(ex, "One or more marshaled objects failed to dispose while faulting the JSON-RPC connection.");
+		}
+
 		this.disposalSource.Cancel();
 	}
 

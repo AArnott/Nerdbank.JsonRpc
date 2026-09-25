@@ -26,6 +26,8 @@ internal partial interface IDisposableContract
 
 	Task UseDisposableAsync(IDisposable value, CancellationToken cancellationToken);
 
+	Task<bool> IsReturnedDisposableAsync(IDisposable value, CancellationToken cancellationToken);
+
 	Task UseDisposableContainerAsync(DisposableContainer value, CancellationToken cancellationToken);
 
 	Task UseConcreteDisposableContainerAsync(ConcreteDisposableContainer value, CancellationToken cancellationToken);
