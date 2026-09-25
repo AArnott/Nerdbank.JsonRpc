@@ -13,3 +13,5 @@ Generated methods support `ValueTask<T>`, `Task<T>`, `ValueTask`, `Task`, and `v
 Generated proxies stream arguments directly into a counted, disposable <xref:Nerdbank.JsonRpc.JsonRpcArgumentsBuilder>, with one cancellation token for the entire argument set. They use the connection's selected [serializer](encodings.md).
 
 To implement multiple RPC interfaces with one proxy, define an annotated composite interface and attach that composite type. `Attach<IBase>()` uses only metadata on `IBase`; it does not search for composite proxies that happen to implement that base interface. Proxies can also be [attached to a batch](batching.md).
+
+By default, generated proxies send requests under a transformed wire name (trailing `Async` suffix removed, then camelCased); see [Method name transforms](method-naming.md) for how to customize or bypass this.

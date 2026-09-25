@@ -193,8 +193,35 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			: method.Parameters.ToImmutableArray();
 
 		ProxyMethodKind methodKind = GetMethodKind(method.ReturnType, out string? resultTypeName);
+		string? explicitRpcName = GetExplicitRpcName(method);
 
-		return new MethodInfo(method, payloadParameters, hasCancellationToken, methodKind, resultTypeName);
+		return new MethodInfo(method, payloadParameters, hasCancellationToken, methodKind, resultTypeName, explicitRpcName);
+	}
+
+	/// <summary>
+	/// Gets the RPC method name explicitly assigned via <c>[MethodShape(Name = "...")]</c> on the given method, if any.
+	/// </summary>
+	/// <param name="method">The method to inspect.</param>
+	/// <returns>The explicit name, or <see langword="null"/> if the method has no explicit <c>MethodShapeAttribute.Name</c>.</returns>
+	private static string? GetExplicitRpcName(IMethodSymbol method)
+	{
+		foreach (AttributeData attribute in method.GetAttributes())
+		{
+			if (attribute.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) != "global::PolyType.MethodShapeAttribute")
+			{
+				continue;
+			}
+
+			foreach (KeyValuePair<string, TypedConstant> namedArgument in attribute.NamedArguments)
+			{
+				if (namedArgument.Key == "Name" && namedArgument.Value.Value is string explicitName)
+				{
+					return explicitName;
+				}
+			}
+		}
+
+		return null;
 	}
 
 	private static ProxyMethodKind GetMethodKind(ITypeSymbol returnType, out string? resultTypeName)
@@ -229,6 +256,8 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	{
 		StringBuilder builder = new();
 		ImmutableArray<ShapeFieldInfo> shapeFields = GetShapeFields(info.Methods);
+		builder.AppendLine("#nullable enable");
+		builder.AppendLine();
 		if (!info.Symbol.ContainingNamespace.IsGlobalNamespace)
 		{
 			builder.Append("namespace ").Append(info.Symbol.ContainingNamespace.ToDisplayString()).AppendLine(";");
@@ -245,6 +274,21 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		builder.AppendLine("{");
 		builder.AppendLine("\tprivate readonly global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc;");
 		builder.AppendLine("\tprivate readonly bool useNamedArguments;");
+
+		bool needsMethodNameTransform = info.Methods.Any(static m => m.ExplicitRpcName is null && m.Kind is not ProxyMethodKind.Unsupported);
+		if (needsMethodNameTransform)
+		{
+			builder.AppendLine("\tprivate readonly global::System.Func<string, string> methodNameTransform;");
+		}
+
+		for (int i = 0; i < info.Methods.Length; i++)
+		{
+			if (info.Methods[i] is { ExplicitRpcName: null, Kind: not ProxyMethodKind.Unsupported })
+			{
+				builder.Append("\tprivate string? transformedRpcName").Append(i).AppendLine(";");
+			}
+		}
+
 		builder.AppendLine();
 
 		foreach (ShapeFieldInfo shapeField in shapeFields)
@@ -265,6 +309,11 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		builder.AppendLine("\t{");
 		builder.AppendLine("\t\tthis.jsonRpc = jsonRpc;");
 		builder.AppendLine("\t\tthis.useNamedArguments = options.UseNamedArguments;");
+		if (needsMethodNameTransform)
+		{
+			builder.AppendLine("\t\tthis.methodNameTransform = options.MethodNameTransform;");
+		}
+
 		if (shapeFields.Length > 0)
 		{
 			builder.Append("\t\tglobal::PolyType.ITypeShapeProvider typeShapeProvider = global::PolyType.Abstractions.TypeShapeResolver.")
@@ -286,10 +335,10 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		builder.AppendLine("\t}");
 
-		foreach (MethodInfo method in info.Methods)
+		for (int i = 0; i < info.Methods.Length; i++)
 		{
 			builder.AppendLine();
-			builder.Append(RenderMethod(method, shapeFields));
+			builder.Append(RenderMethod(info.Methods[i], shapeFields, i));
 		}
 
 		builder.AppendLine("}");
@@ -325,7 +374,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 	}
 
-	private static string RenderMethod(MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields)
+	private static string RenderMethod(MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields, int methodIndex)
 	{
 		StringBuilder builder = new();
 		string parameters = string.Join(", ", method.Symbol.Parameters.Select(static p => $"{p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} {EscapeIdentifier(p.Name)}"));
@@ -352,29 +401,29 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			{
 				case ProxyMethodKind.ValueTaskOfT:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
-					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
+					AppendRpcMethodName(builder, method, methodIndex).Append(", arguments, ");
 					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
 					builder.Append(cancellationToken).AppendLine(");");
 					break;
 				case ProxyMethodKind.TaskOfT:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
-					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
+					AppendRpcMethodName(builder, method, methodIndex).Append(", arguments, ");
 					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
 					builder.Append(cancellationToken).AppendLine(").AsTask();");
 					break;
 				case ProxyMethodKind.ValueTask:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
-					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
+					AppendRpcMethodName(builder, method, methodIndex).Append(", arguments, ");
 					builder.Append(cancellationToken).AppendLine(");");
 					break;
 				case ProxyMethodKind.Task:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
-					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
+					AppendRpcMethodName(builder, method, methodIndex).Append(", arguments, ");
 					builder.Append(cancellationToken).AppendLine(").AsTask();");
 					break;
 				case ProxyMethodKind.Notification:
 					builder.Append("\t\tthis.jsonRpc.NotifyAsync(");
-					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
+					AppendRpcMethodName(builder, method, methodIndex).Append(", arguments, ");
 					builder.Append(cancellationToken).AppendLine(").Preserve();");
 					builder.AppendLine("\t\treturn;");
 					break;
@@ -390,6 +439,27 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		builder.AppendLine("\t}");
 
 		return builder.ToString();
+	}
+
+	/// <summary>
+	/// Appends a C# expression that evaluates to the JSON-RPC wire name for the given method: the exact
+	/// <see cref="MethodInfo.ExplicitRpcName"/> when set, or otherwise a cached, once-computed application of
+	/// the proxy's configured method name transform to the CLR method name.
+	/// </summary>
+	/// <param name="builder">The builder to append the expression to.</param>
+	/// <param name="method">The method whose wire name expression is being emitted.</param>
+	/// <param name="methodIndex">The method's position within the containing interface's method list, used to select its transformed-name cache field.</param>
+	/// <returns><paramref name="builder"/>, for chaining.</returns>
+	private static StringBuilder AppendRpcMethodName(StringBuilder builder, MethodInfo method, int methodIndex)
+	{
+		if (method.ExplicitRpcName is string explicitRpcName)
+		{
+			return AppendQuoted(builder, explicitRpcName);
+		}
+
+		builder.Append("(this.transformedRpcName").Append(methodIndex).Append(" ??= this.methodNameTransform(");
+		AppendQuoted(builder, method.Symbol.Name);
+		return builder.Append("))");
 	}
 
 	private static string GetShapeFieldName(string typeName, ImmutableArray<ShapeFieldInfo> shapeFields)
@@ -443,7 +513,8 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		ImmutableArray<IParameterSymbol> PayloadParameters,
 		bool HasCancellationToken,
 		ProxyMethodKind Kind,
-		string? ResultTypeName);
+		string? ResultTypeName,
+		string? ExplicitRpcName);
 
 	private sealed record ShapeFieldInfo(string TypeName, string FieldName);
 }

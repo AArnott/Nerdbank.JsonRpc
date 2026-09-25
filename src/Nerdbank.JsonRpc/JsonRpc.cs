@@ -92,15 +92,28 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);
 
 #if NET
-	public void AddRpcTarget<T>(T target)
-		where T : IShapeable<T> => this.AddRpcTarget(target, T.GetTypeShape());
+	/// <summary>
+	/// Registers a local object's public instance methods as JSON-RPC targets, invoked when incoming requests match their JSON-RPC method names.
+	/// </summary>
+	/// <typeparam name="T">The statically shaped type describing which members of <paramref name="target"/> to register.</typeparam>
+	/// <param name="target">The object whose methods should be invoked in response to matching incoming requests and notifications.</param>
+	/// <param name="options">Options controlling method name resolution for this target. When <see langword="null"/>, default options are used.</param>
+	public void AddRpcTarget<T>(T target, JsonRpcTargetOptions? options = null)
+		where T : IShapeable<T> => this.AddRpcTarget(target, T.GetTypeShape(), options);
 #endif
 
-	public void AddRpcTarget<T>(T target, ITypeShape<T> shape)
+	/// <summary>
+	/// Registers a local object's public instance methods as JSON-RPC targets, invoked when incoming requests match their JSON-RPC method names.
+	/// </summary>
+	/// <typeparam name="T">The type describing which members of <paramref name="target"/> to register.</typeparam>
+	/// <param name="target">The object whose methods should be invoked in response to matching incoming requests and notifications.</param>
+	/// <param name="shape">The type shape describing <paramref name="target"/>'s methods.</param>
+	/// <param name="options">Options controlling method name resolution for this target. When <see langword="null"/>, default options are used.</param>
+	public void AddRpcTarget<T>(T target, ITypeShape<T> shape, JsonRpcTargetOptions? options = null)
 	{
 		Requires.NotNull(shape);
 
-		var invokers = (Dictionary<string, MethodInvoker>)shape.Accept(RpcTargetVisitor.Instance)!;
+		var invokers = (Dictionary<string, MethodInvoker>)shape.Accept(RpcTargetVisitor.Instance, options ?? new JsonRpcTargetOptions())!;
 		foreach ((string name, MethodInvoker invoker) in invokers)
 		{
 			this.handlers.TryAdd(name, (target, invoker));

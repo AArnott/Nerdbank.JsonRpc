@@ -218,7 +218,7 @@ public class GeneratedProxyTests
 		Task<int> resultTask = client.SubtractAsync(9, 4, cts.Token).AsTask();
 
 		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(cts.Token));
-		Assert.Equal(nameof(IPositionalCalculator.SubtractAsync), request.Method);
+		Assert.Equal(CommonMethodNameTransforms.Default(nameof(IPositionalCalculator.SubtractAsync)), request.Method);
 		Assert.NotNull(request.Id);
 
 		MessagePackReader reader = new(request.Arguments.AsMessagePack());
@@ -249,7 +249,7 @@ public class GeneratedProxyTests
 		Task<int> resultTask = client.EchoKeywordAsync(9, cts.Token).AsTask();
 
 		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(cts.Token));
-		Assert.Equal(nameof(IPositionalCalculator.EchoKeywordAsync), request.Method);
+		Assert.Equal(CommonMethodNameTransforms.Default(nameof(IPositionalCalculator.EchoKeywordAsync)), request.Method);
 		Assert.NotNull(request.Id);
 
 		MessagePackReader reader = new(request.Arguments.AsMessagePack());
@@ -279,7 +279,7 @@ public class GeneratedProxyTests
 		Task<int> resultTask = client.SubtractAsync(9, 4, cts.Token).AsTask();
 
 		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(cts.Token));
-		Assert.Equal(nameof(INamedCalculator.SubtractAsync), request.Method);
+		Assert.Equal(CommonMethodNameTransforms.Default(nameof(INamedCalculator.SubtractAsync)), request.Method);
 		Assert.NotNull(request.Id);
 
 		MessagePackReader reader = new(request.Arguments.AsMessagePack());

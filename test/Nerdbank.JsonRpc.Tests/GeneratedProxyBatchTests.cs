@@ -64,8 +64,8 @@ public class GeneratedProxyBatchTests
 		Assert.Equal(2, requestBatch.Messages.Length);
 		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(requestBatch.Messages[0]);
 		JsonRpcRequest notification = Assert.IsType<JsonRpcRequest>(requestBatch.Messages[1]);
-		Assert.Equal(nameof(ICalculator.AddAsync), request.Method);
-		Assert.Equal(nameof(ICalculator.SetLastValue), notification.Method);
+		Assert.Equal(CommonMethodNameTransforms.Default(nameof(ICalculator.AddAsync)), request.Method);
+		Assert.Equal(CommonMethodNameTransforms.Default(nameof(ICalculator.SetLastValue)), notification.Method);
 		Assert.Null(notification.Id);
 
 		JsonRpcMessageBatch responseBatch = new(

@@ -22,4 +22,4 @@ Attach the proxy to a running <xref:Nerdbank.JsonRpc.JsonRpc> instance:
 
 [!code-csharp[](../../samples/cs/getting-started.cs#attach-proxy)]
 
-MessagePack is the default. For other setup choices, see [Encodings and framing](encodings.md). For named arguments and proxy options, see [Generated client proxies](client-proxies.md); to combine calls in one payload, see [Batching](batching.md).
+MessagePack is the default. For other setup choices, see [Encodings and framing](encodings.md). For named arguments and proxy options, see [Generated client proxies](client-proxies.md); to combine calls in one payload, see [Batching](batching.md). For how CLR method names map to wire names, see [Method name transforms](method-naming.md).

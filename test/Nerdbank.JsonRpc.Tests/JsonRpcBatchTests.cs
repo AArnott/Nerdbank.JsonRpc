@@ -364,7 +364,7 @@ public partial class JsonRpcBatchTests : TestBase
 	private static (JsonRpc Rpc, Channel<JsonRpcMessage> Channel) CreateStartedServerPair()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
-		jsonRpc.AddRpcTarget(new MockServer());
+		jsonRpc.AddRpcTarget(new MockServer(), new JsonRpcTargetOptions { MethodNameTransform = CommonMethodNameTransforms.Identity });
 		return (jsonRpc, channel);
 	}
 

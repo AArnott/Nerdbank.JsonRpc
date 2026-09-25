@@ -20,10 +20,16 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 
 	public override object? VisitObject<T>(IObjectTypeShape<T> objectShape, object? state = null)
 	{
+		JsonRpcTargetOptions options = state as JsonRpcTargetOptions ?? new JsonRpcTargetOptions();
 		Dictionary<string, MethodInvoker> methodInvokers = new(StringComparer.Ordinal);
 		foreach (IMethodShape method in objectShape.Methods)
 		{
-			methodInvokers.Add(method.Name, (MethodInvoker)method.Accept(this)!);
+			string rpcMethodName = GetRpcMethodName(method, options);
+			MethodInvoker invoker = (MethodInvoker)method.Accept(this)!;
+			if (!methodInvokers.TryAdd(rpcMethodName, invoker))
+			{
+				throw new InvalidOperationException($"Multiple methods on '{typeof(T)}' map to the JSON-RPC method name '{rpcMethodName}'. Assign each an explicit name via [MethodShape(Name = \"...\")] or configure a different {nameof(JsonRpcTargetOptions)}.{nameof(JsonRpcTargetOptions.MethodNameTransform)}.");
+			}
 		}
 
 		return methodInvokers;
@@ -209,5 +215,29 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			TParameterType value = (TParameterType)request.UserDataSerializer.DeserializeObject(argument, parameterShape.ParameterType, request.CancellationToken)!;
 			setter(ref argState, value);
 		});
+	}
+
+	/// <summary>
+	/// Determines the JSON-RPC method name that dispatches to the given method, honoring an explicit
+	/// <see cref="MethodShapeAttribute.Name"/> if present and otherwise applying the configured method name transform.
+	/// </summary>
+	/// <param name="method">The method whose RPC name is being resolved.</param>
+	/// <param name="options">The options containing the method name transform to apply to implicitly named methods.</param>
+	/// <returns>The JSON-RPC method name to register for dispatch.</returns>
+	private static string GetRpcMethodName(IMethodShape method, JsonRpcTargetOptions options)
+	{
+		if (method.AttributeProvider?.GetCustomAttribute<MethodShapeAttribute>(inherit: false)?.Name is not null)
+		{
+			// An explicit name is authoritative and bypasses the configured transform.
+			return method.Name;
+		}
+
+		string? transformed = options.MethodNameTransform(method.Name);
+		if (string.IsNullOrEmpty(transformed))
+		{
+			throw new InvalidOperationException($"The {nameof(JsonRpcTargetOptions)}.{nameof(JsonRpcTargetOptions.MethodNameTransform)} delegate returned a null or empty value for method '{method.Name}'.");
+		}
+
+		return transformed;
 	}
 }
