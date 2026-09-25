@@ -5,15 +5,17 @@ using Microsoft;
 
 internal class TestDisposable : IDisposableObservable
 {
+	private readonly TaskCompletionSource<bool> disposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
 	public bool IsDisposed => this.DisposalCount > 0;
 
 	public int DisposalCount { get; private set; }
 
-	internal TaskCompletionSource<bool> Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+	internal Task Disposed => this.disposed.Task;
 
 	public void Dispose()
 	{
 		this.DisposalCount++;
-		this.Disposed.TrySetResult(true);
+		this.disposed.TrySetResult(true);
 	}
 }

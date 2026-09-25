@@ -24,8 +24,8 @@ public class JsonCodecTests : TestBase
 		await using JsonRpcJsonChannel serverChannel = new(serverPipe, serverPlugin, framing, LoggerFactory.CreateLogger("server"));
 		using JsonRpc client = new(clientChannel);
 		using JsonRpc server = new(serverChannel);
-		Assert.Same(clientPlugin, ((IJsonRpcClient)client).Serializer);
-		Assert.Same(serverPlugin, ((IJsonRpcClient)server).Serializer);
+		Assert.NotSame(clientPlugin.Serializer, Assert.IsType<JsonSerializerPlugin>(((IJsonRpcClient)client).Serializer).Serializer);
+		Assert.NotSame(serverPlugin.Serializer, Assert.IsType<JsonSerializerPlugin>(((IJsonRpcClient)server).Serializer).Serializer);
 		Calculator calculator = new();
 		server.AddRpcTarget<ICalculator>(calculator);
 		server.AddRpcTarget<INamedCalculator>(new NamedCalculator(), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.INamedCalculator);
@@ -39,6 +39,7 @@ public class JsonCodecTests : TestBase
 		Assert.Equal(11, await client.RequestAsync(nameof(ICalculator.AddAsync), new JsonDirectArgs { A = 5, B = 6 }, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.JsonDirectArgs, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken));
 		Assert.Equal(2, await client.Attach<INamedCalculator>(new JsonRpcProxyOptions { UseNamedArguments = true }).SubtractAsync(5, 3, this.TimeoutToken));
 		JsonRpcBatch batch = client.CreateBatch();
+		Assert.Same(((IJsonRpcClient)client).Serializer, ((IJsonRpcClient)batch).Serializer);
 		ICalculator batchProxy = batch.Attach<ICalculator>();
 		Task<int> sum = batchProxy.AddAsync(20, 22, this.TimeoutToken).AsTask();
 		Task<int> namedSum = batch.Attach<ICalculator>(new JsonRpcProxyOptions { UseNamedArguments = true }).AddAsync(20, 22, this.TimeoutToken).AsTask();
@@ -122,7 +123,8 @@ public class JsonCodecTests : TestBase
 		await using JsonRpcJsonChannel channel = new(local, plugin, JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("local"));
 		using JsonRpc rpc = new(channel);
 		Assert.Same(plugin, channel.Serializer);
-		Assert.Same(plugin, ((IJsonRpcClient)rpc).Serializer);
+		Assert.NotSame(plugin, ((IJsonRpcClient)rpc).Serializer);
+		Assert.NotSame(plugin.Serializer, Assert.IsType<JsonSerializerPlugin>(((IJsonRpcClient)rpc).Serializer).Serializer);
 	}
 
 	[Test]
@@ -376,7 +378,7 @@ public class JsonCodecTests : TestBase
 		await using JsonRpcJsonChannel clientChannel = new(clientPipe, configured, framing, LoggerFactory.CreateLogger("client"));
 		await using JsonRpcJsonChannel serverChannel = new(serverPipe, new Nerdbank.Json.JsonSerializer(), framing, LoggerFactory.CreateLogger("server"));
 		using JsonRpc client = new(clientChannel);
-		Assert.Same(configured, Assert.IsType<JsonSerializerPlugin>(((IJsonRpcClient)client).Serializer).Serializer);
+		Assert.NotSame(configured, Assert.IsType<JsonSerializerPlugin>(((IJsonRpcClient)client).Serializer).Serializer);
 		client.Start();
 
 		JsonRpcBatch batch = client.CreateBatch();

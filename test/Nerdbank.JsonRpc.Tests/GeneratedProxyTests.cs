@@ -90,7 +90,7 @@ public class GeneratedProxyTests
 
 		await client.UseDisposableAsync(disposable, cts.Token);
 
-		await disposable.Disposed.Task.WithCancellation(cts.Token);
+		await disposable.Disposed.WithCancellation(cts.Token);
 		Assert.True(disposable.IsDisposed);
 	}
 
@@ -112,7 +112,7 @@ public class GeneratedProxyTests
 		IDisposable disposable = await client.GetDisposableAsync(cts.Token);
 		disposable.Dispose();
 
-		await target.ReturnedDisposable.Disposed.Task.WithCancellation(cts.Token);
+		await target.ReturnedDisposable.Disposed.WithCancellation(cts.Token);
 		Assert.True(target.ReturnedDisposable.IsDisposed);
 	}
 
@@ -135,7 +135,7 @@ public class GeneratedProxyTests
 
 		await client.UseDisposableContainerAsync(container, cts.Token);
 
-		await disposable.Disposed.Task.WithCancellation(cts.Token);
+		await disposable.Disposed.WithCancellation(cts.Token);
 		Assert.True(disposable.IsDisposed);
 	}
 

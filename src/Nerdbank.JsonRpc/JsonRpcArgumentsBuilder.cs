@@ -23,10 +23,10 @@ public ref struct JsonRpcArgumentsBuilder
 	/// <param name="named">Whether to encode named parameters.</param>
 	/// <param name="count">The exact number of parameters to write.</param>
 	/// <param name="cancellationToken">A token used when serializing every parameter.</param>
-	/// <param name="clientProvider">The RPC object that supplies serialization and encodes disposable values as marshaled handles.</param>
-	internal JsonRpcArgumentsBuilder(IJsonRpcClientProvider clientProvider, bool named, int count, CancellationToken cancellationToken)
+	/// <param name="context">The RPC object that supplies serialization and encodes disposable values as marshaled handles.</param>
+	internal JsonRpcArgumentsBuilder(IArgumentsBuilderContext context, bool named, int count, CancellationToken cancellationToken)
 	{
-		this.serializer = (clientProvider ?? throw new ArgumentNullException(nameof(clientProvider))).Serializer;
+		this.serializer = (context ?? throw new ArgumentNullException(nameof(context))).Serializer;
 		if (count < 0)
 		{
 			throw new ArgumentOutOfRangeException(nameof(count));

@@ -16,7 +16,7 @@ using Nerdbank.Streams;
 namespace Nerdbank.JsonRpc;
 
 [TypeShape(Kind = TypeShapeKind.None)]
-public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcClientProvider
+public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArgumentsBuilderContext
 {
 	internal const string SpecialCancelMethodName = "$/cancelRequest";
 
@@ -63,9 +63,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 		init => this.logger = value ?? throw new ArgumentNullException(nameof(value));
 	}
 
-	JsonRpcSerializer IJsonRpcClient.Serializer => this.channel.Serializer;
+	JsonRpcSerializer IJsonRpcClient.Serializer => this.userDataSerializer;
 
-	JsonRpcSerializer IJsonRpcClientProvider.Serializer => this.userDataSerializer;
+	JsonRpcSerializer IArgumentsBuilderContext.Serializer => this.userDataSerializer;
 
 	public JsonRpcState State =>
 		this.Completion.IsFaulted ? JsonRpcState.Faulted :

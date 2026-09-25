@@ -1,9 +1,7 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -353,14 +351,16 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			switch (method.Kind)
 			{
 				case ProxyMethodKind.ValueTaskOfT:
-					builder.Append("		return this.jsonRpc.RequestAsync(");
+					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
 					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
-					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ").Append(cancellationToken).AppendLine(");");
+					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
+					builder.Append(cancellationToken).AppendLine(");");
 					break;
 				case ProxyMethodKind.TaskOfT:
-					builder.Append("		return this.jsonRpc.RequestAsync(");
+					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
 					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
-					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ").Append(cancellationToken).AppendLine(").AsTask();");
+					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
+					builder.Append(cancellationToken).AppendLine(").AsTask();");
 					break;
 				case ProxyMethodKind.ValueTask:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");

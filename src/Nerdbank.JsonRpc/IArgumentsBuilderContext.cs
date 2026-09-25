@@ -3,7 +3,7 @@
 
 namespace Nerdbank.JsonRpc;
 
-internal interface IJsonRpcClientProvider
+internal interface IArgumentsBuilderContext
 {
 	JsonRpcSerializer Serializer { get; }
 }

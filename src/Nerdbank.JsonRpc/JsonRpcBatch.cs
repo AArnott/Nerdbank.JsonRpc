@@ -12,7 +12,7 @@ namespace Nerdbank.JsonRpc;
 /// A batch is one-shot. Requests and notifications added before <see cref="SendAsync"/> are transmitted in one protocol payload.
 /// All requests are sent together, and their returned tasks complete after the peer returns the batch response.
 /// </remarks>
-public sealed class JsonRpcBatch : IJsonRpcClient, IDisposable, IJsonRpcClientProvider
+public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContext
 {
 	private readonly JsonRpc owner;
 	private readonly List<Entry> entries = [];
@@ -26,9 +26,9 @@ public sealed class JsonRpcBatch : IJsonRpcClient, IDisposable, IJsonRpcClientPr
 		this.owner = owner ?? throw new ArgumentNullException(nameof(owner));
 	}
 
-	JsonRpcSerializer IJsonRpcClient.Serializer => this.owner.Channel.Serializer;
+	JsonRpcSerializer IJsonRpcClient.Serializer => this.owner.UserDataSerializer;
 
-	JsonRpcSerializer IJsonRpcClientProvider.Serializer => this.owner.UserDataSerializer;
+	JsonRpcSerializer IArgumentsBuilderContext.Serializer => this.owner.UserDataSerializer;
 
 	/// <inheritdoc/>
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);

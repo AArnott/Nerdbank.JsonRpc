@@ -25,7 +25,7 @@ public class MarshaledObjectManagerTests : TestBase
 
 		remoteDisposable.Dispose();
 
-		await target.ReturnedDisposable.Disposed.Task.WithCancellation(this.TimeoutToken);
+		await target.ReturnedDisposable.Disposed.WithCancellation(this.TimeoutToken);
 		Assert.True(target.ReturnedDisposable.IsDisposed);
 	}
 
@@ -44,7 +44,7 @@ public class MarshaledObjectManagerTests : TestBase
 
 		serverRpc.Dispose();
 
-		await target.ReturnedDisposable.Disposed.Task.WithCancellation(this.TimeoutToken);
+		await target.ReturnedDisposable.Disposed.WithCancellation(this.TimeoutToken);
 		Assert.True(target.ReturnedDisposable.IsDisposed);
 	}
 }

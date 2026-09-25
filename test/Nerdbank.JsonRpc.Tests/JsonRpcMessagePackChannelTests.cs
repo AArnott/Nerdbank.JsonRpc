@@ -19,7 +19,8 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 		Assert.Equal(JsonRpcEncoding.MessagePack, channel.Encoding);
 		Assert.Same(configured, Assert.IsType<MessagePackSerializerPlugin>(channel.Serializer).Serializer);
 		using JsonRpc rpc = new(channel);
-		Assert.Same(channel.Serializer, ((IJsonRpcClient)rpc).Serializer);
+		Assert.NotSame(channel.Serializer, ((IJsonRpcClient)rpc).Serializer);
+		Assert.NotSame(configured, Assert.IsType<MessagePackSerializerPlugin>(((IJsonRpcClient)rpc).Serializer).Serializer);
 	}
 
 	[Test]
@@ -45,7 +46,7 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 		Assert.Equal(1, reader.ReadArrayHeader());
 		Assert.Equal(42, reader.ReadInt32());
 		Assert.True(reader.End);
-		Assert.Same(configured, Assert.IsType<MessagePackSerializerPlugin>(((IJsonRpcClient)client).Serializer).Serializer);
+		Assert.NotSame(configured, Assert.IsType<MessagePackSerializerPlugin>(((IJsonRpcClient)client).Serializer).Serializer);
 	}
 
 	[Test]
