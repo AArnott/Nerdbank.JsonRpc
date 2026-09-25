@@ -158,6 +158,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 	private static void ReadExtension(ref MessagePackReader reader, ReadOnlySpan<byte> name, ref TopLevelProperties? extensions, SerializationContext context)
 	{
 		TopLevelPropertyValue? primitive = null;
+		bool isNil = reader.NextMessagePackType == MessagePackType.Nil;
 		switch (reader.NextMessagePackType)
 		{
 			case MessagePackType.String:
@@ -176,21 +177,19 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 				break;
 			case MessagePackType.Nil:
 				reader.ReadNil();
-				return;
+				break;
 			default:
 				reader.Skip(context);
 				break;
 		}
 
 		string propertyName = StringEncoding.UTF8.GetString(name);
-		if (primitive is { } retained)
-		{
-			(extensions ??= new()).AddReceived(propertyName, retained);
-		}
-		else if (TopLevelProperties.TryGetRequiredKind(propertyName, out TopLevelPropertyKind kind))
+		if (primitive is null && !isNil && TopLevelProperties.TryGetRequiredKind(propertyName, out TopLevelPropertyKind kind))
 		{
 			throw new ProtocolViolationException($"The JSON-RPC '{propertyName}' property must be a {kind} value.");
 		}
+
+		(extensions ??= new()).AddReceived(propertyName, primitive);
 	}
 
 	private static void WriteMessage(ref MessagePackWriter writer, JsonRpcMessage message, SerializationContext context)

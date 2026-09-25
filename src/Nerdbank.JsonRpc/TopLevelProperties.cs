@@ -19,6 +19,7 @@ internal sealed class TopLevelProperties
 	internal const string JoinableTaskTokenPropertyName = "joinableTaskToken";
 
 	private readonly List<KeyValuePair<string, TopLevelPropertyValue>> properties = new(1);
+	private HashSet<string>? ignoredReceivedNames;
 
 	/// <summary>Gets the number of properties.</summary>
 	internal int Count => this.properties.Count;
@@ -67,23 +68,29 @@ internal sealed class TopLevelProperties
 		}
 	}
 
-	/// <summary>Adds a property read from the wire.</summary>
+	/// <summary>Records a received property name, retaining the value only when supported.</summary>
 	/// <param name="name">The property name.</param>
-	/// <param name="value">The value.</param>
+	/// <param name="value">The primitive value, or null when the wire value is unsupported.</param>
 	/// <exception cref="ProtocolViolationException">Thrown for duplicate names or well-known properties of the wrong kind.</exception>
-	internal void AddReceived(string name, TopLevelPropertyValue value)
+	internal void AddReceived(string name, TopLevelPropertyValue? value)
 	{
-		if (TryGetRequiredKind(name, out TopLevelPropertyKind kind) && kind != value.Kind)
-		{
-			throw new ProtocolViolationException($"The JSON-RPC '{name}' property must be a {kind} value.");
-		}
-
-		if (this.IndexOf(name) >= 0)
+		if (this.IndexOf(name) >= 0 || this.ignoredReceivedNames?.Contains(name) == true)
 		{
 			throw new ProtocolViolationException($"Duplicate JSON-RPC '{name}' property.");
 		}
 
-		this.properties.Add(new(name, value));
+		if (value is not { } retained)
+		{
+			(this.ignoredReceivedNames ??= new(StringComparer.Ordinal)).Add(name);
+			return;
+		}
+
+		if (TryGetRequiredKind(name, out TopLevelPropertyKind kind) && kind != retained.Kind)
+		{
+			throw new ProtocolViolationException($"The JSON-RPC '{name}' property must be a {kind} value.");
+		}
+
+		this.properties.Add(new(name, retained));
 	}
 
 	/// <summary>Gets a property value.</summary>

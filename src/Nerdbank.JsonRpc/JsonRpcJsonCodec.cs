@@ -179,14 +179,12 @@ internal static class JsonRpcJsonCodec
 			_ => null,
 		};
 
-		if (primitive is { } retained)
-		{
-			(extensions ??= new()).AddReceived(property.Name, retained);
-		}
-		else if (value.ValueKind != JsonValueKind.Null && TopLevelProperties.TryGetRequiredKind(property.Name, out TopLevelPropertyKind kind))
+		if (primitive is null && value.ValueKind != JsonValueKind.Null && TopLevelProperties.TryGetRequiredKind(property.Name, out TopLevelPropertyKind kind))
 		{
 			throw new ProtocolViolationException($"The JSON-RPC '{property.Name}' property must be a {kind} value.");
 		}
+
+		(extensions ??= new()).AddReceived(property.Name, primitive);
 	}
 
 	private static JsonRpcErrorDetails ReadError(JsonElement error)

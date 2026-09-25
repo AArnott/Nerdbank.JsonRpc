@@ -291,6 +291,9 @@ public partial class JoinableTaskTokenTests : TestBase
 	[Arguments("""{"jsonrpc":"2.0","method":"m","id":1,"joinableTaskToken":{}}""")]
 	[Arguments("""{"jsonrpc":"2.0","method":"m","id":1,"joinableTaskToken":"a","joinableTaskToken":"b"}""")]
 	[Arguments("""{"jsonrpc":"2.0","method":"m","id":1,"count":1,"count":2}""")]
+	[Arguments("""{"jsonrpc":"2.0","method":"m","id":1,"x":{},"x":"v"}""")]
+	[Arguments("""{"jsonrpc":"2.0","method":"m","id":1,"x":null,"x":7}""")]
+	[Arguments("""{"jsonrpc":"2.0","method":"m","id":1,"x":7,"x":{}}""")]
 	public async Task InvalidTopLevelPropertiesFaultJsonTransport(string json)
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
@@ -303,6 +306,9 @@ public partial class JoinableTaskTokenTests : TestBase
 	[Arguments(0)]
 	[Arguments(1)]
 	[Arguments(2)]
+	[Arguments(3)]
+	[Arguments(4)]
+	[Arguments(5)]
 	public async Task InvalidTopLevelPropertiesFaultMessagePackTransport(int caseNumber)
 	{
 		Sequence<byte> input = new();
@@ -328,12 +334,42 @@ public partial class JoinableTaskTokenTests : TestBase
 				writer.Write("other");
 				writer.Write(1);
 				break;
-			default:
+			case 2:
 				writer.Write("count");
 				writer.Write(1);
 				writer.Write("count");
 				writer.Write(2);
 				break;
+			case 3:
+			case 4:
+			case 5:
+				writer.Write("x");
+				if (caseNumber == 3)
+				{
+					writer.WriteArrayHeader(0);
+				}
+				else if (caseNumber == 4)
+				{
+					writer.WriteNil();
+				}
+				else
+				{
+					writer.Write(7);
+				}
+
+				writer.Write("x");
+				if (caseNumber == 5)
+				{
+					writer.WriteArrayHeader(0);
+				}
+				else
+				{
+					writer.Write("v");
+				}
+
+				break;
+			default:
+				throw new ArgumentOutOfRangeException(nameof(caseNumber));
 		}
 
 		writer.Flush();
