@@ -12,7 +12,7 @@ namespace Nerdbank.JsonRpc;
 /// A batch is one-shot. Requests and notifications added before <see cref="SendAsync"/> are transmitted in one protocol payload.
 /// All requests are sent together, and their returned tasks complete after the peer returns the batch response.
 /// </remarks>
-public sealed class JsonRpcBatch : IJsonRpcClient, IDisposable, IMarshaledObjectProvider
+public sealed class JsonRpcBatch : IJsonRpcClient, IDisposable, IJsonRpcClientProvider
 {
 	private readonly JsonRpc owner;
 	private readonly List<Entry> entries = [];
@@ -29,11 +29,11 @@ public sealed class JsonRpcBatch : IJsonRpcClient, IDisposable, IMarshaledObject
 	/// <inheritdoc/>
 	public JsonRpcSerializer Serializer => this.owner.Channel.Serializer;
 	/// <inheritdoc/>
-	JsonRpcValue IJsonRpcClient.MarshalDisposable(IDisposable value) => ((IMarshaledObjectProvider)this).MarshalDisposable(value);
+	JsonRpcValue IJsonRpcClient.MarshalDisposable(IDisposable value) => ((IJsonRpcClientProvider)this).MarshalDisposable(value);
 
-	JsonRpcSerializer IMarshaledObjectProvider.Serializer => this.Serializer;
+	JsonRpcSerializer IJsonRpcClientProvider.Serializer => this.Serializer;
 
-	JsonRpcValue IMarshaledObjectProvider.MarshalDisposable(IDisposable value) => ((IJsonRpcClient)this.owner).MarshalDisposable(value);
+	JsonRpcValue IJsonRpcClientProvider.MarshalDisposable(IDisposable value) => ((IJsonRpcClient)this.owner).MarshalDisposable(value);
 
 	/// <inheritdoc/>
 	async ValueTask<IDisposable> IJsonRpcClient.RequestDisposableAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)

@@ -17,7 +17,7 @@ using Nerdbank.MessagePack;
 namespace Nerdbank.JsonRpc;
 
 [TypeShape(Kind = TypeShapeKind.None)]
-public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IMarshaledObjectProvider
+public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcClientProvider
 {
 	internal const string SpecialCancelMethodName = "$/cancelRequest";
 
@@ -293,11 +293,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IMarshaled
 		return id;
 	}
 
-	JsonRpcValue IJsonRpcClient.MarshalDisposable(IDisposable value) => ((IMarshaledObjectProvider)this).MarshalDisposable(value);
+	JsonRpcValue IJsonRpcClient.MarshalDisposable(IDisposable value) => ((IJsonRpcClientProvider)this).MarshalDisposable(value);
 
-	JsonRpcSerializer IMarshaledObjectProvider.Serializer => this.channel.Serializer;
+	JsonRpcSerializer IJsonRpcClientProvider.Serializer => this.channel.Serializer;
 
-	JsonRpcValue IMarshaledObjectProvider.MarshalDisposable(IDisposable value) => this.marshaledObjects.Marshal(value, this.channel.Encoding);
+	JsonRpcValue IJsonRpcClientProvider.MarshalDisposable(IDisposable value) => this.marshaledObjects.Marshal(value, this.channel.Encoding);
 
 	public IDisposable UnmarshalDisposable(JsonRpcValue value) => this.marshaledObjects.Unmarshal(value);
 

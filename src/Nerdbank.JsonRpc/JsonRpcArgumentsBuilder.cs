@@ -11,7 +11,7 @@ namespace Nerdbank.JsonRpc;
 public ref struct JsonRpcArgumentsBuilder
 {
 	private readonly JsonRpcSerializer serializer;
-	private readonly IMarshaledObjectProvider marshaledObjectProvider;
+	private readonly IJsonRpcClientProvider marshaledObjectProvider;
 	private readonly bool named;
 	private readonly int count;
 	private readonly CancellationToken cancellationToken;
@@ -25,7 +25,7 @@ public ref struct JsonRpcArgumentsBuilder
 	/// <param name="count">The exact number of parameters to write.</param>
 	/// <param name="cancellationToken">A token used when serializing every parameter.</param>
 	/// <param name="marshaledObjectProvider">The RPC object that supplies serialization and encodes disposable values as marshaled handles.</param>
-	internal JsonRpcArgumentsBuilder(IMarshaledObjectProvider marshaledObjectProvider, bool named, int count, CancellationToken cancellationToken)
+	internal JsonRpcArgumentsBuilder(IJsonRpcClientProvider marshaledObjectProvider, bool named, int count, CancellationToken cancellationToken)
 	{
 		this.marshaledObjectProvider = marshaledObjectProvider ?? throw new ArgumentNullException(nameof(marshaledObjectProvider));
 		this.serializer = marshaledObjectProvider.Serializer;
@@ -163,7 +163,7 @@ public ref struct JsonRpcArgumentsBuilder
 }
 
 
-internal interface IMarshaledObjectProvider
+internal interface IJsonRpcClientProvider
 {
 	JsonRpcSerializer Serializer { get; }
 
