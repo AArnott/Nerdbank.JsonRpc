@@ -15,7 +15,8 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	private const string Lifetime = "lifetime";
 	private const string ReleaseMethod = "$/releaseMarshaledObject";
 	private readonly object sync = new();
-	private readonly Dictionary<long, IDisposable> localObjects = [];
+	private readonly Dictionary<long, LocalObjectLease> localObjects = [];
+	private readonly Dictionary<IDisposable, long> localHandles = new(ReferenceEqualityComparer<IDisposable>.Instance);
 	private readonly AsyncLocal<HandleScope?> activeScope = new();
 	private long nextHandle;
 
@@ -31,10 +32,19 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			return encoding == JsonRpcEncoding.Json ? WriteJson(remoteHandle, direction: 0) : WriteMessagePack(remoteHandle, direction: 0);
 		}
 
-		long handle = Interlocked.Increment(ref this.nextHandle);
+		long handle;
 		lock (this.sync)
 		{
-			this.localObjects.Add(handle, value);
+			if (this.localHandles.TryGetValue(value, out handle))
+			{
+				this.localObjects[handle].AddRef();
+			}
+			else
+			{
+				handle = Interlocked.Increment(ref this.nextHandle);
+				this.localObjects.Add(handle, new(value));
+				this.localHandles.Add(value, handle);
+			}
 		}
 
 		this.activeScope.Value?.Add(handle);
@@ -48,9 +58,9 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		{
 			lock (this.sync)
 			{
-				if (this.localObjects.TryGetValue(handle, out IDisposable? local))
+				if (this.localObjects.TryGetValue(handle, out LocalObjectLease? local))
 				{
-					return local;
+					return local.Value;
 				}
 			}
 
@@ -98,8 +108,9 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		IDisposable[] values;
 		lock (this.sync)
 		{
-			values = [.. this.localObjects.Values];
+			values = [.. this.localObjects.Values.Select(static lease => lease.Value)];
 			this.localObjects.Clear();
+			this.localHandles.Clear();
 		}
 
 		List<Exception>? exceptions = null;
@@ -244,10 +255,11 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		IDisposable? value = null;
 		lock (this.sync)
 		{
-			if (this.localObjects.TryGetValue(handle, out IDisposable? removed))
+			if (this.localObjects.TryGetValue(handle, out LocalObjectLease? lease) && lease.Release())
 			{
 				this.localObjects.Remove(handle);
-				value = removed;
+				this.localHandles.Remove(lease.Value);
+				value = lease.Value;
 			}
 		}
 
@@ -303,6 +315,31 @@ internal class MarshaledObjectManager(JsonRpc owner)
 				}
 			}
 		}
+	}
+
+	private sealed class LocalObjectLease(IDisposable value)
+	{
+		private int count = 1;
+
+		internal IDisposable Value => value;
+
+		internal void AddRef() => this.count++;
+
+		internal bool Release() => --this.count == 0;
+	}
+
+	private sealed class ReferenceEqualityComparer<T> : IEqualityComparer<T>
+		where T : class
+	{
+		internal static readonly ReferenceEqualityComparer<T> Instance = new();
+
+		private ReferenceEqualityComparer()
+		{
+		}
+
+		public bool Equals(T? x, T? y) => ReferenceEquals(x, y);
+
+		public int GetHashCode(T obj) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj);
 	}
 
 	private sealed class RemoteDisposable(MarshaledObjectManager manager, long handle) : IDisposable

@@ -34,6 +34,31 @@ public partial class MarshaledObjectManagerTests : TestBase
 	}
 
 	[Test]
+	public async Task ReleasingOneOfMultipleRemoteProxiesKeepsLocalObjectAlive()
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe, NullLogger.Instance));
+		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe, NullLogger.Instance));
+		DisposableTarget target = new();
+		serverRpc.AddRpcTarget<IDisposableContract>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IDisposableContract client = clientRpc.Attach<IDisposableContract>();
+		IDisposable firstProxy = await client.GetDisposableAsync(this.TimeoutToken);
+		IDisposable secondProxy = await client.GetDisposableAsync(this.TimeoutToken);
+
+		firstProxy.Dispose();
+
+		await Assert.ThrowsAsync<TimeoutException>(() => target.ReturnedDisposable.Disposed.WithTimeout(ExpectedTimeout));
+		Assert.False(target.ReturnedDisposable.IsDisposed);
+
+		secondProxy.Dispose();
+
+		await target.ReturnedDisposable.Disposed.WithCancellation(this.TimeoutToken);
+		Assert.True(target.ReturnedDisposable.IsDisposed);
+	}
+
+	[Test]
 	public async Task DisposeReleasesLocallyOwnedObjects()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();

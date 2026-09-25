@@ -32,12 +32,13 @@ public ref struct JsonRpcArgumentsBuilder
 			throw new ArgumentNullException(nameof(context));
 		}
 
-		this.serializer = context.Serializer;
-		this.marshaledObjectsScope = context.MarshaledObjects.TrackMarshaledObjects();
 		if (count < 0)
 		{
 			throw new ArgumentOutOfRangeException(nameof(count));
 		}
+
+		this.serializer = context.Serializer;
+		this.marshaledObjectsScope = context.MarshaledObjects.TrackMarshaledObjects();
 
 		this.named = named;
 		this.count = count;
