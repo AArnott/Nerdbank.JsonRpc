@@ -81,7 +81,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IMarshaled
 	internal JsonRpcPipeChannel Channel => this.channel;
 
 	/// <inheritdoc/>
-	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this.channel.Serializer, named, count, cancellationToken, this);
+	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);
 
 #if NET
 	public void AddRpcTarget<T>(T target)
@@ -207,7 +207,14 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IMarshaled
 	public ValueTask NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
-		JsonRpcRequest request = new() { Id = null, Method = method, Arguments = arguments };
+      
+		JsonRpcRequest request = new()
+        {
+            Id = null,
+            Method = method,
+            Arguments = arguments,
+        };
+      
 		return this.PostMessageAsync(request, cancellationToken);
 	}
 
@@ -222,7 +229,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IMarshaled
 			_ => throw new InvalidOperationException("Received an unknown response type."),
 		};
 	}
-public void Start()
+  
+    public void Start()
 	{
 		this.readerTask = this.ReadAsync(this.channel.Reader);
 	}
@@ -286,6 +294,8 @@ public void Start()
 	}
 
 	JsonRpcValue IJsonRpcClient.MarshalDisposable(IDisposable value) => ((IMarshaledObjectProvider)this).MarshalDisposable(value);
+
+	JsonRpcSerializer IMarshaledObjectProvider.Serializer => this.channel.Serializer;
 
 	JsonRpcValue IMarshaledObjectProvider.MarshalDisposable(IDisposable value) => this.marshaledObjects.Marshal(value, this.channel.Encoding);
 

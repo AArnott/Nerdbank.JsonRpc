@@ -31,6 +31,8 @@ public sealed class JsonRpcBatch : IJsonRpcClient, IDisposable, IMarshaledObject
 	/// <inheritdoc/>
 	JsonRpcValue IJsonRpcClient.MarshalDisposable(IDisposable value) => ((IMarshaledObjectProvider)this).MarshalDisposable(value);
 
+	JsonRpcSerializer IMarshaledObjectProvider.Serializer => this.Serializer;
+
 	JsonRpcValue IMarshaledObjectProvider.MarshalDisposable(IDisposable value) => ((IJsonRpcClient)this.owner).MarshalDisposable(value);
 
 	/// <inheritdoc/>
@@ -42,7 +44,7 @@ public sealed class JsonRpcBatch : IJsonRpcClient, IDisposable, IMarshaledObject
 	}
 
 	/// <inheritdoc/>
-	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken) => new(this.Serializer, named, count, cancellationToken, this);
+	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken) => new(this, named, count, cancellationToken);
 
 	/// <summary>
 	/// Attaches a generated client proxy for an RPC contract interface to this batch.
