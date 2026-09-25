@@ -129,6 +129,16 @@ public class MethodNameTransformTests : TestBase
 	}
 
 	[Test]
+	public void AddRpcTarget_CollisionWithExistingTarget_ThrowsWithoutPartialRegistration()
+	{
+		using JsonRpc server = new(new MockJsonRpcPipeChannel(MockChannel<JsonRpcMessage>.CreatePair().Item1));
+		server.AddRpcTarget<IFooAsyncTarget>(new FooAsyncTarget());
+
+		Assert.Throws<InvalidOperationException>(() => server.AddRpcTarget<ICollidingNamesTarget>(new CollidingNamesTarget()));
+		Assert.Throws<InvalidOperationException>(() => server.AddRpcTarget<IFooTarget>(new FooTarget()));
+	}
+
+	[Test]
 	public void AddRpcTarget_CollidingTransformedNames_Throws()
 	{
 		using JsonRpc server = new(new MockJsonRpcPipeChannel(MockChannel<JsonRpcMessage>.CreatePair().Item1));

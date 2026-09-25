@@ -3,9 +3,7 @@
 
 using PolyType;
 
-internal sealed class CollidingNamesTarget : ICollidingNamesTarget
+internal sealed class FooTarget : IFooTarget
 {
-	public Task FooAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
 	public Task Foo(CancellationToken cancellationToken) => Task.CompletedTask;
 }

@@ -24,6 +24,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private readonly MarshaledObjectManager marshaledObjects;
 	private readonly TaskCompletionSource<bool> completionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
 	private readonly object connectionSync = new();
+	private readonly object targetRegistrationSync = new();
 	private readonly CancellationTokenSource disposalSource = new();
 	private readonly ConcurrentDictionary<string, (object? Target, MethodInvoker Invoker)> handlers = new();
 	private readonly ConcurrentDictionary<RequestId, TaskCompletionSource<JsonRpcResponse>> pendingOutboundRequests = new();
@@ -114,9 +115,20 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		Requires.NotNull(shape);
 
 		var invokers = (Dictionary<string, MethodInvoker>)shape.Accept(RpcTargetVisitor.Instance, options ?? new JsonRpcTargetOptions())!;
-		foreach ((string name, MethodInvoker invoker) in invokers)
+		lock (this.targetRegistrationSync)
 		{
-			this.handlers.TryAdd(name, (target, invoker));
+			foreach (string name in invokers.Keys)
+			{
+				if (this.handlers.ContainsKey(name))
+				{
+					throw new InvalidOperationException($"The JSON-RPC method name '{name}' is already registered.");
+				}
+			}
+
+			foreach ((string name, MethodInvoker invoker) in invokers)
+			{
+				this.handlers[name] = (target, invoker);
+			}
 		}
 	}
 
