@@ -25,8 +25,8 @@ public class JsonCodecTests : TestBase
 		await using JsonRpcJsonChannel serverChannel = new(serverPipe, serverPlugin, framing, LoggerFactory.CreateLogger("server"));
 		using JsonRpc client = new(clientChannel);
 		using JsonRpc server = new(serverChannel);
-		Assert.Same(clientPlugin, ((IJsonRpcClient)client).Serializer);
-		Assert.Same(serverPlugin, ((IJsonRpcClient)server).Serializer);
+		Assert.Same(clientPlugin, ((JsonRpcClient)client).Serializer);
+		Assert.Same(serverPlugin, ((JsonRpcClient)server).Serializer);
 		Calculator calculator = new();
 		server.AddRpcTarget<ICalculator>(calculator);
 		server.AddRpcTarget<INamedCalculator>(new NamedCalculator(), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.INamedCalculator);
@@ -123,7 +123,7 @@ public class JsonCodecTests : TestBase
 		await using JsonRpcJsonChannel channel = new(local, plugin, JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("local"));
 		using JsonRpc rpc = new(channel);
 		Assert.Same(plugin, channel.Serializer);
-		Assert.Same(plugin, ((IJsonRpcClient)rpc).Serializer);
+		Assert.Same(plugin, ((JsonRpcClient)rpc).Serializer);
 	}
 
 	[Test]
@@ -146,14 +146,14 @@ public class JsonCodecTests : TestBase
 		JsonRpcJsonChannel channel = new(local, plugin, JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("local"));
 		using JsonRpc rpc = new(channel);
 		rpc.Start();
-		ArgumentException jsonMismatch = Assert.Throws<ArgumentException>(() => rpc.NotifyAsync("method", JsonRpcValue.FromMessagePack(NilMsgPack), this.TimeoutToken));
+		ArgumentException jsonMismatch = Assert.Throws<ArgumentException>(() => ((JsonRpcClient)rpc).NotifyAsync("method", JsonRpcValue.FromMessagePack(NilMsgPack), this.TimeoutToken));
 		Assert.Contains("expected Json, actual MessagePack", jsonMismatch.Message);
 		using JsonRpc messagePackRpc = new(new MockJsonRpcPipeChannel(Channel.CreateUnbounded<JsonRpcMessage>()));
-		ArgumentException messagePackMismatch = Assert.Throws<ArgumentException>(() => messagePackRpc.NotifyAsync("method", JsonRpcValue.FromJson("[]"u8.ToArray()), this.TimeoutToken));
+		ArgumentException messagePackMismatch = Assert.Throws<ArgumentException>(() => ((JsonRpcClient)messagePackRpc).NotifyAsync("method", JsonRpcValue.FromJson("[]"u8.ToArray()), this.TimeoutToken));
 		Assert.Contains("expected MessagePack, actual Json", messagePackMismatch.Message);
-		Assert.Throws<ArgumentException>(() => rpc.NotifyAsync("method", JsonRpcValue.FromJson("42"u8.ToArray()), this.TimeoutToken));
+		Assert.Throws<ArgumentException>(() => ((JsonRpcClient)rpc).NotifyAsync("method", JsonRpcValue.FromJson("42"u8.ToArray()), this.TimeoutToken));
 		JsonRpcBatch batch = rpc.CreateBatch();
-		Assert.Throws<ArgumentException>(() => batch.RequestAsync("method", JsonRpcValue.FromMessagePack(NilMsgPack), this.TimeoutToken));
+		Assert.Throws<ArgumentException>(() => ((JsonRpcClient)batch).RequestAsync("method", JsonRpcValue.FromMessagePack(NilMsgPack), this.TimeoutToken));
 		await channel.DisposeAsync();
 	}
 
@@ -377,7 +377,7 @@ public class JsonCodecTests : TestBase
 		await using JsonRpcJsonChannel clientChannel = new(clientPipe, configured, framing, LoggerFactory.CreateLogger("client"));
 		await using JsonRpcJsonChannel serverChannel = new(serverPipe, new Nerdbank.Json.JsonSerializer(), framing, LoggerFactory.CreateLogger("server"));
 		using JsonRpc client = new(clientChannel);
-		Assert.Same(configured, Assert.IsType<JsonSerializerPlugin>(((IJsonRpcClient)client).Serializer).Serializer);
+		Assert.Same(configured, Assert.IsType<JsonSerializerPlugin>(((JsonRpcClient)client).Serializer).Serializer);
 		client.Start();
 
 		JsonRpcBatch batch = client.CreateBatch();

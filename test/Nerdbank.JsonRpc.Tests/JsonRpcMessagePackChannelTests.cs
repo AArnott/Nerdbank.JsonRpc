@@ -20,7 +20,7 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 		Assert.Equal(JsonRpcEncoding.MessagePack, channel.Encoding);
 		Assert.Same(configured, Assert.IsType<MessagePackSerializerPlugin>(channel.Serializer).Serializer);
 		using JsonRpc rpc = new(channel);
-		Assert.Same(channel.Serializer, ((IJsonRpcClient)rpc).Serializer);
+		Assert.Same(channel.Serializer, ((JsonRpcClient)rpc).Serializer);
 	}
 
 	[Test]
@@ -40,13 +40,13 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 			arguments = builder.Build();
 		}
 
-		await client.NotifyAsync("example", arguments, TestContext.Current!.Execution.CancellationToken);
+		await ((JsonRpcClient)client).NotifyAsync("example", arguments, TestContext.Current!.Execution.CancellationToken);
 		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await serverChannel.Reader.ReadAsync(TestContext.Current!.Execution.CancellationToken));
 		Nerdbank.MessagePack.MessagePackReader reader = new(request.Arguments.AsMessagePack());
 		Assert.Equal(1, reader.ReadArrayHeader());
 		Assert.Equal(42, reader.ReadInt32());
 		Assert.True(reader.End);
-		Assert.Same(configured, Assert.IsType<MessagePackSerializerPlugin>(((IJsonRpcClient)client).Serializer).Serializer);
+		Assert.Same(configured, Assert.IsType<MessagePackSerializerPlugin>(((JsonRpcClient)client).Serializer).Serializer);
 	}
 
 	[Test]

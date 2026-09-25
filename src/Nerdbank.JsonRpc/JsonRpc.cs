@@ -17,7 +17,7 @@ using Nerdbank.MessagePack;
 namespace Nerdbank.JsonRpc;
 
 [TypeShape(Kind = TypeShapeKind.None)]
-public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
+public sealed partial class JsonRpc : JsonRpcClient, IDisposableObservable
 {
 	internal const string SpecialCancelMethodName = "$/cancelRequest";
 
@@ -63,7 +63,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	}
 
 	/// <inheritdoc/>
-	JsonRpcSerializer IJsonRpcClient.Serializer => this.channel.Serializer;
+	public override JsonRpcSerializer Serializer => this.channel.Serializer;
 
 	public JsonRpcState State =>
 		this.Completion.IsFaulted ? JsonRpcState.Faulted :
@@ -81,7 +81,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	internal JsonRpcPipeChannel Channel => this.channel;
 
 	/// <inheritdoc/>
-	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this.channel.Serializer, named, count, cancellationToken, this.MarshalDisposable);
+	public override JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this.channel.Serializer, named, count, cancellationToken, this.MarshalDisposable);
 
 #if NET
 	public void AddRpcTarget<T>(T target)
@@ -176,7 +176,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	}
 
 	/// <inheritdoc/>
-	public ValueTask RequestAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
+	public override ValueTask RequestAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		JsonRpcRequest request = new()
 		{
@@ -189,7 +189,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	}
 
 	/// <inheritdoc/>
-	public ValueTask<TResult> RequestAsync<TResult>(string method, JsonRpcValue arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
+	public override ValueTask<TResult> RequestAsync<TResult>(string method, JsonRpcValue arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
 		Requires.NotNull(resultShape);
 
@@ -204,8 +204,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	}
 
 	/// <inheritdoc/>
-		/// <inheritdoc/>
-	public ValueTask NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
+	public override ValueTask NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
 		JsonRpcRequest request = new() { Id = null, Method = method, Arguments = arguments };
@@ -213,7 +212,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	}
 
 	/// <inheritdoc/>
-	public async ValueTask<IDisposable> RequestDisposableAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
+	public override async ValueTask<IDisposable> RequestDisposableAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		JsonRpcResponse response = await this.RequestAsync(new JsonRpcRequest { Id = this.GetNextRequestId(), Method = method, Arguments = arguments }, cancellationToken).ConfigureAwait(false);
 		return response switch
@@ -248,7 +247,7 @@ public void Start()
 		}
 	}
 
-	internal static object AttachCore(IJsonRpcClient client, Type interfaceType, JsonRpcProxyOptions? options = null)
+	internal static object AttachCore(JsonRpcClient client, Type interfaceType, JsonRpcProxyOptions? options = null)
 	{
 		Requires.NotNull(client);
 		Requires.NotNull(interfaceType);
@@ -266,10 +265,10 @@ public void Start()
 			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not implement requested interface '{interfaceType.FullName}'.");
 		}
 
-		ConstructorInfo? constructor = proxyType.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null, types: [typeof(IJsonRpcClient), typeof(JsonRpcProxyOptions)], modifiers: null);
+		ConstructorInfo? constructor = proxyType.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null, types: [typeof(JsonRpcClient), typeof(JsonRpcProxyOptions)], modifiers: null);
 		if (constructor is null)
 		{
-			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not have a constructor that accepts an IJsonRpcClient and JsonRpcProxyOptions instance.");
+			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not have a constructor that accepts a JsonRpcClient and JsonRpcProxyOptions instance.");
 		}
 
 		return constructor.Invoke([client, options ?? new JsonRpcProxyOptions()]);
@@ -286,7 +285,7 @@ public void Start()
 		return id;
 	}
 
-		public JsonRpcValue MarshalDisposable(IDisposable value) => this.marshaledObjects.Marshal(value, this.channel.Encoding);
+	public override JsonRpcValue MarshalDisposable(IDisposable value) => this.marshaledObjects.Marshal(value, this.channel.Encoding);
 
 	public IDisposable UnmarshalDisposable(JsonRpcValue value) => this.marshaledObjects.Unmarshal(value);
 

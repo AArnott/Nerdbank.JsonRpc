@@ -38,7 +38,7 @@ public partial class JsonRpcBatchTests : TestBase
 				new JsonRpcResult
 				{
 					Id = sumRequest.Id.Value,
-					Result = (RawMessagePack)((MessagePackSerializerPlugin)((IJsonRpcClient)jsonRpc).Serializer).Serializer.Serialize<int, Witness>(5, this.TimeoutToken),
+					Result = (RawMessagePack)((MessagePackSerializerPlugin)((JsonRpcClient)jsonRpc).Serializer).Serializer.Serialize<int, Witness>(5, this.TimeoutToken),
 				},
 			]);
 		await channel.Writer.WriteAsync(responseBatch, this.TimeoutToken);
@@ -310,8 +310,8 @@ public partial class JsonRpcBatchTests : TestBase
 		JsonRpcResult second = Assert.IsType<JsonRpcResult>(responseBatch.Messages[1]);
 		Assert.Equal((RequestId)1, first.Id);
 		Assert.Equal((RequestId)2, second.Id);
-		Assert.Equal(5, ((MessagePackSerializerPlugin)((IJsonRpcClient)jsonRpc).Serializer).Serializer.Deserialize<int, Witness>(first.Result.AsMessagePack(), this.TimeoutToken));
-		Assert.Equal(42, ((MessagePackSerializerPlugin)((IJsonRpcClient)jsonRpc).Serializer).Serializer.Deserialize<int, Witness>(second.Result.AsMessagePack(), this.TimeoutToken));
+		Assert.Equal(5, ((MessagePackSerializerPlugin)((JsonRpcClient)jsonRpc).Serializer).Serializer.Deserialize<int, Witness>(first.Result.AsMessagePack(), this.TimeoutToken));
+		Assert.Equal(42, ((MessagePackSerializerPlugin)((JsonRpcClient)jsonRpc).Serializer).Serializer.Deserialize<int, Witness>(second.Result.AsMessagePack(), this.TimeoutToken));
 	}
 
 	[Test]
@@ -344,8 +344,8 @@ public partial class JsonRpcBatchTests : TestBase
 
 		JsonRpcMessageBatch responseBatch = new(
 			[
-				new JsonRpcResult { Id = secondRequest.Id!.Value, Result = (RawMessagePack)((MessagePackSerializerPlugin)((IJsonRpcClient)jsonRpc).Serializer).Serializer.Serialize<int, Witness>(2, this.TimeoutToken) },
-				new JsonRpcResult { Id = firstRequest.Id!.Value, Result = (RawMessagePack)((MessagePackSerializerPlugin)((IJsonRpcClient)jsonRpc).Serializer).Serializer.Serialize<int, Witness>(1, this.TimeoutToken) },
+				new JsonRpcResult { Id = secondRequest.Id!.Value, Result = (RawMessagePack)((MessagePackSerializerPlugin)((JsonRpcClient)jsonRpc).Serializer).Serializer.Serialize<int, Witness>(2, this.TimeoutToken) },
+				new JsonRpcResult { Id = firstRequest.Id!.Value, Result = (RawMessagePack)((MessagePackSerializerPlugin)((JsonRpcClient)jsonRpc).Serializer).Serializer.Serialize<int, Witness>(1, this.TimeoutToken) },
 			]);
 		await channel.Writer.WriteAsync(responseBatch, this.TimeoutToken);
 
