@@ -258,6 +258,8 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	{
 		StringBuilder builder = new();
 		ImmutableArray<ShapeFieldInfo> shapeFields = GetShapeFields(info.Methods);
+		bool needsMethodNameTransform = info.Methods.Any(static m => m.ExplicitRpcName is null && m.Kind is not ProxyMethodKind.Unsupported);
+		string? methodNameTransformField = needsMethodNameTransform ? GetGeneratedMemberName(info, "NerdbankJsonRpc_MethodNameTransform") : null;
 		ImmutableArray<string?> transformedRpcNameFields = info.Methods
 			.Select((method, index) => method is { ExplicitRpcName: null, Kind: not ProxyMethodKind.Unsupported } ? GetGeneratedMemberName(info, $"NerdbankJsonRpc_TransformedRpcName{index}") : null)
 			.ToImmutableArray();
@@ -280,10 +282,9 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		builder.AppendLine("\tprivate readonly global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc;");
 		builder.AppendLine("\tprivate readonly bool useNamedArguments;");
 
-		bool needsMethodNameTransform = info.Methods.Any(static m => m.ExplicitRpcName is null && m.Kind is not ProxyMethodKind.Unsupported);
-		if (needsMethodNameTransform)
+		if (methodNameTransformField is string transformField)
 		{
-			builder.AppendLine("\tprivate readonly global::System.Func<string, string> methodNameTransform;");
+			builder.Append("\tprivate readonly global::System.Func<string, string> ").Append(transformField).AppendLine(";");
 		}
 
 		for (int i = 0; i < info.Methods.Length; i++)
@@ -316,7 +317,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		builder.AppendLine("\t\tthis.useNamedArguments = options.UseNamedArguments;");
 		if (needsMethodNameTransform)
 		{
-			builder.AppendLine("\t\tthis.methodNameTransform = options.MethodNameTransform;");
+			builder.Append("\t\tthis.").Append(methodNameTransformField).AppendLine(" = options.MethodNameTransform;");
 		}
 
 		if (shapeFields.Length > 0)
@@ -343,7 +344,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		for (int i = 0; i < info.Methods.Length; i++)
 		{
 			builder.AppendLine();
-			builder.Append(RenderMethod(info.Methods[i], shapeFields, transformedRpcNameFields[i]));
+			builder.Append(RenderMethod(info.Methods[i], shapeFields, transformedRpcNameFields[i], methodNameTransformField));
 		}
 
 		builder.AppendLine("}");
@@ -390,7 +391,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 	}
 
-	private static string RenderMethod(MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields, string? transformedRpcNameField)
+	private static string RenderMethod(MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields, string? transformedRpcNameField, string? methodNameTransformField)
 	{
 		StringBuilder builder = new();
 		string parameters = string.Join(", ", method.Symbol.Parameters.Select(static p => $"{p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} {EscapeIdentifier(p.Name)}"));
@@ -417,29 +418,29 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			{
 				case ProxyMethodKind.ValueTaskOfT:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
-					AppendRpcMethodName(builder, method, transformedRpcNameField).Append(", arguments, ");
+					AppendRpcMethodName(builder, method, transformedRpcNameField, methodNameTransformField).Append(", arguments, ");
 					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
 					builder.Append(cancellationToken).AppendLine(");");
 					break;
 				case ProxyMethodKind.TaskOfT:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
-					AppendRpcMethodName(builder, method, transformedRpcNameField).Append(", arguments, ");
+					AppendRpcMethodName(builder, method, transformedRpcNameField, methodNameTransformField).Append(", arguments, ");
 					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
 					builder.Append(cancellationToken).AppendLine(").AsTask();");
 					break;
 				case ProxyMethodKind.ValueTask:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
-					AppendRpcMethodName(builder, method, transformedRpcNameField).Append(", arguments, ");
+					AppendRpcMethodName(builder, method, transformedRpcNameField, methodNameTransformField).Append(", arguments, ");
 					builder.Append(cancellationToken).AppendLine(");");
 					break;
 				case ProxyMethodKind.Task:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
-					AppendRpcMethodName(builder, method, transformedRpcNameField).Append(", arguments, ");
+					AppendRpcMethodName(builder, method, transformedRpcNameField, methodNameTransformField).Append(", arguments, ");
 					builder.Append(cancellationToken).AppendLine(").AsTask();");
 					break;
 				case ProxyMethodKind.Notification:
 					builder.Append("\t\tthis.jsonRpc.NotifyAsync(");
-					AppendRpcMethodName(builder, method, transformedRpcNameField).Append(", arguments, ");
+					AppendRpcMethodName(builder, method, transformedRpcNameField, methodNameTransformField).Append(", arguments, ");
 					builder.Append(cancellationToken).AppendLine(").Preserve();");
 					builder.AppendLine("\t\treturn;");
 					break;
@@ -465,15 +466,16 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	/// <param name="builder">The builder to append the expression to.</param>
 	/// <param name="method">The method whose wire name expression is being emitted.</param>
 	/// <param name="transformedRpcNameField">The generated field used to cache the transformed name, or <see langword="null"/> for explicit names.</param>
+	/// <param name="methodNameTransformField">The generated field containing the configured transform.</param>
 	/// <returns><paramref name="builder"/>, for chaining.</returns>
-	private static StringBuilder AppendRpcMethodName(StringBuilder builder, MethodInfo method, string? transformedRpcNameField)
+	private static StringBuilder AppendRpcMethodName(StringBuilder builder, MethodInfo method, string? transformedRpcNameField, string? methodNameTransformField)
 	{
 		if (method.ExplicitRpcName is string explicitRpcName)
 		{
 			return AppendQuoted(builder, explicitRpcName);
 		}
 
-		builder.Append("(this.").Append(transformedRpcNameField).Append(" ??= this.methodNameTransform(");
+		builder.Append("(this.").Append(transformedRpcNameField).Append(" ??= this.").Append(methodNameTransformField).Append("(");
 		AppendQuoted(builder, method.Symbol.Name);
 		return builder.Append("))");
 	}
