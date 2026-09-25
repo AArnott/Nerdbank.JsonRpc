@@ -8,6 +8,6 @@ using PolyType;
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IExplicitNameCalculator
 {
-	[MethodShape(Name = "custom.add")]
+	[MethodShape(Name = "custom\nadd")]
 	ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken);
 }

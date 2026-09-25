@@ -478,7 +478,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	}
 
 	private static StringBuilder AppendQuoted(StringBuilder builder, string value)
-		=> builder.Append('"').Append(value.Replace("\\", "\\\\").Replace("\"", "\\\"")).Append('"');
+		=> builder.Append(Microsoft.CodeAnalysis.CSharp.SyntaxFactory.Literal(value).ToFullString());
 
 	private static string EscapeIdentifier(string identifier)
 		=> SyntaxFacts.GetKeywordKind(identifier) == SyntaxKind.None && SyntaxFacts.GetContextualKeywordKind(identifier) == SyntaxKind.None ? identifier : "@" + identifier;

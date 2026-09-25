@@ -94,12 +94,24 @@ public class MethodNameTransformTests : TestBase
 	}
 
 	[Test]
-	public void AddRpcTarget_ExplicitName_IsAuthoritativeAndBypassesTransform()
+	public async Task AddRpcTarget_ExplicitName_IsAuthoritativeAndDispatchesVerbatim()
 	{
-		using JsonRpc server = new(new MockJsonRpcPipeChannel(MockChannel<JsonRpcMessage>.CreatePair().Item1));
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc client = new(new JsonRpcMessagePackChannel(clientPipe, NullLogger.Instance));
+		using JsonRpc server = new(new JsonRpcMessagePackChannel(serverPipe, NullLogger.Instance));
 
 		// Even with a transform that would otherwise mangle the name, the explicit name must be used verbatim.
 		server.AddRpcTarget<IExplicitNameCalculator>(new ExplicitNameCalculator(), new JsonRpcTargetOptions { MethodNameTransform = name => name.ToUpperInvariant() });
+		client.Start();
+		server.Start();
+
+		int result = await client.RequestAsync(
+			"custom\nadd",
+			new JsonDirectArgs { A = 3, B = 4 },
+			ShapeProvider.Default.JsonDirectArgs,
+			ShapeProvider.Default.Int32,
+			this.TimeoutToken);
+		Assert.Equal(7, result);
 	}
 
 	[Test]
@@ -163,7 +175,7 @@ public class MethodNameTransformTests : TestBase
 		Task<int> resultTask = client.AddAsync(1, 2, cts.Token).AsTask();
 
 		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(cts.Token));
-		Assert.Equal("custom.add", request.Method);
+		Assert.Equal("custom\nadd", request.Method);
 
 		await remote.Writer.WriteAsync(
 			new JsonRpcResult
