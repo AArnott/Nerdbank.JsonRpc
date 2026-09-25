@@ -32,7 +32,68 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			}
 		}
 
-		return methodInvokers;
+		List<IEventTargetRegistration> eventRegistrations = [];
+		if (options.NotifyClientOfEvents)
+		{
+			foreach (IEventShape @event in objectShape.Events)
+			{
+				if (@event.Accept(this, options) is IEventTargetRegistration registration)
+				{
+					eventRegistrations.Add(registration);
+				}
+			}
+		}
+
+		return new TargetRegistration(methodInvokers, eventRegistrations);
+	}
+
+	public override object? VisitEvent<TDeclaringType, TEventHandler>(IEventShape<TDeclaringType, TEventHandler> eventShape, object? state = null)
+	{
+		if (eventShape.IsStatic)
+		{
+			// There's no single target instance to bind a static event's handler removal to; skip it.
+			return null;
+		}
+
+		var options = (JsonRpcTargetOptions)state!;
+		if (eventShape.HandlerType.Accept(this) is not CreateEventHandlerDelegate createHandler)
+		{
+			throw new NotSupportedException($"The event '{eventShape.DeclaringType.Type}.{eventShape.Name}' has an unsupported handler delegate type '{eventShape.HandlerType.Type}'. Only synchronous, void-returning delegates are supported for RPC event notifications.");
+		}
+
+		string rpcEventName = GetRpcEventName(eventShape, options);
+		Setter<TDeclaringType?, TEventHandler> addHandler = eventShape.GetAddHandler();
+		Setter<TDeclaringType?, TEventHandler> removeHandler = eventShape.GetRemoveHandler();
+
+		return new EventRegistration<TDeclaringType, TEventHandler>(rpcEventName, createHandler, addHandler, removeHandler);
+	}
+
+	public override object? VisitFunction<TFunction, TArgumentState, TResult>(IFunctionTypeShape<TFunction, TArgumentState, TResult> functionShape, object? state = null)
+	{
+		if (!functionShape.IsVoidLike || functionShape.IsAsync)
+		{
+			throw new NotSupportedException($"Only synchronous, void-returning event handler delegates are supported for RPC event notifications, but '{typeof(TFunction)}' does not qualify.");
+		}
+
+		IReadOnlyList<IParameterShape> parameters = functionShape.Parameters;
+
+		// Honor the classic .NET event pattern (object sender, TEventArgs e) by excluding the sender from the notification payload.
+		int firstForwardedParameter = parameters is [{ Name: "sender" }, _] ? 1 : 0;
+
+		var writers = new EventArgumentWriter<TArgumentState>[parameters.Count - firstForwardedParameter];
+		for (int i = firstForwardedParameter; i < parameters.Count; i++)
+		{
+			writers[i - firstForwardedParameter] = (EventArgumentWriter<TArgumentState>)parameters[i].Accept(EventParameterVisitor.Instance)!;
+		}
+
+		return new CreateEventHandlerDelegate((jsonRpc, eventName) =>
+		{
+			return (Delegate)(object)functionShape.FromDelegate((ref TArgumentState argState) =>
+			{
+				NotifyEvent(jsonRpc, eventName, writers, ref argState);
+				return default!;
+			})!;
+		});
 	}
 
 	public override object? VisitMethod<TDeclaringType, TArgumentState, TResult>(IMethodShape<TDeclaringType, TArgumentState, TResult> methodShape, object? state = null)
@@ -239,5 +300,140 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 		}
 
 		return transformed;
+	}
+
+	/// <summary>
+	/// Determines the JSON-RPC method name used in the notification raised for the given event, honoring an explicit
+	/// <see cref="EventShapeAttribute.Name"/> if present and otherwise applying the configured event name transform.
+	/// </summary>
+	/// <param name="event">The event whose notification name is being resolved.</param>
+	/// <param name="options">The options containing the event name transform to apply to implicitly named events.</param>
+	/// <returns>The JSON-RPC method name to use when notifying the remote party that this event was raised.</returns>
+	private static string GetRpcEventName(IEventShape @event, JsonRpcTargetOptions options)
+	{
+		if (@event.AttributeProvider?.GetCustomAttribute<EventShapeAttribute>(inherit: false)?.Name is not null)
+		{
+			// An explicit name is authoritative and bypasses the configured transform.
+			return @event.Name;
+		}
+
+		string? transformed = options.EventNameTransform(@event.Name);
+		if (string.IsNullOrEmpty(transformed))
+		{
+			throw new InvalidOperationException($"The {nameof(JsonRpcTargetOptions)}.{nameof(JsonRpcTargetOptions.EventNameTransform)} delegate returned a null or empty value for event '{@event.Name}'.");
+		}
+
+		return transformed;
+	}
+
+	/// <summary>
+	/// Serializes an event's arguments and sends them to the remote party as a JSON-RPC notification, logging (rather than throwing)
+	/// any failure since this runs as a side effect of the target object raising a CLR event.
+	/// </summary>
+	private static void NotifyEvent<TArgumentState>(JsonRpc jsonRpc, string eventName, EventArgumentWriter<TArgumentState>[] writers, ref TArgumentState argState)
+	{
+		JsonRpcValue arguments;
+		try
+		{
+			JsonRpcArgumentsBuilder builder = jsonRpc.CreateArguments(named: false, writers.Length, jsonRpc.DisposalToken);
+			try
+			{
+				foreach (EventArgumentWriter<TArgumentState> writer in writers)
+				{
+					writer(ref argState, ref builder);
+				}
+
+				arguments = builder.Build();
+			}
+			finally
+			{
+				builder.Dispose();
+			}
+		}
+		catch (Exception ex)
+		{
+			jsonRpc.LogApplicationError(ex);
+			return;
+		}
+
+		NotifyEventCoreAsync(jsonRpc, eventName, arguments);
+	}
+
+	private static async void NotifyEventCoreAsync(JsonRpc jsonRpc, string eventName, JsonRpcValue arguments)
+	{
+		try
+		{
+			await jsonRpc.NotifyAsync(eventName, arguments, jsonRpc.DisposalToken).ConfigureAwait(false);
+		}
+		catch (Exception ex)
+		{
+			jsonRpc.LogApplicationError(ex);
+		}
+	}
+
+	/// <summary>Visits the parameters of an event handler delegate shape, producing getters instead of the setters used for inbound method dispatch.</summary>
+	private sealed class EventParameterVisitor : TypeShapeVisitor
+	{
+		internal static readonly EventParameterVisitor Instance = new();
+
+		private EventParameterVisitor()
+		{
+		}
+
+		public override object? VisitParameter<TArgumentState, TParameterType>(IParameterShape<TArgumentState, TParameterType> parameterShape, object? state = null)
+		{
+			Getter<TArgumentState, TParameterType> getter = parameterShape.GetGetter();
+			ITypeShape<TParameterType> parameterType = parameterShape.ParameterType;
+			string parameterName = parameterShape.Name;
+
+			return new EventArgumentWriter<TArgumentState>((ref TArgumentState argState, ref JsonRpcArgumentsBuilder builder) =>
+			{
+				TParameterType value = getter(ref argState);
+				builder.Add(parameterName, value, parameterType);
+			});
+		}
+	}
+}
+
+/// <summary>Bundles the method invokers and event registrations discovered on an RPC target object.</summary>
+internal sealed class TargetRegistration(Dictionary<string, MethodInvoker> methodInvokers, IReadOnlyList<IEventTargetRegistration> events)
+{
+	internal Dictionary<string, MethodInvoker> MethodInvokers => methodInvokers;
+
+	internal IReadOnlyList<IEventTargetRegistration> Events => events;
+}
+
+/// <summary>Represents an event discovered on an RPC target object that should raise a JSON-RPC notification when the event is raised.</summary>
+internal interface IEventTargetRegistration
+{
+	/// <summary>Subscribes a forwarding handler to the event on the given target instance.</summary>
+	/// <param name="target">The target object instance that declares the event.</param>
+	/// <param name="jsonRpc">The connection over which to send notifications when the event is raised.</param>
+	/// <returns>A disposable that, when disposed, unsubscribes the forwarding handler from the event.</returns>
+	IDisposable Subscribe(object? target, JsonRpc jsonRpc);
+}
+
+/// <summary>Subscribes to a single CLR event and forwards its invocations to the remote party as JSON-RPC notifications.</summary>
+internal sealed class EventRegistration<TDeclaringType, TEventHandler>(
+	string rpcEventName,
+	CreateEventHandlerDelegate createHandler,
+	Setter<TDeclaringType?, TEventHandler> addHandler,
+	Setter<TDeclaringType?, TEventHandler> removeHandler) : IEventTargetRegistration
+{
+	public IDisposable Subscribe(object? target, JsonRpc jsonRpc)
+	{
+		TDeclaringType? typedTarget = (TDeclaringType?)target;
+		TEventHandler handler = (TEventHandler)(object)createHandler(jsonRpc, rpcEventName)!;
+		addHandler(ref typedTarget, handler);
+		return new Subscription(removeHandler, typedTarget, handler);
+	}
+
+	private sealed class Subscription(Setter<TDeclaringType?, TEventHandler> removeHandler, TDeclaringType? target, TEventHandler handler) : IDisposable
+	{
+		public void Dispose()
+		{
+			TDeclaringType? typedTarget = target;
+			removeHandler(ref typedTarget, handler);
+		}
 	}
 }

@@ -9,6 +9,8 @@ items:
   href: client-proxies.md
 - name: Method name transforms
   href: method-naming.md
+- name: Events as notifications
+  href: events.md
 - name: Batching
   href: batching.md
 - name: Protocol behavior
