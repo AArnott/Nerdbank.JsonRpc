@@ -354,7 +354,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	private static string GetGeneratedMemberName(InterfaceInfo info, string baseName)
 	{
 		string name = baseName;
-		while (info.Symbol.GetMembers(name).Length > 0)
+		while (info.Symbol.GetMembers(name).Length > 0 || info.Symbol.AllInterfaces.Any(interfaceSymbol => interfaceSymbol.GetMembers(name).Length > 0))
 		{
 			name += "_";
 		}
