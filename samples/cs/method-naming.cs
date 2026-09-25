@@ -23,7 +23,7 @@ public partial interface ICalculator
 
 public static class MethodNamingExamples
 {
-    public static void Run(JsonRpc rpc, Calculator calculator)
+    public static void Run(JsonRpc rpc, Calculator calculator, bool useIdentityTargetNaming = false)
     {
         ArgumentNullException.ThrowIfNull(rpc);
         ArgumentNullException.ThrowIfNull(calculator);
@@ -31,14 +31,21 @@ public static class MethodNamingExamples
         #region default-target-naming
 
         // "AddAsync" dispatches on "add"; "SubtractAsync" dispatches on "subtract" (its explicit name).
-        rpc.AddRpcTarget<ICalculator>(calculator);
+        if (!useIdentityTargetNaming)
+        {
+            rpc.AddRpcTarget<ICalculator>(calculator);
+        }
         #endregion
 
         #region identity-target-naming
 
         // Interoperate with a StreamJsonRpc peer that hasn't configured its own method name transform:
-        // dispatch on the CLR names it sends by default (e.g. "AddAsync").
-        rpc.AddRpcTarget<ICalculator>(calculator, new JsonRpcTargetOptions { MethodNameTransform = CommonMethodNameTransforms.Identity });
+        // dispatch on the CLR names it sends by default (e.g. "AddAsync"). This is an alternative
+        // to the default registration above, not a second registration on the same JsonRpc instance.
+        if (useIdentityTargetNaming)
+        {
+            rpc.AddRpcTarget<ICalculator>(calculator, new JsonRpcTargetOptions { MethodNameTransform = CommonMethodNameTransforms.Identity });
+        }
         #endregion
 
         #region default-proxy-naming
