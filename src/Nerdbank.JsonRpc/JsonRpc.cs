@@ -255,16 +255,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <inheritdoc/>
 	public void Dispose()
 	{
-		Exception? disposalException = null;
-		try
-		{
-			this.marshaledObjects.DisposeAll();
-		}
-		catch (Exception ex)
-		{
-			disposalException = ex;
-		}
-
 		this.disposalSource.Cancel();
 		lock (this.connectionSync)
 		{
@@ -279,10 +269,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			}
 		}
 
-		if (disposalException is not null)
-		{
-			throw disposalException;
-		}
+		this.marshaledObjects.DisposeAll();
 	}
 
 	internal static object AttachCore(IJsonRpcClient client, Type interfaceType, JsonRpcProxyOptions? options = null)
