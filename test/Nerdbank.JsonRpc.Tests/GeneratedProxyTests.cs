@@ -73,6 +73,99 @@ public class GeneratedProxyTests
 	}
 
 	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task GeneratedProxy_MarshalsDisposableParameterEndToEnd(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		DisposableTarget target = new();
+		serverRpc.AddRpcTarget<IDisposableContract>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IDisposableContract client = clientRpc.Attach<IDisposableContract>();
+		TestDisposable disposable = new();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+
+		await client.UseDisposableAsync(disposable, cts.Token);
+
+		await disposable.Disposed.Task.WithCancellation(cts.Token);
+		Assert.True(disposable.IsDisposed);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task GeneratedProxy_MarshalsDisposableReturnValueEndToEnd(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		DisposableTarget target = new();
+		serverRpc.AddRpcTarget<IDisposableContract>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IDisposableContract client = clientRpc.Attach<IDisposableContract>();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+
+		IDisposable disposable = await client.GetDisposableAsync(cts.Token);
+		disposable.Dispose();
+
+		await target.ReturnedDisposable.Disposed.Task.WithCancellation(cts.Token);
+		Assert.True(target.ReturnedDisposable.IsDisposed);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task GeneratedProxy_MarshalsDisposablePropertyEndToEnd(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		DisposableTarget target = new();
+		serverRpc.AddRpcTarget<IDisposableContract>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IDisposableContract client = clientRpc.Attach<IDisposableContract>();
+		TestDisposable disposable = new();
+		DisposableContainer container = new() { Value = disposable };
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+
+		await client.UseDisposableContainerAsync(container, cts.Token);
+
+		await disposable.Disposed.Task.WithCancellation(cts.Token);
+		Assert.True(disposable.IsDisposed);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task GeneratedProxy_SerializesConcreteDisposablePropertyByValue(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		DisposableTarget target = new();
+		serverRpc.AddRpcTarget<IDisposableContract>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IDisposableContract client = clientRpc.Attach<IDisposableContract>();
+		SerializableDisposable disposable = new() { Number = 42 };
+		ConcreteDisposableContainer container = new() { Value = disposable };
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+
+		await client.UseConcreteDisposableContainerAsync(container, cts.Token);
+
+		SerializableDisposable received = await target.ConcreteDisposableReceived.Task.WithCancellation(cts.Token);
+		Assert.NotSame(disposable, received);
+		Assert.Equal(42, received.Number);
+		Assert.True(received.IsDisposed);
+		Assert.False(disposable.IsDisposed);
+	}
+
+	[Test]
 	public async Task GeneratedProxy_IncludesInheritedInterfaceMethods()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
@@ -238,4 +331,12 @@ public class GeneratedProxyTests
 		ArgumentException ex = Assert.Throws<ArgumentException>(() => clientRpc.Attach(typeof(string)));
 		Assert.Contains("interface", ex.Message, StringComparison.OrdinalIgnoreCase);
 	}
+
+	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
+		=> encoding switch
+		{
+			JsonRpcEncoding.MessagePack => new JsonRpcMessagePackChannel(pipe, NullLogger.Instance),
+			JsonRpcEncoding.Json => new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance),
+			_ => throw new ArgumentOutOfRangeException(nameof(encoding)),
+		};
 }

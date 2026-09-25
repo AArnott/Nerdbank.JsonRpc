@@ -9,5 +9,11 @@ internal class TestDisposable : IDisposableObservable
 
 	public int DisposalCount { get; private set; }
 
-	public void Dispose() => this.DisposalCount++;
+	internal TaskCompletionSource<bool> Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	public void Dispose()
+	{
+		this.DisposalCount++;
+		this.Disposed.TrySetResult(true);
+	}
 }

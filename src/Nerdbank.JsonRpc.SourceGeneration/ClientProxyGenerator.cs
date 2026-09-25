@@ -75,13 +75,13 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		if (!interfaceDeclaration.Modifiers.Any(SyntaxKind.PartialKeyword))
 		{
 			diagnostics.Add(Diagnostic.Create(UnsupportedInterface, interfaceDeclaration.Identifier.GetLocation(), interfaceSymbol.ToDisplayString(), "annotated interfaces must be partial"));
-			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), compilation.GetTypeByMetadataName("System.IDisposable"), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
+			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
 		}
 
 		if (GetUnsupportedInterfaceReason(interfaceSymbol) is string interfaceReason)
 		{
 			diagnostics.Add(Diagnostic.Create(UnsupportedInterface, interfaceSymbol.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), interfaceReason));
-			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), compilation.GetTypeByMetadataName("System.IDisposable"), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
+			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
 		}
 
 		foreach (IMethodSymbol method in GetProxyMethods(interfaceSymbol))
@@ -95,7 +95,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			methods.Add(CreateMethodInfo(method));
 		}
 
-		return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), compilation.GetTypeByMetadataName("System.IDisposable"), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
+		return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
 	}
 
 	private static IEnumerable<IMethodSymbol> GetProxyMethods(INamedTypeSymbol interfaceSymbol)
@@ -230,7 +230,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	private static string RenderProxy(InterfaceInfo info)
 	{
 		StringBuilder builder = new();
-		ImmutableArray<ShapeFieldInfo> shapeFields = GetShapeFields(info.Methods, info.DisposableType);
+		ImmutableArray<ShapeFieldInfo> shapeFields = GetShapeFields(info.Methods);
 		if (!info.Symbol.ContainingNamespace.IsGlobalNamespace)
 		{
 			builder.Append("namespace ").Append(info.Symbol.ContainingNamespace.ToDisplayString()).AppendLine(";");
@@ -291,14 +291,14 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		foreach (MethodInfo method in info.Methods)
 		{
 			builder.AppendLine();
-			builder.Append(RenderMethod(method, shapeFields, info.DisposableType));
+			builder.Append(RenderMethod(method, shapeFields));
 		}
 
 		builder.AppendLine("}");
 		return builder.ToString();
 	}
 
-	private static ImmutableArray<ShapeFieldInfo> GetShapeFields(ImmutableArray<MethodInfo> methods, INamedTypeSymbol? disposableType)
+	private static ImmutableArray<ShapeFieldInfo> GetShapeFields(ImmutableArray<MethodInfo> methods)
 	{
 		HashSet<string> seenTypeNames = new(System.StringComparer.Ordinal);
 		ImmutableArray<ShapeFieldInfo>.Builder shapeFields = ImmutableArray.CreateBuilder<ShapeFieldInfo>();
@@ -307,13 +307,10 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		{
 			foreach (IParameterSymbol parameter in method.PayloadParameters)
 			{
-				if (!IsDisposableType(parameter.Type, disposableType))
-				{
-					AddShapeField(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), seenTypeNames, shapeFields);
-				}
+				AddShapeField(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), seenTypeNames, shapeFields);
 			}
 
-			if (method.ResultTypeName is not null && !IsDisposableResult(method, disposableType))
+			if (method.ResultTypeName is not null)
 			{
 				AddShapeField(method.ResultTypeName, seenTypeNames, shapeFields);
 			}
@@ -321,14 +318,6 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		return shapeFields.ToImmutable();
 	}
-
-	private static bool IsDisposableType(ITypeSymbol type, INamedTypeSymbol? disposableType)
-		=> disposableType is not null && SymbolEqualityComparer.Default.Equals(type, disposableType);
-
-	private static bool IsDisposableResult(MethodInfo method, INamedTypeSymbol? disposableType)
-		=> method.Symbol.ReturnType is INamedTypeSymbol { IsGenericType: true } returnType
-			&& returnType.TypeArguments.Length == 1
-			&& IsDisposableType(returnType.TypeArguments[0], disposableType);
 
 	private static void AddShapeField(string typeName, HashSet<string> seenTypeNames, ImmutableArray<ShapeFieldInfo>.Builder shapeFields)
 	{
@@ -338,7 +327,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 	}
 
-	private static string RenderMethod(MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields, INamedTypeSymbol? disposableType)
+	private static string RenderMethod(MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields)
 	{
 		StringBuilder builder = new();
 		string parameters = string.Join(", ", method.Symbol.Parameters.Select(static p => $"{p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} {EscapeIdentifier(p.Name)}"));
@@ -352,19 +341,11 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.Append("\t\tusing global::Nerdbank.JsonRpc.JsonRpcArgumentsBuilder argumentsBuilder = this.jsonRpc.CreateArguments(").Append("this.useNamedArguments, ").Append(method.PayloadParameters.Length).Append(", ").Append(cancellationToken).AppendLine(");");
 			foreach (IParameterSymbol parameter in method.PayloadParameters)
 			{
-				if (IsDisposableType(parameter.Type, disposableType))
-				{
-					builder.Append("\t\targumentsBuilder.AddMarshaled(");
-					AppendQuoted(builder, parameter.Name).Append(", ").Append(EscapeIdentifier(parameter.Name)).AppendLine(");");
-				}
-				else
-				{
-					builder.Append("\t\targumentsBuilder.Add(");
-					AppendQuoted(builder, parameter.Name);
-					builder.Append(", ").Append(EscapeIdentifier(parameter.Name)).Append(", this.")
-						.Append(GetShapeFieldName(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), shapeFields))
-						.AppendLine(");");
-				}
+				builder.Append("\t\targumentsBuilder.Add(");
+				AppendQuoted(builder, parameter.Name);
+				builder.Append(", ").Append(EscapeIdentifier(parameter.Name)).Append(", this.")
+					.Append(GetShapeFieldName(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), shapeFields))
+					.AppendLine(");");
 			}
 
 			builder.AppendLine("\t\tglobal::Nerdbank.JsonRpc.JsonRpcValue arguments = argumentsBuilder.Build();");
@@ -372,32 +353,14 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			switch (method.Kind)
 			{
 				case ProxyMethodKind.ValueTaskOfT:
-					if (IsDisposableResult(method, disposableType))
-					{
-						builder.Append("\t\treturn this.jsonRpc.RequestDisposableAsync(");
-						AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ").Append(cancellationToken).AppendLine(");");
-					}
-					else
-					{
-						builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
-						AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
-						builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ").Append(cancellationToken).AppendLine(");");
-					}
-
+					builder.Append("		return this.jsonRpc.RequestAsync(");
+					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
+					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ").Append(cancellationToken).AppendLine(");");
 					break;
 				case ProxyMethodKind.TaskOfT:
-					if (IsDisposableResult(method, disposableType))
-					{
-						builder.Append("\t\treturn this.jsonRpc.RequestDisposableAsync(");
-						AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ").Append(cancellationToken).AppendLine(").AsTask();");
-					}
-					else
-					{
-						builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
-						AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
-						builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ").Append(cancellationToken).AppendLine(").AsTask();");
-					}
-
+					builder.Append("		return this.jsonRpc.RequestAsync(");
+					AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
+					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ").Append(cancellationToken).AppendLine(").AsTask();");
 					break;
 				case ProxyMethodKind.ValueTask:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");
@@ -460,7 +423,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			_ => "internal",
 		};
 
-	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods, INamedTypeSymbol? DisposableType, bool HasStaticTypeShapeResolver, ImmutableArray<Diagnostic> Diagnostics)
+	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods, bool HasStaticTypeShapeResolver, ImmutableArray<Diagnostic> Diagnostics)
 	{
 		internal string HintName => this.Symbol.ContainingNamespace.IsGlobalNamespace ? this.ProxyName + ".g.cs" : this.Symbol.ContainingNamespace.ToDisplayString() + "." + this.ProxyName + ".g.cs";
 

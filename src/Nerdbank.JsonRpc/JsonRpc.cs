@@ -29,6 +29,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 	private readonly ConcurrentDictionary<RequestId, TaskCompletionSource<JsonRpcResponse>> pendingOutboundRequests = new();
 	private readonly Action<object?> cancelOutboundRequestDelegate;
 	private readonly JsonRpcPipeChannel channel;
+	private readonly JsonRpcSerializer userDataSerializer;
 	private ILogger logger = NullLogger.Instance;
 	private Task? readerTask;
 	private int nextRequestId;
@@ -47,6 +48,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 		}
 
 		this.marshaledObjects = new(this);
+		this.userDataSerializer = serializer.WithMarshaledObjectManager(this.marshaledObjects);
 
 		// Store a delegate we can reuse to avoid allocations.
 		this.cancelOutboundRequestDelegate = this.CancelOutboundRequest;
@@ -63,7 +65,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 
 	JsonRpcSerializer IJsonRpcClient.Serializer => this.channel.Serializer;
 
-	JsonRpcSerializer IJsonRpcClientProvider.Serializer => this.channel.Serializer;
+	JsonRpcSerializer IJsonRpcClientProvider.Serializer => this.userDataSerializer;
 
 	public JsonRpcState State =>
 		this.Completion.IsFaulted ? JsonRpcState.Faulted :
@@ -79,6 +81,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 
 	/// <summary>Gets the channel used by this connection.</summary>
 	internal JsonRpcPipeChannel Channel => this.channel;
+
+	internal JsonRpcSerializer UserDataSerializer => this.userDataSerializer;
 
 	/// <inheritdoc/>
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);
@@ -145,7 +149,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 		{
 			Id = this.GetNextRequestId(),
 			Method = method,
-			Arguments = this.channel.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
 		return this.AwaitTypedResponseAsync<TResult>(request, resultShape, this.RequestAsync(request, cancellationToken), cancellationToken);
@@ -157,7 +161,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 		{
 			Id = this.GetNextRequestId(),
 			Method = method,
-			Arguments = this.channel.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
 		return this.AwaitVoidResponseAsync(this.RequestAsync(request, cancellationToken));
@@ -169,7 +173,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 		{
 			Id = null,
 			Method = method,
-			Arguments = this.channel.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
 		return this.PostMessageAsync(request, cancellationToken);
@@ -218,18 +222,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 		return this.PostMessageAsync(request, cancellationToken);
 	}
 
-	/// <inheritdoc/>
-	async ValueTask<IDisposable> IJsonRpcClient.RequestDisposableAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
-	{
-		JsonRpcResponse response = await this.RequestAsync(new JsonRpcRequest { Id = this.GetNextRequestId(), Method = method, Arguments = arguments }, cancellationToken).ConfigureAwait(false);
-		return response switch
-		{
-			JsonRpcResult result => ((IJsonRpcClient)this).UnmarshalDisposable(result.Result),
-			JsonRpcError error => throw new JsonRpcException(error.Error),
-			_ => throw new InvalidOperationException("Received an unknown response type."),
-		};
-	}
-
 	public void Start()
 	{
 		this.readerTask = this.ReadAsync(this.channel.Reader);
@@ -254,12 +246,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 			}
 		}
 	}
-
-	JsonRpcValue IJsonRpcClient.MarshalDisposable(IDisposable value) => ((IJsonRpcClientProvider)this).MarshalDisposable(value);
-
-	JsonRpcValue IJsonRpcClientProvider.MarshalDisposable(IDisposable value) => this.marshaledObjects.Marshal(value, this.channel.Encoding);
-
-	IDisposable IJsonRpcClient.UnmarshalDisposable(JsonRpcValue value) => this.marshaledObjects.Unmarshal(value);
 
 	internal static object AttachCore(IJsonRpcClient client, Type interfaceType, JsonRpcProxyOptions? options = null)
 	{
@@ -401,7 +387,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 		switch (response)
 		{
 			case JsonRpcResult result:
-				TResult returnValue = this.channel.Serializer.Deserialize(result.Result, resultShape, cancellationToken)!;
+				TResult returnValue = this.userDataSerializer.Deserialize(result.Result, resultShape, cancellationToken)!;
 				return returnValue;
 			case JsonRpcError error:
 				throw new JsonRpcException(error.Error);

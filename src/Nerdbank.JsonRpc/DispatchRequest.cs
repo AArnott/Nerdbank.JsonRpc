@@ -5,7 +5,7 @@ namespace Nerdbank.JsonRpc;
 
 internal struct DispatchRequest
 {
-	internal JsonRpcSerializer UserDataSerializer => this.JsonRpc.Channel.Serializer;
+	internal JsonRpcSerializer UserDataSerializer => this.JsonRpc.UserDataSerializer;
 
 	internal required JsonRpc JsonRpc { get; init; }
 

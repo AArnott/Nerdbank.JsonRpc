@@ -25,6 +25,10 @@ internal partial interface IDisposableContract
 	Task<IDisposable> GetDisposableAsync(CancellationToken cancellationToken);
 
 	Task UseDisposableAsync(IDisposable value, CancellationToken cancellationToken);
+
+	Task UseDisposableContainerAsync(DisposableContainer value, CancellationToken cancellationToken);
+
+	Task UseConcreteDisposableContainerAsync(ConcreteDisposableContainer value, CancellationToken cancellationToken);
 }
 
 [GenerateJsonRpcProxy]

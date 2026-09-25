@@ -150,7 +150,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 						response = new JsonRpcResult
 						{
 							Id = id,
-							Result = methodShape.ReturnType.Type == typeof(IDisposable) ? ((IJsonRpcClient)dispatch.JsonRpc).MarshalDisposable((IDisposable)(object)result!) : dispatch.UserDataSerializer.Serialize(result, methodShape.ReturnType, dispatch.JsonRpc.DisposalToken),
+							Result = dispatch.UserDataSerializer.Serialize(result, methodShape.ReturnType, dispatch.JsonRpc.DisposalToken),
 						};
 					}
 					else
@@ -202,11 +202,6 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 		if (typeof(TParameterType) == typeof(CancellationToken))
 		{
 			return new SpecialParameterSetter<TParameterType, TArgumentState>((in TParameterType argument, ref TArgumentState argState) => setter(ref argState, argument));
-		}
-
-		if (typeof(TParameterType) == typeof(IDisposable))
-		{
-			return new ParameterSetter<TArgumentState>((DispatchRequest request, JsonRpcValue argument, ref TArgumentState argState) => setter(ref argState, (TParameterType)(object)((IJsonRpcClient)request.JsonRpc).UnmarshalDisposable(argument)));
 		}
 
 		return new ParameterSetter<TArgumentState>((DispatchRequest request, JsonRpcValue argument, ref TArgumentState argState) =>
