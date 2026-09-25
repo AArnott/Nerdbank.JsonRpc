@@ -26,12 +26,12 @@ public sealed class JsonRpcBatch : IJsonRpcClient, IDisposable, IJsonRpcClientPr
 		this.owner = owner ?? throw new ArgumentNullException(nameof(owner));
 	}
 
-	/// <inheritdoc/>
-	public JsonRpcSerializer Serializer => this.owner.Channel.Serializer;
+	JsonRpcSerializer IJsonRpcClient.Serializer => this.owner.Channel.Serializer;
+
+	JsonRpcSerializer IJsonRpcClientProvider.Serializer => this.owner.Channel.Serializer;
+
 	/// <inheritdoc/>
 	JsonRpcValue IJsonRpcClient.MarshalDisposable(IDisposable value) => ((IJsonRpcClientProvider)this).MarshalDisposable(value);
-
-	JsonRpcSerializer IJsonRpcClientProvider.Serializer => this.Serializer;
 
 	JsonRpcValue IJsonRpcClientProvider.MarshalDisposable(IDisposable value) => ((IJsonRpcClient)this.owner).MarshalDisposable(value);
 

@@ -383,6 +383,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 						AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
 						builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ").Append(cancellationToken).AppendLine(");");
 					}
+
 					break;
 				case ProxyMethodKind.TaskOfT:
 					if (IsDisposableResult(method, disposableType))
@@ -396,6 +397,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 						AppendQuoted(builder, method.Symbol.Name).Append(", arguments, ");
 						builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ").Append(cancellationToken).AppendLine(").AsTask();");
 					}
+
 					break;
 				case ProxyMethodKind.ValueTask:
 					builder.Append("\t\treturn this.jsonRpc.RequestAsync(");

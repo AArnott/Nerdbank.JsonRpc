@@ -1,18 +1,17 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading.Channels;
-using Nerdbank.Streams;
 using Microsoft;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.Threading;
 using Nerdbank.MessagePack;
+using Nerdbank.Streams;
 
 namespace Nerdbank.JsonRpc;
 
@@ -62,8 +61,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 		init => this.logger = value ?? throw new ArgumentNullException(nameof(value));
 	}
 
-	/// <inheritdoc/>
 	JsonRpcSerializer IJsonRpcClient.Serializer => this.channel.Serializer;
+
+	JsonRpcSerializer IJsonRpcClientProvider.Serializer => this.channel.Serializer;
 
 	public JsonRpcState State =>
 		this.Completion.IsFaulted ? JsonRpcState.Faulted :
@@ -209,11 +209,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 		cancellationToken.ThrowIfCancellationRequested();
 
 		JsonRpcRequest request = new()
-        {
-            Id = null,
-            Method = method,
-            Arguments = arguments,
-        };
+		{
+			Id = null,
+			Method = method,
+			Arguments = arguments,
+		};
 
 		return this.PostMessageAsync(request, cancellationToken);
 	}
@@ -230,7 +230,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 		};
 	}
 
-    public void Start()
+	public void Start()
 	{
 		this.readerTask = this.ReadAsync(this.channel.Reader);
 	}
@@ -254,6 +254,12 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 			}
 		}
 	}
+
+	JsonRpcValue IJsonRpcClient.MarshalDisposable(IDisposable value) => ((IJsonRpcClientProvider)this).MarshalDisposable(value);
+
+	JsonRpcValue IJsonRpcClientProvider.MarshalDisposable(IDisposable value) => this.marshaledObjects.Marshal(value, this.channel.Encoding);
+
+	public IDisposable UnmarshalDisposable(JsonRpcValue value) => this.marshaledObjects.Unmarshal(value);
 
 	internal static object AttachCore(IJsonRpcClient client, Type interfaceType, JsonRpcProxyOptions? options = null)
 	{
@@ -293,14 +299,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 		return id;
 	}
 
-	JsonRpcValue IJsonRpcClient.MarshalDisposable(IDisposable value) => ((IJsonRpcClientProvider)this).MarshalDisposable(value);
-
-	JsonRpcSerializer IJsonRpcClientProvider.Serializer => this.channel.Serializer;
-
-	JsonRpcValue IJsonRpcClientProvider.MarshalDisposable(IDisposable value) => this.marshaledObjects.Marshal(value, this.channel.Encoding);
-
-	public IDisposable UnmarshalDisposable(JsonRpcValue value) => this.marshaledObjects.Unmarshal(value);
-
 	internal void PostMarshaledNotification(string method, JsonRpcValue arguments) => this.PostMessage(new JsonRpcRequest { Method = method, Arguments = arguments });
 
 	internal JsonRpcValue MarshalReleaseArguments(long handle)
@@ -318,9 +316,14 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 		}
 
 		using Sequence<byte> msgpackBuffer = new();
-		MessagePackWriter msgpackWriter = new(msgpackBuffer); msgpackWriter.WriteArrayHeader(2); msgpackWriter.Write(handle); msgpackWriter.Write(true); msgpackWriter.Flush();
-		return JsonRpcValue.FromMessagePack((RawMessagePack)msgpackBuffer.AsReadOnlySequence.ToArray());
+		MessagePackWriter msgpackWriter = new(msgpackBuffer);
+		msgpackWriter.WriteArrayHeader(2);
+		msgpackWriter.Write(handle);
+		msgpackWriter.Write(true);
+		msgpackWriter.Flush();
+		return JsonRpcValue.FromMessagePack((RawMessagePack)msgpackBuffer.AsReadOnlySequence);
 	}
+
 	internal void LogApplicationError(Exception exception) => this.Logger.LogWarning(exception, "JSON-RPC request processing failed.");
 
 	internal bool TryRegisterOutboundRequest(JsonRpcRequest request, TaskCompletionSource<JsonRpcResponse> responseTcs)
@@ -413,6 +416,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 		{
 			return Task.FromResult<JsonRpcResponse?>(null);
 		}
+
 		if (!this.handlers.TryGetValue(request.Method, out (object? Target, MethodInvoker Invoker) handler))
 		{
 			return Task.FromResult<JsonRpcResponse?>(request.Id is RequestId missingId
@@ -667,7 +671,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 			this.Logger.LogError(exception, "JSON-RPC connection terminated: {Reason}", exception.Message);
 			this.marshaledObjects.DisposeAll();
 
-		this.disposalSource.Cancel();
+			this.disposalSource.Cancel();
 		}
 	}
 
@@ -704,4 +708,3 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IJsonRpcCl
 		}
 	}
 }
-

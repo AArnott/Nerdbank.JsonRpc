@@ -2,12 +2,9 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO.Pipelines;
-using System.Threading.Channels;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.Threading;
-using Nerdbank.MessagePack;
 using Nerdbank.Streams;
-using Xunit;
 
 using ShapeProvider = PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests;
 
@@ -69,6 +66,7 @@ public class GeneratedProxyTests
 			string key = reader.ReadString()!;
 			properties[key] = key == "__jsonrpc_marshaled" ? reader.ReadInt32() : key == "handle" ? reader.ReadInt64() : reader.ReadString();
 		}
+
 		Assert.Equal(1, properties["__jsonrpc_marshaled"]);
 		Assert.IsType<long>(properties["handle"]);
 		Assert.Equal("explicit", properties["lifetime"]);
@@ -241,10 +239,3 @@ public class GeneratedProxyTests
 		Assert.Contains("interface", ex.Message, StringComparison.OrdinalIgnoreCase);
 	}
 }
-
-	internal sealed class TestDisposable : IDisposable
-	{
-		public void Dispose()
-		{
-		}
-	}

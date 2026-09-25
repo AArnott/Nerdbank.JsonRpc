@@ -9,7 +9,7 @@ public class MarshaledObjectManagerTests
 	public async Task DisposeReleasesLocallyOwnedObjects()
 	{
 		MockJsonRpcPipeChannel channel = new(System.Threading.Channels.Channel.CreateUnbounded<JsonRpcMessage>());
-		TrackingDisposable disposable = new();
+		TestDisposable disposable = new();
 		JsonRpc rpc = new(channel);
 		_ = ((IJsonRpcClient)rpc).MarshalDisposable(disposable);
 
@@ -24,17 +24,11 @@ public class MarshaledObjectManagerTests
 		System.Threading.Channels.Channel<JsonRpcMessage> messages = System.Threading.Channels.Channel.CreateUnbounded<JsonRpcMessage>();
 		MockJsonRpcPipeChannel channel = new(messages);
 		using JsonRpc rpc = new(channel);
-		JsonRpcValue marker = ((IJsonRpcClient)rpc).MarshalDisposable(new TrackingDisposable());
+		JsonRpcValue marker = ((IJsonRpcClient)rpc).MarshalDisposable(new TestDisposable());
 
 		rpc.UnmarshalDisposable(marker).Dispose();
 
 		JsonRpcRequest release = Assert.IsType<JsonRpcRequest>(await messages.Reader.ReadAsync());
 		Assert.Equal("$/releaseMarshaledObject", release.Method);
-	}
-	private sealed class TrackingDisposable : IDisposable
-	{
-		public bool IsDisposed { get; private set; }
-
-		public void Dispose() => this.IsDisposed = true;
 	}
 }

@@ -52,7 +52,8 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	/// <returns>The owned value.</returns>
 	public static JsonRpcValue FromJson(ReadOnlyMemory<byte> utf8) => new(utf8.ToArray(), JsonRpcEncoding.Json);
 
-	internal static JsonRpcValue FromJson(ReadOnlySequence<byte> utf8) => new(utf8.ToArray(), JsonRpcEncoding.Json);
+	/// <inheritdoc cref="FromJson(ReadOnlyMemory{byte})"/>
+	public static JsonRpcValue FromJson(ReadOnlySequence<byte> utf8) => new(utf8.ToArray(), JsonRpcEncoding.Json);
 
 	/// <summary>Copies raw MessagePack bytes into an owned buffer without validating them.</summary>
 	/// <param name="value">A complete MessagePack value supplied by the caller.</param>
