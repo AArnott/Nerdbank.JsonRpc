@@ -500,6 +500,7 @@ public partial class JoinableTaskTokenTests : TestBase
 		private readonly TaskCompletionSource<bool> allStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
 		private int started;
 
+		[MethodShape(Name = "ForwardAsync")]
 		public async Task<int> ForwardAsync(string tag, CancellationToken cancellationToken)
 		{
 			lock (this.syncObject)
