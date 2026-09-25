@@ -427,6 +427,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 
 	private ValueTask<JsonRpcResponse> AddRequestAsync(JsonRpcRequest request, CancellationToken cancellationToken)
 	{
+		this.owner.ApplyJoinableTaskToken(request);
 		TaskCompletionSource<JsonRpcResponse> responseTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 		Entry entry = new(this, request, responseTcs, cancellationToken);
 		try

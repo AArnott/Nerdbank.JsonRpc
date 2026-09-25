@@ -64,6 +64,58 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		init => this.logger = value ?? throw new ArgumentNullException(nameof(value));
 	}
 
+	/// <summary>
+	/// Gets or sets the <see cref="Microsoft.VisualStudio.Threading.JoinableTaskFactory"/> to participate in to mitigate deadlocks with the main thread.
+	/// </summary>
+	/// <value>Defaults to <see langword="null"/>.</value>
+	/// <remarks>
+	/// <para>
+	/// When set, outbound requests carry a token that identifies the caller's <see cref="JoinableTask"/> (if any),
+	/// and inbound requests that carry such a token are dispatched within a <see cref="JoinableTask"/> that is joined to it.
+	/// This allows a remote party to call back into this process and reach the main thread while the original caller blocks it
+	/// waiting on the outbound request.
+	/// </para>
+	/// <para>
+	/// The token is exchanged as the top-level <c>joinableTaskToken</c> JSON-RPC envelope property, compatible with StreamJsonRpc.
+	/// This property may only be set before <see cref="Start"/> is called.
+	/// </para>
+	/// </remarks>
+	/// <exception cref="InvalidOperationException">Thrown when setting this property after <see cref="Start"/> has been called.</exception>
+	public JoinableTaskFactory? JoinableTaskFactory
+	{
+		get => field;
+		set
+		{
+			this.ThrowIfStarted();
+			field = value;
+		}
+	}
+
+	/// <summary>
+	/// Gets or sets the <see cref="JoinableTaskTokenTracker"/> used to forward <see cref="JoinableTask"/> tokens
+	/// from inbound requests to outbound requests when <see cref="JoinableTaskFactory"/> is <see langword="null"/>.
+	/// </summary>
+	/// <value>Defaults to an instance shared with all other <see cref="JsonRpc"/> instances that do not set this property.</value>
+	/// <remarks>
+	/// <para>This property is ignored when <see cref="JoinableTaskFactory"/> is set.</para>
+	/// <para>
+	/// Set this only in advanced scenarios where one process has many <see cref="JsonRpc"/> instances connected to different
+	/// remote parties and correlating tokens across them is undesirable.
+	/// This property may only be set before <see cref="Start"/> is called.
+	/// </para>
+	/// </remarks>
+	/// <exception cref="InvalidOperationException">Thrown when setting this property after <see cref="Start"/> has been called.</exception>
+	public JoinableTaskTokenTracker JoinableTaskTracker
+	{
+		get => field ??= JoinableTaskTokenTracker.Default;
+		set
+		{
+			Requires.NotNull(value);
+			this.ThrowIfStarted();
+			field = value;
+		}
+	}
+
 	JsonRpcSerializer IJsonRpcClient.Serializer => this.userDataSerializer;
 
 	JsonRpcSerializer IArgumentsBuilderContext.Serializer => this.userDataSerializer;
@@ -365,6 +417,17 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	internal void LogApplicationError(Exception exception) => this.Logger.LogWarning(exception, "JSON-RPC request processing failed.");
 
+	/// <summary>Stamps an outbound request with the ambient <see cref="JoinableTask"/> token, if any.</summary>
+	/// <param name="request">A request that expects a response.</param>
+	internal void ApplyJoinableTaskToken(JsonRpcRequest request)
+	{
+		string? token = this.JoinableTaskFactory is { } jtf ? jtf.Context.Capture() : this.JoinableTaskTracker.Token;
+		if (token is not null)
+		{
+			request.JoinableTaskToken = token;
+		}
+	}
+
 	internal bool TryRegisterOutboundRequest(JsonRpcRequest request, TaskCompletionSource<JsonRpcResponse> responseTcs)
 	{
 		Requires.Argument(request.Id.HasValue, nameof(request), "Request must have an ID for tracking the response.");
@@ -499,7 +562,17 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			{
 				try
 				{
-					DispatchResponse response = await handler.Invoker(dispatchRequest).ConfigureAwait(false);
+					// Changes to the ambient tracker made here are scoped to this async method's execution context.
+					string? parentToken = request.JoinableTaskToken;
+					JoinableTaskFactory? jtf = this.JoinableTaskFactory;
+					if (jtf is null)
+					{
+						this.JoinableTaskTracker.Token = parentToken;
+					}
+
+					DispatchResponse response = jtf is not null && parentToken is not null
+						? await jtf.RunAsync(() => handler.Invoker(dispatchRequest).AsTask(), parentToken, JoinableTaskCreationOptions.None)
+						: await handler.Invoker(dispatchRequest).ConfigureAwait(false);
 					Assumes.True(request.Id is null == response.Response is null, "A response is expected iff the request included an ID.");
 					return response.Response;
 				}
@@ -523,6 +596,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	}
 
 	private void FaultOnFailure(Task task) => task.ContinueWith(static (t, s) => ((JsonRpc)s!).Fault(t.Exception!), this, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default).Forget();
+
+	private void ThrowIfStarted() => Verify.Operation(this.readerTask is null, "This property may only be set before Start is called.");
 
 	private void ProcessResponse(JsonRpcResponse response)
 	{
@@ -652,6 +727,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 			responseTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 			Verify.Operation(this.TryRegisterOutboundRequest(request, responseTcs), "A request with this ID is already pending.");
+			this.ApplyJoinableTaskToken(request);
 			await this.PostMessageAsync(request, cancellationToken).ConfigureAwait(false);
 			posted = true;
 

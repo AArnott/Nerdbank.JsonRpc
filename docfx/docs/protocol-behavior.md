@@ -13,3 +13,17 @@ Outbound request IDs are monotonically increasing integers. Inbound requests may
 ## Cancellation
 
 Cancellation propagates using `$/cancelRequest`. For a [batched request](batching.md), cancellation before sending omits that entry, while cancellation after sending uses the cancellation notification. Generated clients pass one cancellation token for the complete [argument set](client-proxies.md).
+
+## Envelope extension properties
+
+Messages may carry additional top-level envelope properties beyond those defined by JSON-RPC 2.0. String and signed 64-bit integer values are preserved for internal use. Other value types, and integers outside that range, are ignored. Duplicate extension properties are rejected as malformed. Well-known extension properties with a value of the wrong type are also rejected.
+
+## Deadlock mitigation with JoinableTaskFactory
+
+A process with a main thread can set JsonRpc.JoinableTaskFactory. This prevents deadlocks when a remote party must call back into the process while its main thread waits on a request, which works when both parties participate or when they are separated by intermediaries that do not use a JoinableTaskFactory. It interoperates with StreamJsonRpc.
+
+- Outbound requests (not notifications) made within a JoinableTask carry its token in the top-level joinableTaskToken string property.
+- An inbound request with a token is dispatched within a JoinableTask joined to it, so the handler can reach the main thread that the original caller blocked.
+- A JsonRpc instance without a JoinableTaskFactory forwards a received token to requests it makes while servicing that request, even through other JsonRpc instances that share its JoinableTaskTracker. All instances share one tracker by default; assign a new JoinableTaskTokenTracker to isolate connections.
+
+Both properties must be set before calling Start.
