@@ -36,7 +36,39 @@ public static class EventsExamples
         }
         #endregion
     }
+
+    #region remote-receiver-registration
+    public static void RegisterReceiver(JsonRpc remoteRpc, WatcherEventReceiver receiver)
+    {
+        ArgumentNullException.ThrowIfNull(remoteRpc);
+        ArgumentNullException.ThrowIfNull(receiver);
+
+        // On the remote party's JsonRpc instance, register a target whose methods match the
+        // notifications' wire names and parameter shapes to receive them.
+        remoteRpc.AddRpcTarget(receiver);
+    }
+    #endregion
 }
+
+#region remote-receiver-contract
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+public partial class WatcherEventReceiver
+{
+    // Matches the "priceChanged" notification: a method named "PriceChanged" (camelCased by default,
+    // just like a regular RPC method) with a single parameter of the forwarded argument's type.
+    public void PriceChanged(decimal price)
+    {
+        // Handle the price change here.
+    }
+
+    // Matches the "rangeChanged" notification: both of RangeChanged's forwarded parameters are
+    // received positionally, by name or position depending on how the sender formats arguments.
+    public void RangeChanged(int low, int high)
+    {
+        // Handle the range change here.
+    }
+}
+#endregion
 
 #region contract
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]

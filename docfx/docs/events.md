@@ -22,3 +22,11 @@ Event names are mapped to wire names the same way as method names: <xref:Nerdban
 Set <xref:Nerdbank.JsonRpc.JsonRpcTargetOptions.NotifyClientOfEvents> to `false` to register a target's methods without subscribing to its events:
 
 [!code-csharp[](../../samples/cs/events.cs#opt-out)]
+
+## Receiving the notifications
+
+A notification is just a request without an `id`, so the remote party receives it the same way it would any other RPC call: by registering a target object whose method names and parameter shapes match the notification. Method name mapping works exactly like [regular RPC methods](method-naming.md) — the default camelCase transform turns a method named `PriceChanged` into the wire name `priceChanged`, matching the notification sent above.
+
+[!code-csharp[](../../samples/cs/events.cs#remote-receiver-contract)]
+
+[!code-csharp[](../../samples/cs/events.cs#remote-receiver-registration)]
