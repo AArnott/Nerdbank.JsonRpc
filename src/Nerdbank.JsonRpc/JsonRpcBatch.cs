@@ -12,7 +12,7 @@ namespace Nerdbank.JsonRpc;
 /// A batch is one-shot. Requests and notifications added before <see cref="SendAsync"/> are transmitted in one protocol payload.
 /// All requests are sent together, and their returned tasks complete after the peer returns the batch response.
 /// </remarks>
-public sealed class JsonRpcBatch : JsonRpcClient, IDisposable
+public sealed class JsonRpcBatch : IJsonRpcClient, IDisposable
 {
 	private readonly JsonRpc owner;
 	private readonly List<Entry> entries = [];
@@ -27,12 +27,12 @@ public sealed class JsonRpcBatch : JsonRpcClient, IDisposable
 	}
 
 	/// <inheritdoc/>
-	public override JsonRpcSerializer Serializer => this.owner.Channel.Serializer;
+	JsonRpcSerializer IJsonRpcClient.Serializer => this.owner.Channel.Serializer;
 	/// <inheritdoc/>
-	public override JsonRpcValue MarshalDisposable(IDisposable value) => this.owner.MarshalDisposable(value);
+	JsonRpcValue IJsonRpcClient.MarshalDisposable(IDisposable value) => ((IJsonRpcClient)this.owner).MarshalDisposable(value);
 
 	/// <inheritdoc/>
-	public override async ValueTask<IDisposable> RequestDisposableAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
+	async ValueTask<IDisposable> IJsonRpcClient.RequestDisposableAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		JsonRpcRequest request = new() { Id = this.owner.GetNextRequestId(), Method = method, Arguments = arguments };
 		JsonRpcResponse response = await this.AddRequestAsync(request, cancellationToken).ConfigureAwait(false);
@@ -40,7 +40,7 @@ public sealed class JsonRpcBatch : JsonRpcClient, IDisposable
 	}
 
 	/// <inheritdoc/>
-	public override JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this.Serializer, named, count, cancellationToken, this.owner.MarshalDisposable);
+	JsonRpcArgumentsBuilder IJsonRpcClient.CreateArguments(bool named, int count, CancellationToken cancellationToken) => new(((IJsonRpcClient)this).Serializer, named, count, cancellationToken, ((IJsonRpcClient)this.owner).MarshalDisposable);
 
 	/// <summary>
 	/// Attaches a generated client proxy for an RPC contract interface to this batch.
@@ -190,7 +190,7 @@ public sealed class JsonRpcBatch : JsonRpcClient, IDisposable
 
 	/// <inheritdoc/>
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
-	public override ValueTask RequestAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
+	ValueTask IJsonRpcClient.RequestAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		JsonRpcRequest request = new()
 		{
@@ -204,7 +204,7 @@ public sealed class JsonRpcBatch : JsonRpcClient, IDisposable
 
 	/// <inheritdoc/>
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
-	public override ValueTask<TResult> RequestAsync<TResult>(string method, JsonRpcValue arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
+	ValueTask<TResult> IJsonRpcClient.RequestAsync<TResult>(string method, JsonRpcValue arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
 		Requires.NotNull(resultShape);
 
@@ -220,7 +220,7 @@ public sealed class JsonRpcBatch : JsonRpcClient, IDisposable
 
 	/// <inheritdoc/>
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
-	public override ValueTask NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
+	ValueTask IJsonRpcClient.NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		JsonRpcRequest request = new()
 		{

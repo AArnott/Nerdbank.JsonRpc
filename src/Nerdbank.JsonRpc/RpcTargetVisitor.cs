@@ -150,7 +150,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 						response = new JsonRpcResult
 						{
 							Id = id,
-							Result = methodShape.ReturnType.Type == typeof(IDisposable) ? dispatch.JsonRpc.MarshalDisposable((IDisposable)(object)result!) : dispatch.UserDataSerializer.Serialize(result, methodShape.ReturnType, dispatch.JsonRpc.DisposalToken),
+							Result = methodShape.ReturnType.Type == typeof(IDisposable) ? ((IJsonRpcClient)dispatch.JsonRpc).MarshalDisposable((IDisposable)(object)result!) : dispatch.UserDataSerializer.Serialize(result, methodShape.ReturnType, dispatch.JsonRpc.DisposalToken),
 						};
 					}
 					else

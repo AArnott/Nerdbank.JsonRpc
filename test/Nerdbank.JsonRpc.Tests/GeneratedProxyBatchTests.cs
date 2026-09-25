@@ -38,8 +38,8 @@ public class GeneratedProxyBatchTests
 
 		JsonRpcMessageBatch responses = new(
 			[
-				new JsonRpcResult { Id = first.Id!.Value, Result = ((JsonRpcClient)rpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) },
-				new JsonRpcResult { Id = second.Id!.Value, Result = ((JsonRpcClient)rpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) },
+				new JsonRpcResult { Id = first.Id!.Value, Result = ((IJsonRpcClient)rpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) },
+				new JsonRpcResult { Id = second.Id!.Value, Result = ((IJsonRpcClient)rpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) },
 			]);
 		await remote.Writer.WriteAsync(responses, cts.Token);
 		Assert.Equal(5, await firstResult.WithCancellation(cts.Token));
@@ -73,7 +73,7 @@ public class GeneratedProxyBatchTests
 				new JsonRpcResult
 				{
 					Id = request.Id!.Value,
-					Result = (RawMessagePack)((JsonRpcClient)clientRpc).Serializer.Serialize(7, ShapeProvider.Default.Int32, cts.Token),
+					Result = (RawMessagePack)((IJsonRpcClient)clientRpc).Serializer.Serialize(7, ShapeProvider.Default.Int32, cts.Token),
 				},
 			]);
 		await remote.Writer.WriteAsync(responseBatch, cts.Token);

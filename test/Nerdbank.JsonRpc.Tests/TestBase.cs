@@ -49,7 +49,7 @@ public abstract class TestBase
 
 		string description = message switch
 		{
-			JsonRpcRequest { Arguments.HasValue: true } request => $"{request.Method}: {((MessagePackSerializerPlugin)((JsonRpcClient)jsonRpc).Serializer).Serializer.ConvertToJson(request.Arguments.AsMessagePack())}",
+			JsonRpcRequest { Arguments.HasValue: true } request => $"{request.Method}: {((MessagePackSerializerPlugin)((IJsonRpcClient)jsonRpc).Serializer).Serializer.ConvertToJson(request.Arguments.AsMessagePack())}",
 			JsonRpcRequest request => request.Method,
 			_ => message.GetType().Name,
 		};

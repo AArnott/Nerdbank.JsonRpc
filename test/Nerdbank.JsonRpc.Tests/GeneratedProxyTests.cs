@@ -120,7 +120,7 @@ public class GeneratedProxyTests
 		JsonRpcResult response = new()
 		{
 			Id = request.Id!.Value,
-			Result = (RawMessagePack)((JsonRpcClient)clientRpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token),
+			Result = (RawMessagePack)((IJsonRpcClient)clientRpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token),
 		};
 		await remote.Writer.WriteAsync(response, cts.Token);
 
@@ -150,7 +150,7 @@ public class GeneratedProxyTests
 		JsonRpcResult response = new()
 		{
 			Id = request.Id!.Value,
-			Result = (RawMessagePack)((JsonRpcClient)clientRpc).Serializer.Serialize(9, ShapeProvider.Default.Int32, cts.Token),
+			Result = (RawMessagePack)((IJsonRpcClient)clientRpc).Serializer.Serialize(9, ShapeProvider.Default.Int32, cts.Token),
 		};
 		await remote.Writer.WriteAsync(response, cts.Token);
 
@@ -183,7 +183,7 @@ public class GeneratedProxyTests
 		JsonRpcResult response = new()
 		{
 			Id = request.Id!.Value,
-			Result = (RawMessagePack)((JsonRpcClient)clientRpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token),
+			Result = (RawMessagePack)((IJsonRpcClient)clientRpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token),
 		};
 		await remote.Writer.WriteAsync(response, cts.Token);
 
@@ -215,8 +215,8 @@ public class GeneratedProxyTests
 		Assert.Equal("b", secondReader.ReadString());
 		Assert.Equal(3, secondReader.ReadInt32());
 
-		await remote.Writer.WriteAsync(new JsonRpcResult { Id = first.Id!.Value, Result = ((JsonRpcClient)rpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) }, cts.Token);
-		await remote.Writer.WriteAsync(new JsonRpcResult { Id = second.Id!.Value, Result = ((JsonRpcClient)rpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) }, cts.Token);
+		await remote.Writer.WriteAsync(new JsonRpcResult { Id = first.Id!.Value, Result = ((IJsonRpcClient)rpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) }, cts.Token);
+		await remote.Writer.WriteAsync(new JsonRpcResult { Id = second.Id!.Value, Result = ((IJsonRpcClient)rpc).Serializer.Serialize(5, ShapeProvider.Default.Int32, cts.Token) }, cts.Token);
 		Assert.Equal(5, await positionalResult.WithCancellation(cts.Token));
 		Assert.Equal(5, await namedResult.WithCancellation(cts.Token));
 	}

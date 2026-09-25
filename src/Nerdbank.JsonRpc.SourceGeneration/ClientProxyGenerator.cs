@@ -245,7 +245,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		builder.Append("internal sealed class ").Append(info.ProxyName).Append(" : ").Append(info.InterfaceName).AppendLine();
 		builder.AppendLine("{");
-		builder.AppendLine("\tprivate readonly global::Nerdbank.JsonRpc.JsonRpcClient jsonRpc;");
+		builder.AppendLine("\tprivate readonly global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc;");
 		builder.AppendLine("\tprivate readonly bool useNamedArguments;");
 		builder.AppendLine();
 
@@ -263,7 +263,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.AppendLine();
 		}
 
-		builder.Append("\tinternal ").Append(info.ProxyName).Append("(global::Nerdbank.JsonRpc.JsonRpcClient jsonRpc, global::Nerdbank.JsonRpc.JsonRpcProxyOptions options)").AppendLine();
+		builder.Append("\tinternal ").Append(info.ProxyName).Append("(global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc, global::Nerdbank.JsonRpc.JsonRpcProxyOptions options)").AppendLine();
 		builder.AppendLine("\t{");
 		builder.AppendLine("\t\tthis.jsonRpc = jsonRpc;");
 		builder.AppendLine("\t\tthis.useNamedArguments = options.UseNamedArguments;");

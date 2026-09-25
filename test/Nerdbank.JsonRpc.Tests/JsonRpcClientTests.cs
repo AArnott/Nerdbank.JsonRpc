@@ -10,12 +10,12 @@ using PolyType;
 /// in order to directly analyze the requests made by the client and test its handling
 /// of particular server responses.
 /// </summary>
-public partial class JsonRpcClientTests : TestBase
+public partial class IJsonRpcClientTests : TestBase
 {
 	private readonly JsonRpc jsonRpc;
 	private readonly Channel<JsonRpcMessage> channel;
 
-	public JsonRpcClientTests()
+	public IJsonRpcClientTests()
 	{
 		(this.channel, Channel<JsonRpcMessage> jsonRpcChannel) = MockChannel<JsonRpcMessage>.CreatePair();
 		this.jsonRpc = new(new MockJsonRpcPipeChannel(jsonRpcChannel));
@@ -36,10 +36,10 @@ public partial class JsonRpcClientTests : TestBase
 	[Test]
 	public async Task InvalidEnvelopeFaultsEveryPendingDirectAndBatchRequest()
 	{
-		Task first = this.jsonRpc.RequestAsync("First", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
+		Task first = ((IJsonRpcClient)this.jsonRpc).RequestAsync("First", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
 		await this.channel.Reader.ReadAsync(this.TimeoutToken);
 		JsonRpcBatch batch = this.jsonRpc.CreateBatch();
-		Task second = batch.RequestAsync("Second", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
+		Task second = ((IJsonRpcClient)batch).RequestAsync("Second", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
 		await batch.SendAsync(this.TimeoutToken);
 		await this.channel.Reader.ReadAsync(this.TimeoutToken);
 
@@ -59,7 +59,7 @@ public partial class JsonRpcClientTests : TestBase
 		await this.channel.Writer.WriteAsync(new JsonRpcResult { Id = firstRequest.Id!.Value, Result = (RawMessagePack)new byte[] { 0xa1, 0x78 } }, this.TimeoutToken);
 		await Assert.ThrowsAnyAsync<Exception>(() => first.WithCancellation(this.TimeoutToken));
 		Assert.False(this.jsonRpc.Completion.IsCompleted);
-		await this.channel.Writer.WriteAsync(new JsonRpcResult { Id = secondRequest.Id!.Value, Result = (RawMessagePack)((MessagePackSerializerPlugin)((JsonRpcClient)this.jsonRpc).Serializer).Serializer.Serialize<int, Witness>(7, this.TimeoutToken) }, this.TimeoutToken);
+		await this.channel.Writer.WriteAsync(new JsonRpcResult { Id = secondRequest.Id!.Value, Result = (RawMessagePack)((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Serialize<int, Witness>(7, this.TimeoutToken) }, this.TimeoutToken);
 		Assert.Equal(7, await second.WithCancellation(this.TimeoutToken));
 	}
 
@@ -85,7 +85,7 @@ public partial class JsonRpcClientTests : TestBase
 		JsonRpcResult resultMessage = new()
 		{
 			Id = requestMessage.Id.Value,
-			Result = (RawMessagePack)((MessagePackSerializerPlugin)((JsonRpcClient)this.jsonRpc).Serializer).Serializer.Serialize<int, Witness>(5, TestContext.Current!.Execution.CancellationToken),
+			Result = (RawMessagePack)((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Serialize<int, Witness>(5, TestContext.Current!.Execution.CancellationToken),
 		};
 		await this.channel.Writer.WriteAsync(resultMessage, this.TimeoutToken);
 
@@ -105,7 +105,7 @@ public partial class JsonRpcClientTests : TestBase
 		JsonRpcResult resultMessage = new()
 		{
 			Id = requestMessage.Id.Value,
-			Result = (RawMessagePack)((MessagePackSerializerPlugin)((JsonRpcClient)this.jsonRpc).Serializer).Serializer.Serialize<int, Witness>(5, TestContext.Current!.Execution.CancellationToken),
+			Result = (RawMessagePack)((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Serialize<int, Witness>(5, TestContext.Current!.Execution.CancellationToken),
 		};
 		await this.channel.Writer.WriteAsync(resultMessage, this.TimeoutToken);
 
@@ -148,7 +148,7 @@ public partial class JsonRpcClientTests : TestBase
 		this.Log(cancelMessage, this.jsonRpc);
 		Assert.Equal("$/cancelRequest", cancelMessage.Method);
 		Assert.Null(cancelMessage.Id);
-		int[]? args = ((MessagePackSerializerPlugin)((JsonRpcClient)this.jsonRpc).Serializer).Serializer.Deserialize<int[], Witness>(cancelMessage.Arguments.AsMessagePack(), this.TimeoutToken);
+		int[]? args = ((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Deserialize<int[], Witness>(cancelMessage.Arguments.AsMessagePack(), this.TimeoutToken);
 		Assert.Equal(requestMessage.Id, args?.Single());
 
 		// Verify that the original client request only completes after a response is received.
@@ -187,7 +187,7 @@ public partial class JsonRpcClientTests : TestBase
 		using CancellationTokenSource cts = new();
 		cts.Cancel();
 
-		await Assert.ThrowsAsync<OperationCanceledException>(() => this.jsonRpc.NotifyAsync("Add", EmptyParamsMsgPack, cts.Token).AsTask());
+		await Assert.ThrowsAsync<OperationCanceledException>(() => ((IJsonRpcClient)this.jsonRpc).NotifyAsync("Add", EmptyParamsMsgPack, cts.Token).AsTask());
 		Assert.False(this.channel.Reader.TryRead(out _));
 	}
 

@@ -11,7 +11,7 @@ public class MarshaledObjectManagerTests
 		MockJsonRpcPipeChannel channel = new(System.Threading.Channels.Channel.CreateUnbounded<JsonRpcMessage>());
 		TrackingDisposable disposable = new();
 		JsonRpc rpc = new(channel);
-		_ = rpc.MarshalDisposable(disposable);
+		_ = ((IJsonRpcClient)rpc).MarshalDisposable(disposable);
 
 		rpc.Dispose();
 
@@ -24,7 +24,7 @@ public class MarshaledObjectManagerTests
 		System.Threading.Channels.Channel<JsonRpcMessage> messages = System.Threading.Channels.Channel.CreateUnbounded<JsonRpcMessage>();
 		MockJsonRpcPipeChannel channel = new(messages);
 		using JsonRpc rpc = new(channel);
-		JsonRpcValue marker = rpc.MarshalDisposable(new TrackingDisposable());
+		JsonRpcValue marker = ((IJsonRpcClient)rpc).MarshalDisposable(new TrackingDisposable());
 
 		rpc.UnmarshalDisposable(marker).Dispose();
 

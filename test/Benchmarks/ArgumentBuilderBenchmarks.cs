@@ -57,7 +57,7 @@ public class ArgumentBuilderBenchmarks
 	[Benchmark]
 	public JsonRpcValue Build()
 	{
-		using JsonRpcArgumentsBuilder builder = this.rpc.CreateArguments(this.Named, this.Count);
+		using JsonRpcArgumentsBuilder builder = ((IJsonRpcClient)this.rpc).CreateArguments(this.Named, this.Count);
 		for (int i = 0; i < this.Count; i++)
 		{
 			builder.Add(this.Named ? "arg" + i : null, i, PolyType.SourceGenerator.TypeShapeProvider_Benchmarks.Default.Int32);
