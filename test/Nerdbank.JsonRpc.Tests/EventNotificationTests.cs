@@ -1,7 +1,11 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.IO.Pipelines;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.VisualStudio.Threading;
+using Nerdbank.Streams;
 using PolyType;
 
 /// <summary>
@@ -15,6 +19,34 @@ public partial class EventNotificationTests : TestBase
 	internal delegate Task AsyncEventHandler(int value);
 
 	internal delegate void LookalikeEventHandler(object? sender, int value);
+
+	[Test]
+	public async Task EndToEnd_RaisingEventInvokesRemotePartysMatchingMethods()
+	{
+		(IDuplexPipe serverPipe, IDuplexPipe clientPipe) = FullDuplexStream.CreatePipePair();
+
+		// The server hosts the event source and raises events as ordinary CLR event invocations.
+		EventfulTarget eventSource = new();
+		JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe, NullLogger.Instance));
+		serverRpc.AddRpcTarget(eventSource);
+		serverRpc.Start();
+
+		// The client hosts an ordinary RPC target whose method names/signatures match the notifications
+		// the server will send, and it's registered the same way any other RPC target would be.
+		EventReceiver receiver = new();
+		JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe, NullLogger.Instance));
+		clientRpc.AddRpcTarget(receiver);
+		clientRpc.Start();
+
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+
+		eventSource.RaiseValueChanged(42);
+		Assert.Equal(42, await receiver.ValueChangedInvocation.Task.WithCancellation(cts.Token));
+
+		eventSource.RaisePairRaised(3, 4);
+		(int First, int Second) pair = await receiver.PairRaisedInvocation.Task.WithCancellation(cts.Token);
+		Assert.Equal((3, 4), pair);
+	}
 
 	[Test]
 	public async Task ClassicEventPattern_ExcludesSenderAndForwardsArgs()
@@ -177,6 +209,24 @@ public partial class EventNotificationTests : TestBase
 		public void RaiseLookalikeRaised(object? sender, int value) => this.LookalikeRaised?.Invoke(sender, value);
 
 		public void RaiseRenamedEvent(int value) => this.RenamedEvent?.Invoke(this, value);
+	}
+
+	/// <summary>
+	/// An ordinary RPC target representing the remote party's side of the conversation: it defines methods whose
+	/// names and parameter shapes match <see cref="EventfulTarget"/>'s notifications, exactly as a consumer would
+	/// write them, and is registered via <see cref="JsonRpc.AddRpcTarget{T}(T, ITypeShape{T}, JsonRpcTargetOptions)"/> (or its
+	/// <c>IShapeable&lt;T&gt;</c>-based overload, on runtimes that support it) like any other RPC target.
+	/// </summary>
+	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+	internal partial class EventReceiver
+	{
+		public TaskCompletionSource<int> ValueChangedInvocation { get; } = new();
+
+		public TaskCompletionSource<(int First, int Second)> PairRaisedInvocation { get; } = new();
+
+		public void ValueChanged(int value) => this.ValueChangedInvocation.TrySetResult(value);
+
+		public void PairRaised(int first, int second) => this.PairRaisedInvocation.TrySetResult((first, second));
 	}
 
 	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
