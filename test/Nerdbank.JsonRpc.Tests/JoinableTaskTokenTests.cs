@@ -101,10 +101,12 @@ public partial class JoinableTaskTokenTests : TestBase
 	}
 
 	[Test]
-	public async Task BatchRequestsCarryToken()
+	[Arguments(WireEncoding.Json)]
+	[Arguments(WireEncoding.MessagePack)]
+	public async Task BatchRequestsCarryToken(WireEncoding encoding)
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
-		await using JsonRpcPipeChannel channel = CreateChannel(local, WireEncoding.Json);
+		await using JsonRpcPipeChannel channel = CreateChannel(local, encoding);
 		JoinableTaskContext context = CreateJoinableTaskContext();
 		using JsonRpc client = new(channel) { JoinableTaskFactory = context.Factory };
 		client.Start();
@@ -114,16 +116,121 @@ public partial class JoinableTaskTokenTests : TestBase
 		{
 			expectedToken = context.Capture();
 			JsonRpcBatch batch = client.CreateBatch();
-			_ = batch.RequestAsync("first", EmptyParams(WireEncoding.Json), this.TimeoutToken).AsTask();
-			await batch.NotifyAsync("second", EmptyParams(WireEncoding.Json), this.TimeoutToken);
+			_ = batch.RequestAsync("first", EmptyParams(encoding), this.TimeoutToken).AsTask();
+			await batch.NotifyAsync("second", EmptyParams(encoding), this.TimeoutToken);
 			await batch.SendAsync(this.TimeoutToken);
 		});
 
-		using JsonDocument payload = await ReadMessageAsync(peer.Input, WireEncoding.Json, this.TimeoutToken);
+		using JsonDocument payload = await ReadMessageAsync(peer.Input, encoding, this.TimeoutToken);
 		JsonElement[] entries = [.. payload.RootElement.EnumerateArray()];
 		Assert.Equal(2, entries.Length);
 		Assert.Equal(expectedToken, entries[0].GetProperty(TokenPropertyName).GetString());
 		Assert.False(entries[1].TryGetProperty(TokenPropertyName, out _));
+	}
+
+	[Test]
+	public async Task MessagePackBatchRoundTripsMixedEnvelopeEntries()
+	{
+		Sequence<byte> input = new();
+		MessagePackWriter writer = new(input);
+		writer.WriteArrayHeader(4);
+		writer.WriteMapHeader(5);
+		writer.Write("jsonrpc");
+		writer.Write("2.0");
+		writer.Write("method");
+		writer.Write("request");
+		writer.Write("id");
+		writer.Write(1);
+		writer.Write("params");
+		writer.WriteArrayHeader(0);
+		writer.Write(TokenPropertyName);
+		writer.Write("token");
+		writer.WriteMapHeader(4);
+		writer.Write("jsonrpc");
+		writer.Write("2.0");
+		writer.Write("method");
+		writer.Write("notification");
+		writer.Write("params");
+		writer.WriteArrayHeader(0);
+		writer.Write("sequence");
+		writer.Write(2);
+		writer.WriteMapHeader(4);
+		writer.Write("jsonrpc");
+		writer.Write("2.0");
+		writer.Write("id");
+		writer.Write(1);
+		writer.Write("result");
+		writer.Write(1);
+		writer.Write("traceparent");
+		writer.Write("00-def");
+		writer.WriteMapHeader(4);
+		writer.Write("jsonrpc");
+		writer.Write("2.0");
+		writer.Write("id");
+		writer.Write(2);
+		writer.Write("error");
+		writer.WriteMapHeader(2);
+		writer.Write("code");
+		writer.Write(-32603);
+		writer.Write("message");
+		writer.Write("failed");
+		writer.Write("sequence");
+		writer.Write(3);
+		writer.Flush();
+
+		using JsonDocument output = await this.RelayAsync(WireEncoding.MessagePack, input.AsReadOnlySequence.ToArray());
+		JsonElement[] entries = [.. output.RootElement.EnumerateArray()];
+		Assert.Equal(4, entries.Length);
+		Assert.Equal("token", entries[0].GetProperty(TokenPropertyName).GetString());
+		Assert.Equal("notification", entries[1].GetProperty("method").GetString());
+		Assert.Equal(2, entries[1].GetProperty("sequence").GetInt64());
+		Assert.Equal("00-def", entries[2].GetProperty("traceparent").GetString());
+		Assert.Equal(3, entries[3].GetProperty("sequence").GetInt64());
+	}
+
+	[Test]
+	[Arguments(0)]
+	[Arguments(1)]
+	[Arguments(2)]
+	public async Task InvalidMessagePackBatchEntriesFaultTransport(int caseNumber)
+	{
+		Sequence<byte> input = new();
+		MessagePackWriter writer = new(input);
+		if (caseNumber == 0)
+		{
+			writer.WriteArrayHeader(0);
+		}
+		else
+		{
+			writer.WriteArrayHeader(1);
+			if (caseNumber == 1)
+			{
+				writer.Write(1);
+			}
+			else
+			{
+				writer.WriteMapHeader(6);
+				writer.Write("jsonrpc");
+				writer.Write("2.0");
+				writer.Write("method");
+				writer.Write("method");
+				writer.Write("id");
+				writer.Write(1);
+				writer.Write("x");
+				writer.WriteArrayHeader(0);
+				writer.Write("x");
+				writer.Write("value");
+				writer.Write("params");
+				writer.WriteArrayHeader(0);
+			}
+		}
+
+		writer.Flush();
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcPipeChannel channel = CreateChannel(local, WireEncoding.MessagePack);
+		await peer.Output.WriteAsync(input.AsReadOnlySequence.ToArray(), this.TimeoutToken);
+		await peer.Output.CompleteAsync();
+		await Assert.ThrowsAnyAsync<Exception>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
 	}
 
 	[Test]
