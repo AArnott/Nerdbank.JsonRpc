@@ -6,24 +6,7 @@ using PolyType;
 
 namespace Events;
 
-#region contract
-[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
-public partial class Watcher
-{
-    // The classic .NET event pattern: the "sender" parameter is recognized and omitted from the
-    // notification, so only the EventArgs-derived value is sent. Sent on the wire as "priceChanged"
-    // by default (the same camelCase transform used for method names).
-    public event EventHandler<decimal>? PriceChanged;
-
-    // A custom delegate without a leading "sender" parameter forwards all of its parameters,
-    // positionally, as the notification's arguments.
-    public event Action<int, int>? RangeChanged;
-
-    public void RaisePriceChanged(decimal price) => this.PriceChanged?.Invoke(this, price);
-
-    public void RaiseRangeChanged(int low, int high) => this.RangeChanged?.Invoke(low, high);
-}
-#endregion
+#pragma warning disable SA1649 // The sample file name matches its documentation topic rather than its type.
 
 public static class EventsExamples
 {
@@ -54,3 +37,22 @@ public static class EventsExamples
         #endregion
     }
 }
+
+#region contract
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+public partial class Watcher
+{
+    // The classic .NET event pattern: the "sender" parameter is recognized and omitted from the
+    // notification, so only the EventArgs-derived value is sent. Sent on the wire as "priceChanged"
+    // by default (the same camelCase transform used for method names).
+    public event EventHandler<decimal>? PriceChanged;
+
+    // A custom delegate without a leading "sender" parameter forwards all of its parameters,
+    // positionally, as the notification's arguments.
+    public event Action<int, int>? RangeChanged;
+
+    public void RaisePriceChanged(decimal price) => this.PriceChanged?.Invoke(this, price);
+
+    public void RaiseRangeChanged(int low, int high) => this.RangeChanged?.Invoke(low, high);
+}
+#endregion

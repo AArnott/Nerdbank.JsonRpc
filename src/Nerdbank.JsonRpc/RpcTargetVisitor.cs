@@ -1,6 +1,7 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using Microsoft.VisualStudio.Threading;
 using Nerdbank.MessagePack;
 using PolyType.Abstractions;
 
@@ -77,8 +78,9 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 
 		IReadOnlyList<IParameterShape> parameters = functionShape.Parameters;
 
-		// Honor the classic .NET event pattern (object sender, TEventArgs e) by excluding the sender from the notification payload.
-		int firstForwardedParameter = parameters is [{ Name: "sender" }, _] ? 1 : 0;
+		// Honor the BCL's EventHandler and EventHandler<T> delegates specifically (not merely delegates that happen to
+		// share their (object? sender, TEventArgs e) shape) by excluding the sender from the notification payload.
+		int firstForwardedParameter = IsBclEventHandlerDelegate(typeof(TFunction)) ? 1 : 0;
 
 		var writers = new EventArgumentWriter<TArgumentState>[parameters.Count - firstForwardedParameter];
 		for (int i = firstForwardedParameter; i < parameters.Count; i++)
@@ -327,6 +329,20 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 	}
 
 	/// <summary>
+	/// Determines whether a delegate type is exactly <see cref="EventHandler"/> or the generic <see cref="EventHandler{TEventArgs}"/>,
+	/// as opposed to some other delegate that merely happens to share their (object? sender, TEventArgs e) parameter shape.
+	/// </summary>
+	private static bool IsBclEventHandlerDelegate(Type delegateType)
+	{
+		if (delegateType == typeof(EventHandler))
+		{
+			return true;
+		}
+
+		return delegateType.IsGenericType && delegateType.GetGenericTypeDefinition() == typeof(EventHandler<>);
+	}
+
+	/// <summary>
 	/// Serializes an event's arguments and sends them to the remote party as a JSON-RPC notification, logging (rather than throwing)
 	/// any failure since this runs as a side effect of the target object raising a CLR event.
 	/// </summary>
@@ -356,10 +372,17 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			return;
 		}
 
-		NotifyEventCoreAsync(jsonRpc, eventName, arguments);
+		NotifyEventCoreAsync(jsonRpc, eventName, arguments).Forget();
 	}
 
-	private static async void NotifyEventCoreAsync(JsonRpc jsonRpc, string eventName, JsonRpcValue arguments)
+	/// <summary>
+	/// Sends a previously-built notification to the remote party, logging (rather than throwing) any failure.
+	/// </summary>
+	/// <param name="jsonRpc">The connection to send the notification over.</param>
+	/// <param name="eventName">The RPC notification (method) name.</param>
+	/// <param name="arguments">The already-serialized notification arguments.</param>
+	/// <returns>A task that tracks completion of the send.</returns>
+	private static async Task NotifyEventCoreAsync(JsonRpc jsonRpc, string eventName, JsonRpcValue arguments)
 	{
 		try
 		{
@@ -391,49 +414,6 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 				TParameterType value = getter(ref argState);
 				builder.Add(parameterName, value, parameterType);
 			});
-		}
-	}
-}
-
-/// <summary>Bundles the method invokers and event registrations discovered on an RPC target object.</summary>
-internal sealed class TargetRegistration(Dictionary<string, MethodInvoker> methodInvokers, IReadOnlyList<IEventTargetRegistration> events)
-{
-	internal Dictionary<string, MethodInvoker> MethodInvokers => methodInvokers;
-
-	internal IReadOnlyList<IEventTargetRegistration> Events => events;
-}
-
-/// <summary>Represents an event discovered on an RPC target object that should raise a JSON-RPC notification when the event is raised.</summary>
-internal interface IEventTargetRegistration
-{
-	/// <summary>Subscribes a forwarding handler to the event on the given target instance.</summary>
-	/// <param name="target">The target object instance that declares the event.</param>
-	/// <param name="jsonRpc">The connection over which to send notifications when the event is raised.</param>
-	/// <returns>A disposable that, when disposed, unsubscribes the forwarding handler from the event.</returns>
-	IDisposable Subscribe(object? target, JsonRpc jsonRpc);
-}
-
-/// <summary>Subscribes to a single CLR event and forwards its invocations to the remote party as JSON-RPC notifications.</summary>
-internal sealed class EventRegistration<TDeclaringType, TEventHandler>(
-	string rpcEventName,
-	CreateEventHandlerDelegate createHandler,
-	Setter<TDeclaringType?, TEventHandler> addHandler,
-	Setter<TDeclaringType?, TEventHandler> removeHandler) : IEventTargetRegistration
-{
-	public IDisposable Subscribe(object? target, JsonRpc jsonRpc)
-	{
-		TDeclaringType? typedTarget = (TDeclaringType?)target;
-		TEventHandler handler = (TEventHandler)(object)createHandler(jsonRpc, rpcEventName)!;
-		addHandler(ref typedTarget, handler);
-		return new Subscription(removeHandler, typedTarget, handler);
-	}
-
-	private sealed class Subscription(Setter<TDeclaringType?, TEventHandler> removeHandler, TDeclaringType? target, TEventHandler handler) : IDisposable
-	{
-		public void Dispose()
-		{
-			TDeclaringType? typedTarget = target;
-			removeHandler(ref typedTarget, handler);
 		}
 	}
 }

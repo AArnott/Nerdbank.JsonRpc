@@ -8,7 +8,7 @@ Registering a target object also wires up any of its public instance events: rai
 
 ## Argument mapping
 
-- The classic .NET event pattern — a handler shaped like `(object? sender, TEventArgs e)` — is recognized by its first parameter being named `sender`. That parameter is omitted from the notification; only `e` is sent, as the notification's sole argument.
+- Sender exclusion applies only to the BCL's `EventHandler` and `EventHandler<TEventArgs>` delegate types specifically — not to any delegate that merely happens to share their `(object? sender, TEventArgs e)` shape. A custom delegate with that same signature is treated like any other delegate: both parameters are forwarded.
 - Any other delegate shape sends all of its parameters, positionally, as the notification's arguments.
 - Only synchronous, `void`-returning delegates are supported. Registering a target with an event of another shape (for example, a `Task`-returning delegate) throws <xref:System.NotSupportedException>.
 - Static events are ignored, since there is no single target instance to associate handler subscription and removal with.

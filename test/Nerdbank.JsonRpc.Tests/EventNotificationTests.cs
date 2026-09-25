@@ -10,6 +10,12 @@ using PolyType;
 /// </summary>
 public partial class EventNotificationTests : TestBase
 {
+	internal delegate void PairEventHandler(int first, int second);
+
+	internal delegate Task AsyncEventHandler(int value);
+
+	internal delegate void LookalikeEventHandler(object? sender, int value);
+
 	[Test]
 	public async Task ClassicEventPattern_ExcludesSenderAndForwardsArgs()
 	{
@@ -132,9 +138,25 @@ public partial class EventNotificationTests : TestBase
 		server.AddRpcTarget(new StaticEventTarget(), new JsonRpcTargetOptions());
 	}
 
-	internal delegate void PairEventHandler(int first, int second);
+	[Test]
+	public async Task LookalikeDelegate_DoesNotExcludeSender()
+	{
+		(Channel<JsonRpcMessage> remote, Channel<JsonRpcMessage> serverChannel) = MockChannel<JsonRpcMessage>.CreatePair();
+		using JsonRpc server = new(new MockJsonRpcPipeChannel(serverChannel));
+		EventfulTarget target = new();
+		server.AddRpcTarget(target, new JsonRpcTargetOptions());
+		server.Start();
 
-	internal delegate Task AsyncEventHandler(int value);
+		target.RaiseLookalikeRaised(target, 5);
+
+		// Unlike EventHandler<T>, a custom delegate with the same (object? sender, T e) shape is not special-cased:
+		// both parameters are forwarded.
+		JsonRpcRequest notification = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal("lookalikeRaised", notification.Method);
+
+		MessagePackReader reader = new(notification.Arguments.AsMessagePack());
+		Assert.Equal(2, reader.ReadArrayHeader());
+	}
 
 	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 	internal partial class EventfulTarget
@@ -143,6 +165,8 @@ public partial class EventNotificationTests : TestBase
 
 		public event PairEventHandler? PairRaised;
 
+		public event LookalikeEventHandler? LookalikeRaised;
+
 		[EventShape(Name = "renamed")]
 		public event EventHandler<int>? RenamedEvent;
 
@@ -150,18 +174,24 @@ public partial class EventNotificationTests : TestBase
 
 		public void RaisePairRaised(int first, int second) => this.PairRaised?.Invoke(first, second);
 
+		public void RaiseLookalikeRaised(object? sender, int value) => this.LookalikeRaised?.Invoke(sender, value);
+
 		public void RaiseRenamedEvent(int value) => this.RenamedEvent?.Invoke(this, value);
 	}
 
 	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 	internal partial class AsyncEventTarget
 	{
+#pragma warning disable CS0067 // this event exists only to exercise unsupported-handler-shape detection during target registration; it is never raised.
 		public event AsyncEventHandler? AsyncEvent;
+#pragma warning restore CS0067
 	}
 
 	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 	internal partial class StaticEventTarget
 	{
+#pragma warning disable CS0067 // this event exists only to exercise static-event handling during target registration; it is never raised.
 		public static event EventHandler<int>? StaticEvent;
+#pragma warning restore CS0067
 	}
 }
