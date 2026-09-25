@@ -207,14 +207,14 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IMarshaled
 	public ValueTask NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
-      
+
 		JsonRpcRequest request = new()
         {
             Id = null,
             Method = method,
             Arguments = arguments,
         };
-      
+
 		return this.PostMessageAsync(request, cancellationToken);
 	}
 
@@ -229,7 +229,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IMarshaled
 			_ => throw new InvalidOperationException("Received an unknown response type."),
 		};
 	}
-  
+
     public void Start()
 	{
 		this.readerTask = this.ReadAsync(this.channel.Reader);
