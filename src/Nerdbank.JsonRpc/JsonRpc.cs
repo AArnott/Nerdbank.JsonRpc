@@ -4,21 +4,24 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Reflection;
+using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.Threading;
 using Nerdbank.MessagePack;
+using Nerdbank.Streams;
 
 namespace Nerdbank.JsonRpc;
 
 [TypeShape(Kind = TypeShapeKind.None)]
-public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
+public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArgumentsBuilderContext
 {
 	internal const string SpecialCancelMethodName = "$/cancelRequest";
 
 	private readonly ConcurrentDictionary<RequestId, PendingInboundRequest> pendingInboundRequests = [];
+	private readonly MarshaledObjectManager marshaledObjects;
 	private readonly TaskCompletionSource<bool> completionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
 	private readonly object connectionSync = new();
 	private readonly CancellationTokenSource disposalSource = new();
@@ -26,6 +29,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	private readonly ConcurrentDictionary<RequestId, TaskCompletionSource<JsonRpcResponse>> pendingOutboundRequests = new();
 	private readonly Action<object?> cancelOutboundRequestDelegate;
 	private readonly JsonRpcPipeChannel channel;
+	private readonly JsonRpcSerializer userDataSerializer;
 	private ILogger logger = NullLogger.Instance;
 	private Task? readerTask;
 	private int nextRequestId;
@@ -43,6 +47,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 			throw new ArgumentException("The channel encoding must match its serializer.", nameof(channel));
 		}
 
+		this.marshaledObjects = new(this);
+		this.userDataSerializer = serializer.WithMarshaledObjectManager(this.marshaledObjects);
+
 		// Store a delegate we can reuse to avoid allocations.
 		this.cancelOutboundRequestDelegate = this.CancelOutboundRequest;
 
@@ -56,8 +63,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		init => this.logger = value ?? throw new ArgumentNullException(nameof(value));
 	}
 
-	/// <inheritdoc/>
-	JsonRpcSerializer IJsonRpcClient.Serializer => this.channel.Serializer;
+	JsonRpcSerializer IJsonRpcClient.Serializer => this.userDataSerializer;
+
+	JsonRpcSerializer IArgumentsBuilderContext.Serializer => this.userDataSerializer;
+
+	MarshaledObjectManager IArgumentsBuilderContext.MarshaledObjects => this.marshaledObjects;
 
 	public JsonRpcState State =>
 		this.Completion.IsFaulted ? JsonRpcState.Faulted :
@@ -74,8 +84,12 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 	/// <summary>Gets the channel used by this connection.</summary>
 	internal JsonRpcPipeChannel Channel => this.channel;
 
+	internal JsonRpcSerializer UserDataSerializer => this.userDataSerializer;
+
+	internal MarshaledObjectManager MarshaledObjects => this.marshaledObjects;
+
 	/// <inheritdoc/>
-	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this.channel.Serializer, named, count, cancellationToken);
+	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);
 
 #if NET
 	public void AddRpcTarget<T>(T target)
@@ -135,38 +149,54 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 
 	public ValueTask<TResult> RequestAsync<TArg, TResult>(string method, in TArg arguments, ITypeShape<TArg> argShape, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
+		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects();
+		JsonRpcValue serializedArguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = this.GetNextRequestId(),
 			Method = method,
-			Arguments = this.channel.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()),
 		};
 
-		return this.AwaitTypedResponseAsync<TResult>(request, resultShape, this.RequestAsync(request, cancellationToken), cancellationToken);
+		ValueTask<JsonRpcResponse> responseTask = this.RequestAsync(request, cancellationToken);
+		return this.AwaitTypedResponseAsync<TResult>(request, resultShape, responseTask, cancellationToken);
 	}
 
 	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
+		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects();
+		JsonRpcValue serializedArguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = this.GetNextRequestId(),
 			Method = method,
-			Arguments = this.channel.Serializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()),
 		};
 
-		return this.AwaitVoidResponseAsync(this.RequestAsync(request, cancellationToken));
+		ValueTask<JsonRpcResponse> responseTask = this.RequestAsync(request, cancellationToken);
+		return this.AwaitVoidResponseAsync(responseTask);
 	}
 
 	public ValueTask NotifyAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
-		JsonRpcRequest request = new()
+		MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects();
+		try
 		{
-			Id = null,
-			Method = method,
-			Arguments = this.channel.Serializer.Serialize(arguments, argShape, cancellationToken),
-		};
+			JsonRpcValue serializedArguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken);
+			JsonRpcRequest request = new()
+			{
+				Id = null,
+				Method = method,
+				Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()),
+			};
 
-		return this.PostMessageAsync(request, cancellationToken);
+			return this.NotifyAsync(request, marshaledObjectsScope, cancellationToken);
+		}
+		catch
+		{
+			marshaledObjectsScope.Dispose();
+			throw;
+		}
 	}
 
 	/// <inheritdoc/>
@@ -209,7 +239,15 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 			Arguments = arguments,
 		};
 
-		return this.PostMessageAsync(request, cancellationToken);
+		try
+		{
+			return this.AwaitPostedNotificationAsync(this.PostMessageAsync(request, cancellationToken), request);
+		}
+		catch
+		{
+			this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
+			throw;
+		}
 	}
 
 	public void Start()
@@ -233,6 +271,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 				}
 			}
 		}
+
+		this.marshaledObjects.DisposeAll();
 	}
 
 	internal static object AttachCore(IJsonRpcClient client, Type interfaceType, JsonRpcProxyOptions? options = null)
@@ -271,6 +311,31 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		}
 
 		return id;
+	}
+
+	internal void PostMarshaledNotification(string method, JsonRpcValue arguments) => this.PostMessage(new JsonRpcRequest { Method = method, Arguments = arguments });
+
+	internal JsonRpcValue MarshalReleaseArguments(long handle)
+	{
+		if (this.channel.Encoding == JsonRpcEncoding.Json)
+		{
+			using Sequence<byte> buffer = new();
+			using Utf8JsonWriter writer = new(buffer);
+			writer.WriteStartArray();
+			writer.WriteNumberValue(handle);
+			writer.WriteBooleanValue(false);
+			writer.WriteEndArray();
+			writer.Flush();
+			return JsonRpcValue.FromJson(buffer.AsReadOnlySequence);
+		}
+
+		using Sequence<byte> msgpackBuffer = new();
+		MessagePackWriter msgpackWriter = new(msgpackBuffer);
+		msgpackWriter.WriteArrayHeader(2);
+		msgpackWriter.Write(handle);
+		msgpackWriter.Write(false);
+		msgpackWriter.Flush();
+		return JsonRpcValue.FromMessagePack((RawMessagePack)msgpackBuffer.AsReadOnlySequence);
 	}
 
 	internal void LogApplicationError(Exception exception) => this.Logger.LogWarning(exception, "JSON-RPC request processing failed.");
@@ -350,7 +415,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 		switch (response)
 		{
 			case JsonRpcResult result:
-				TResult returnValue = this.channel.Serializer.Deserialize(result.Result, resultShape, cancellationToken)!;
+				TResult returnValue = this.userDataSerializer.Deserialize(result.Result, resultShape, cancellationToken)!;
 				return returnValue;
 			case JsonRpcError error:
 				throw new JsonRpcException(error.Error);
@@ -361,6 +426,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 
 	private Task<JsonRpcResponse?> DispatchAsync(JsonRpcRequest request)
 	{
+		if (request.Id is null && this.marshaledObjects.TryHandleNotification(request))
+		{
+			return Task.FromResult<JsonRpcResponse?>(null);
+		}
+
 		if (!this.handlers.TryGetValue(request.Method, out (object? Target, MethodInvoker Invoker) handler))
 		{
 			return Task.FromResult<JsonRpcResponse?>(request.Id is RequestId missingId
@@ -431,6 +501,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 
 	private void ProcessResponse(JsonRpcResponse response)
 	{
+		ProtocolViolationException? unmatchedResponseException = null;
 		lock (this.connectionSync)
 		{
 			if (this.Completion.IsCompleted)
@@ -444,8 +515,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 			}
 			else
 			{
-				this.Fault(new ProtocolViolationException($"Received a response with ID {response.Id} that does not match any pending requests."));
+				unmatchedResponseException = new ProtocolViolationException($"Received a response with ID {response.Id} that does not match any pending requests.");
 			}
+		}
+
+		if (unmatchedResponseException is not null)
+		{
+			this.Fault(unmatchedResponseException);
 		}
 	}
 
@@ -541,24 +617,61 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 
 	private async ValueTask<JsonRpcResponse> RequestAsync(JsonRpcRequest request, CancellationToken cancellationToken)
 	{
-		cancellationToken.ThrowIfCancellationRequested();
-		Requires.Argument(request.Id.HasValue, nameof(request), "Request must have an ID for tracking the response.");
-		Verify.Operation(this.State == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.State}.");
-
-		TaskCompletionSource<JsonRpcResponse> responseTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-		Verify.Operation(this.TryRegisterOutboundRequest(request, responseTcs), "A request with this ID is already pending.");
+		TaskCompletionSource<JsonRpcResponse>? responseTcs = null;
+		bool posted = false;
 		try
 		{
+			cancellationToken.ThrowIfCancellationRequested();
+			Requires.Argument(request.Id.HasValue, nameof(request), "Request must have an ID for tracking the response.");
+			Verify.Operation(this.State == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.State}.");
+
+			responseTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+			Verify.Operation(this.TryRegisterOutboundRequest(request, responseTcs), "A request with this ID is already pending.");
 			await this.PostMessageAsync(request, cancellationToken).ConfigureAwait(false);
+			posted = true;
+
+			return await this.AwaitResponseAsync(request, responseTcs, cancellationToken).ConfigureAwait(false);
 		}
-		catch (Exception ex)
+		catch (Exception ex) when (!posted)
 		{
-			this.TryUnregisterOutboundRequest(request.Id.Value);
-			responseTcs.TrySetException(ex);
+			if (request.Id.HasValue)
+			{
+				this.TryUnregisterOutboundRequest(request.Id.Value);
+			}
+
+			this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
+			responseTcs?.TrySetException(ex);
 			throw;
 		}
+	}
 
-		return await this.AwaitResponseAsync(request, responseTcs, cancellationToken).ConfigureAwait(false);
+	private async ValueTask NotifyAsync(JsonRpcRequest request, MarshaledObjectManager.HandleScope marshaledObjectsScope, CancellationToken cancellationToken)
+	{
+		using (marshaledObjectsScope)
+		{
+			try
+			{
+				await this.PostMessageAsync(request, cancellationToken).ConfigureAwait(false);
+			}
+			catch
+			{
+				this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
+				throw;
+			}
+		}
+	}
+
+	private async ValueTask AwaitPostedNotificationAsync(ValueTask postTask, JsonRpcRequest request)
+	{
+		try
+		{
+			await postTask.ConfigureAwait(false);
+		}
+		catch
+		{
+			this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
+			throw;
+		}
 	}
 
 	private void CancelOutboundRequest(object? state)
@@ -613,8 +726,18 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient
 
 			this.channel.Writer.TryComplete(exception);
 			this.Logger.LogError(exception, "JSON-RPC connection terminated: {Reason}", exception.Message);
-			this.disposalSource.Cancel();
 		}
+
+		try
+		{
+			this.marshaledObjects.DisposeAll();
+		}
+		catch (Exception ex)
+		{
+			this.Logger.LogError(ex, "One or more marshaled objects failed to dispose while faulting the JSON-RPC connection.");
+		}
+
+		this.disposalSource.Cancel();
 	}
 
 	[GenerateShape]

@@ -1,6 +1,6 @@
 # Nerdbank.JsonRpc
 
-[![NuGet package](https://img.shields.io/nuget/v/Nerdbank.JsonRpc.svg)](https://www.nuget.org/packages/Nerdbank.JsonRpc)
+[![NuGet package](https://img.shields.io/nuget/v/Nerdbank.JsonRpc.svg)](https://www.nuget.org/packages?q=Nerdbank.JsonRpc)
 [![Build](https://github.com/AArnott/Nerdbank.JsonRpc/actions/workflows/build.yml/badge.svg)](https://github.com/AArnott/Nerdbank.JsonRpc/actions/workflows/build.yml)
 
 Nerdbank.JsonRpc is a .NET library for building strongly typed JSON-RPC clients and servers over MessagePack or UTF-8 JSON. It supports typed requests and notifications, generated client proxies, batching, cancellation, and configurable JSON framing.
@@ -62,7 +62,7 @@ MessagePack is the default encoding. Configure a `JsonRpcJsonChannel` when your 
 - [Getting started](https://aarnott.github.io/Nerdbank.JsonRpc/docs/getting-started.html)
 - [Feature overview](https://aarnott.github.io/Nerdbank.JsonRpc/docs/features.html)
 - [Encodings and framing](https://aarnott.github.io/Nerdbank.JsonRpc/docs/encodings.html)
-- [API reference](https://aarnott.github.io/Nerdbank.JsonRpc/api/index.html)
+- [API reference](https://aarnott.github.io/Nerdbank.JsonRpc/api/Nerdbank.JsonRpc.html)
 
 ## Contributing
 

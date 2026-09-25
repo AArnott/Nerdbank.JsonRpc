@@ -41,6 +41,11 @@ public abstract class JsonRpcSerializer
 	/// <returns>The deserialized value.</returns>
 	public abstract T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, CancellationToken cancellationToken = default);
 
+	/// <summary>Creates a serializer configured to marshal disposable values for one RPC connection.</summary>
+	/// <param name="manager">The connection's marshaled-object manager.</param>
+	/// <returns>A serializer configured for the connection.</returns>
+	internal virtual JsonRpcSerializer WithMarshaledObjectManager(MarshaledObjectManager manager) => this;
+
 	/// <summary>Serializes a parameter into an existing argument buffer.</summary>
 	/// <typeparam name="T">The parameter type.</typeparam>
 	/// <param name="buffer">The output buffer.</param>

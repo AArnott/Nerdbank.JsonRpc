@@ -26,6 +26,13 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	public override T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => this.Serializer.Deserialize(value.AsMessagePack(), shape, cancellationToken)!;
 
 	/// <inheritdoc/>
+	internal override JsonRpcSerializer WithMarshaledObjectManager(MarshaledObjectManager manager)
+		=> new MessagePackSerializerPlugin(this.Serializer with
+		{
+			Converters = ConverterCollection.Create([new MarshaledDisposableMessagePackConverter(manager), .. this.Serializer.Converters]),
+		});
+
+	/// <inheritdoc/>
 	internal override void SerializeTo<T>(IBufferWriter<byte> buffer, in T value, ITypeShape<T> shape, CancellationToken cancellationToken)
 		=> this.Serializer.Serialize(buffer, value, shape, cancellationToken);
 

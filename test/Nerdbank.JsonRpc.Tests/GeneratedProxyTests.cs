@@ -2,12 +2,9 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO.Pipelines;
-using System.Threading.Channels;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.Threading;
-using Nerdbank.MessagePack;
 using Nerdbank.Streams;
-using Xunit;
 
 using ShapeProvider = PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests;
 
@@ -46,6 +43,145 @@ public class GeneratedProxyTests
 		client.SetLastValue(7, cts.Token);
 		int notificationValue = await server.NotificationReceived.Task.WithCancellation(cts.Token);
 		Assert.Equal(7, notificationValue);
+	}
+
+	[Test]
+	public async Task GeneratedProxy_MarshalsDisposableArguments()
+	{
+		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
+		using JsonRpc rpc = new(new MockJsonRpcPipeChannel(transport));
+		rpc.Start();
+		IDisposableContract client = rpc.Attach<IDisposableContract>();
+
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		Task requestTask = client.UseDisposableAsync(new TestDisposable(), cts.Token);
+		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(cts.Token));
+		MessagePackReader reader = new(request.Arguments.AsMessagePack());
+		Assert.Equal(1, reader.ReadArrayHeader());
+		Assert.Equal(MessagePackType.Map, reader.NextMessagePackType);
+		int propertyCount = reader.ReadMapHeader();
+		Dictionary<string, object?> properties = [];
+		for (int i = 0; i < propertyCount; i++)
+		{
+			string key = reader.ReadString()!;
+			properties[key] = key == "__jsonrpc_marshaled" ? reader.ReadInt32() : key == "handle" ? reader.ReadInt64() : reader.ReadString();
+		}
+
+		Assert.Equal(1, properties["__jsonrpc_marshaled"]);
+		Assert.IsType<long>(properties["handle"]);
+		Assert.Equal("explicit", properties["lifetime"]);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task GeneratedProxy_MarshalsDisposableParameterEndToEnd(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		DisposableTarget target = new();
+		serverRpc.AddRpcTarget<IDisposableContract>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IDisposableContract client = clientRpc.Attach<IDisposableContract>();
+		TestDisposable disposable = new();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+
+		await client.UseDisposableAsync(disposable, cts.Token);
+
+		await disposable.Disposed.WithCancellation(cts.Token);
+		Assert.True(disposable.IsDisposed);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task GeneratedProxy_MarshalsDisposableReturnValueEndToEnd(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		DisposableTarget target = new();
+		serverRpc.AddRpcTarget<IDisposableContract>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IDisposableContract client = clientRpc.Attach<IDisposableContract>();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+
+		IDisposable disposable = await client.GetDisposableAsync(cts.Token);
+		disposable.Dispose();
+
+		await target.ReturnedDisposable.Disposed.WithCancellation(cts.Token);
+		Assert.True(target.ReturnedDisposable.IsDisposed);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task GeneratedProxy_PreservesRemoteDisposableWhenSentBack(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		DisposableTarget target = new();
+		serverRpc.AddRpcTarget<IDisposableContract>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IDisposableContract client = clientRpc.Attach<IDisposableContract>();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		IDisposable disposable = await client.GetDisposableAsync(cts.Token);
+
+		Assert.True(await client.IsReturnedDisposableAsync(disposable, cts.Token));
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task GeneratedProxy_MarshalsDisposablePropertyEndToEnd(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		DisposableTarget target = new();
+		serverRpc.AddRpcTarget<IDisposableContract>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IDisposableContract client = clientRpc.Attach<IDisposableContract>();
+		TestDisposable disposable = new();
+		DisposableContainer container = new() { Value = disposable };
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+
+		await client.UseDisposableContainerAsync(container, cts.Token);
+
+		await disposable.Disposed.WithCancellation(cts.Token);
+		Assert.True(disposable.IsDisposed);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task GeneratedProxy_SerializesConcreteDisposablePropertyByValue(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		DisposableTarget target = new();
+		serverRpc.AddRpcTarget<IDisposableContract>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IDisposableContract client = clientRpc.Attach<IDisposableContract>();
+		SerializableDisposable disposable = new() { Number = 42 };
+		ConcreteDisposableContainer container = new() { Value = disposable };
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+
+		await client.UseConcreteDisposableContainerAsync(container, cts.Token);
+
+		SerializableDisposable received = await target.ConcreteDisposableReceived.Task.WithCancellation(cts.Token);
+		Assert.NotSame(disposable, received);
+		Assert.Equal(42, received.Number);
+		Assert.True(received.IsDisposed);
+		Assert.False(disposable.IsDisposed);
 	}
 
 	[Test]
@@ -214,4 +350,12 @@ public class GeneratedProxyTests
 		ArgumentException ex = Assert.Throws<ArgumentException>(() => clientRpc.Attach(typeof(string)));
 		Assert.Contains("interface", ex.Message, StringComparison.OrdinalIgnoreCase);
 	}
+
+	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
+		=> encoding switch
+		{
+			JsonRpcEncoding.MessagePack => new JsonRpcMessagePackChannel(pipe, NullLogger.Instance),
+			JsonRpcEncoding.Json => new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance),
+			_ => throw new ArgumentOutOfRangeException(nameof(encoding)),
+		};
 }

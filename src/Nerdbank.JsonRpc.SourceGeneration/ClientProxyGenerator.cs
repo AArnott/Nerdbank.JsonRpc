@@ -1,9 +1,7 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -343,7 +341,6 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			{
 				builder.Append("\t\targumentsBuilder.Add(");
 				AppendQuoted(builder, parameter.Name);
-
 				builder.Append(", ").Append(EscapeIdentifier(parameter.Name)).Append(", this.")
 					.Append(GetShapeFieldName(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), shapeFields))
 					.AppendLine(");");

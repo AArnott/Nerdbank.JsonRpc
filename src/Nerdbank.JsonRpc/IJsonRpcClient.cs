@@ -9,8 +9,9 @@ namespace Nerdbank.JsonRpc;
 /// Provides the client operations used by generated JSON-RPC proxy implementations.
 /// </summary>
 /// <remarks>
-/// This interface is public so source generated code in consuming assemblies can reference it.
+/// This interface is public so source-generated code in consuming assemblies can reference it.
 /// Most application code should use <see cref="JsonRpc"/> or <see cref="JsonRpcBatch"/> directly.
+/// External implementations are not supported. Members may be added to this interface in future releases.
 /// </remarks>
 [EditorBrowsable(EditorBrowsableState.Advanced)]
 public interface IJsonRpcClient

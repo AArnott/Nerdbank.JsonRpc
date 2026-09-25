@@ -11,6 +11,7 @@ namespace Nerdbank.JsonRpc;
 public ref struct JsonRpcArgumentsBuilder
 {
 	private readonly JsonRpcSerializer serializer;
+	private readonly MarshaledObjectManager.HandleScope marshaledObjectsScope;
 	private readonly bool named;
 	private readonly int count;
 	private readonly CancellationToken cancellationToken;
@@ -20,23 +21,30 @@ public ref struct JsonRpcArgumentsBuilder
 	private bool failed;
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcArgumentsBuilder"/> struct.</summary>
-	/// <param name="serializer">The selected serializer.</param>
 	/// <param name="named">Whether to encode named parameters.</param>
 	/// <param name="count">The exact number of parameters to write.</param>
 	/// <param name="cancellationToken">A token used when serializing every parameter.</param>
-	internal JsonRpcArgumentsBuilder(JsonRpcSerializer serializer, bool named, int count, CancellationToken cancellationToken)
+	/// <param name="context">The RPC object that supplies serialization and encodes disposable values as marshaled handles.</param>
+	internal JsonRpcArgumentsBuilder(IArgumentsBuilderContext context, bool named, int count, CancellationToken cancellationToken)
 	{
-		this.serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
+		if (context is null)
+		{
+			throw new ArgumentNullException(nameof(context));
+		}
+
 		if (count < 0)
 		{
 			throw new ArgumentOutOfRangeException(nameof(count));
 		}
 
+		this.serializer = context.Serializer;
+		this.marshaledObjectsScope = context.MarshaledObjects.TrackMarshaledObjects();
+
 		this.named = named;
 		this.count = count;
 		this.cancellationToken = cancellationToken;
 		this.buffer = new();
-		if (serializer.Encoding == JsonRpcEncoding.Json)
+		if (this.serializer.Encoding == JsonRpcEncoding.Json)
 		{
 			this.WriteByte(named ? (byte)'{' : (byte)'[');
 		}
@@ -110,13 +118,18 @@ public ref struct JsonRpcArgumentsBuilder
 		}
 
 		this.built = true;
-		return JsonRpcValue.FromOwnedBytes(this.buffer.AsReadOnlySequence.ToArray(), this.serializer.Encoding);
+		return JsonRpcValue.FromOwnedBytes(this.buffer.AsReadOnlySequence.ToArray(), this.serializer.Encoding, this.marshaledObjectsScope.Commit());
 	}
 
 	/// <summary>Releases buffers owned by this builder.</summary>
 	public void Dispose()
 	{
-		this.failed = true;
+		if (!this.built)
+		{
+			this.failed = true;
+		}
+
+		this.marshaledObjectsScope?.Dispose();
 		this.buffer?.Dispose();
 	}
 
