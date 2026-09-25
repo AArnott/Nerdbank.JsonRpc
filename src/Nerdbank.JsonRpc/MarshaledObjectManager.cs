@@ -16,6 +16,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	private const string ReleaseMethod = "$/releaseMarshaledObject";
 	private readonly object sync = new();
 	private readonly Dictionary<long, IDisposable> localObjects = [];
+	private readonly AsyncLocal<HandleScope?> activeScope = new();
 	private long nextHandle;
 
 	internal JsonRpcValue Marshal(IDisposable value, JsonRpcEncoding encoding)
@@ -31,6 +32,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			this.localObjects.Add(handle, value);
 		}
 
+		this.activeScope.Value?.Add(handle);
 		return encoding == JsonRpcEncoding.Json ? WriteJson(handle) : WriteMessagePack(handle);
 	}
 
@@ -77,6 +79,27 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	}
 
 	internal void Release(long handle) => owner.PostMarshaledNotification(ReleaseMethod, owner.MarshalReleaseArguments(handle));
+
+	internal HandleScope TrackMarshaledObjects() => new(this);
+
+	internal void ReleaseLocalObjects(JsonRpcValue value)
+	{
+		if (!value.HasValue)
+		{
+			return;
+		}
+
+		if (value.Encoding == JsonRpcEncoding.Json)
+		{
+			using JsonDocument document = JsonDocument.Parse(value.OwnedBytes);
+			this.ReleaseJsonMarkers(document.RootElement);
+		}
+		else
+		{
+			MessagePackReader reader = new(value.AsMessagePack());
+			this.ReleaseMessagePackMarkers(ref reader, new SerializationContext());
+		}
+	}
 
 	internal void DisposeAll()
 	{
@@ -161,20 +184,130 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		{
 			using JsonDocument document = JsonDocument.Parse(value.OwnedBytes);
 			JsonElement root = document.RootElement;
-			return (root[0].GetInt64(), root.GetArrayLength() > 1 && root[1].GetBoolean());
+			return root.ValueKind == JsonValueKind.Object
+				? (root.GetProperty(Handle).GetInt64(), root.TryGetProperty("ownedBySender", out JsonElement ownedBySender) && ownedBySender.GetBoolean())
+				: (root[0].GetInt64(), root.GetArrayLength() > 1 && root[1].GetBoolean());
 		}
 
 		MessagePackReader reader = new(value.AsMessagePack());
 		SerializationContext context = new();
+		if (reader.NextMessagePackType == MessagePackType.Map)
+		{
+			int propertyCount = reader.ReadMapHeader();
+			long handle = 0;
+			bool owned = false;
+			for (int i = 0; i < propertyCount; i++)
+			{
+				if (reader.NextMessagePackType != MessagePackType.String)
+				{
+					reader.Skip(context);
+					reader.Skip(context);
+					continue;
+				}
+
+				string? key = reader.ReadString();
+				if (key == Handle)
+				{
+					handle = reader.ReadInt64();
+				}
+				else if (key == "ownedBySender")
+				{
+					owned = reader.ReadBoolean();
+				}
+				else
+				{
+					reader.Skip(context);
+				}
+			}
+
+			return (handle, owned);
+		}
+
 		int count = reader.ReadArrayHeader();
-		long handle = reader.ReadInt64();
-		bool owned = count > 1 && reader.ReadBoolean();
+		long positionalHandle = reader.ReadInt64();
+		bool positionalOwned = count > 1 && reader.ReadBoolean();
 		for (int i = 2; i < count; i++)
 		{
 			reader.Skip(context);
 		}
 
-		return (handle, owned);
+		return (positionalHandle, positionalOwned);
+	}
+
+	private void ReleaseJsonMarkers(JsonElement element)
+	{
+		if (element.ValueKind == JsonValueKind.Object)
+		{
+			if (element.TryGetProperty(Marker, out JsonElement marker) && marker.ValueKind == JsonValueKind.Number && marker.GetInt32() == 1 &&
+				element.TryGetProperty(Handle, out JsonElement handle) && handle.ValueKind == JsonValueKind.Number)
+			{
+				this.ReleaseLocal(handle.GetInt64());
+			}
+
+			foreach (JsonProperty property in element.EnumerateObject())
+			{
+				this.ReleaseJsonMarkers(property.Value);
+			}
+		}
+		else if (element.ValueKind == JsonValueKind.Array)
+		{
+			foreach (JsonElement item in element.EnumerateArray())
+			{
+				this.ReleaseJsonMarkers(item);
+			}
+		}
+	}
+
+	private void ReleaseMessagePackMarkers(ref MessagePackReader reader, SerializationContext context)
+	{
+		switch (reader.NextMessagePackType)
+		{
+			case MessagePackType.Array:
+				int itemCount = reader.ReadArrayHeader();
+				for (int i = 0; i < itemCount; i++)
+				{
+					this.ReleaseMessagePackMarkers(ref reader, context);
+				}
+
+				break;
+			case MessagePackType.Map:
+				int propertyCount = reader.ReadMapHeader();
+				long? handle = null;
+				int? marker = null;
+				for (int i = 0; i < propertyCount; i++)
+				{
+					if (reader.NextMessagePackType != MessagePackType.String)
+					{
+						reader.Skip(context);
+						this.ReleaseMessagePackMarkers(ref reader, context);
+						continue;
+					}
+
+					string? key = reader.ReadString();
+					if (key == Handle && reader.NextMessagePackType == MessagePackType.Integer)
+					{
+						handle = reader.ReadInt64();
+					}
+					else if (key == Marker && reader.NextMessagePackType == MessagePackType.Integer)
+					{
+						marker = reader.ReadInt32();
+					}
+					else
+					{
+						this.ReleaseMessagePackMarkers(ref reader, context);
+					}
+				}
+
+				if (marker == 1 && handle.HasValue)
+				{
+					this.ReleaseLocal(handle.Value);
+				}
+
+				break;
+			default:
+				reader.Skip(context);
+				break;
+		}
 	}
 
 	private void ReleaseLocal(long handle)
@@ -190,6 +323,37 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		}
 
 		value?.Dispose();
+	}
+
+	internal sealed class HandleScope : IDisposable
+	{
+		private readonly MarshaledObjectManager manager;
+		private readonly HandleScope? priorScope;
+		private readonly List<long> handles = [];
+		private bool committed;
+
+		internal HandleScope(MarshaledObjectManager manager)
+		{
+			this.manager = manager;
+			this.priorScope = manager.activeScope.Value;
+			manager.activeScope.Value = this;
+		}
+
+		public void Dispose()
+		{
+			this.manager.activeScope.Value = this.priorScope;
+			if (!this.committed)
+			{
+				foreach (long handle in this.handles)
+				{
+					this.manager.ReleaseLocal(handle);
+				}
+			}
+		}
+
+		internal void Add(long handle) => this.handles.Add(handle);
+
+		internal void Commit() => this.committed = true;
 	}
 
 	private sealed class RemoteDisposable(MarshaledObjectManager manager, long handle) : IDisposable

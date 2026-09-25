@@ -26,9 +26,12 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		this.owner = owner ?? throw new ArgumentNullException(nameof(owner));
 	}
 
-	JsonRpcSerializer IJsonRpcClient.Serializer => this.owner.UserDataSerializer;
+	/// <summary>Gets the serializer used to encode arguments and decode results.</summary>
+	public JsonRpcSerializer Serializer => this.owner.UserDataSerializer;
 
-	JsonRpcSerializer IArgumentsBuilderContext.Serializer => this.owner.UserDataSerializer;
+	JsonRpcSerializer IJsonRpcClient.Serializer => this.Serializer;
+
+	JsonRpcSerializer IArgumentsBuilderContext.Serializer => this.Serializer;
 
 	/// <inheritdoc/>
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);
@@ -124,6 +127,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
 	public ValueTask<TResult> RequestAsync<TArg, TResult>(string method, in TArg arguments, ITypeShape<TArg> argShape, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
+		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects();
 		JsonRpcRequest request = new()
 		{
 			Id = this.owner.GetNextRequestId(),
@@ -131,7 +135,9 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			Arguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
-		return this.owner.AwaitTypedResponseAsync(request, resultShape, this.AddRequestAsync(request, cancellationToken), cancellationToken);
+		ValueTask<JsonRpcResponse> responseTask = this.AddRequestAsync(request, cancellationToken);
+		marshaledObjectsScope.Commit();
+		return this.owner.AwaitTypedResponseAsync(request, resultShape, responseTask, cancellationToken);
 	}
 
 	/// <summary>
@@ -146,6 +152,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
 	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
+		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects();
 		JsonRpcRequest request = new()
 		{
 			Id = this.owner.GetNextRequestId(),
@@ -153,7 +160,9 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			Arguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken),
 		};
 
-		return this.owner.AwaitVoidResponseAsync(this.AddRequestAsync(request, cancellationToken));
+		ValueTask<JsonRpcResponse> responseTask = this.AddRequestAsync(request, cancellationToken);
+		marshaledObjectsScope.Commit();
+		return this.owner.AwaitVoidResponseAsync(responseTask);
 	}
 
 	/// <summary>
@@ -168,6 +177,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
 	public ValueTask NotifyAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
+		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects();
 		JsonRpcRequest request = new()
 		{
 			Id = null,
@@ -176,6 +186,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		};
 
 		this.AddNotification(request, cancellationToken);
+		marshaledObjectsScope.Commit();
 		return default;
 	}
 
@@ -299,6 +310,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		{
 			foreach (Entry entry in snapshot)
 			{
+				entry.ReleaseAbandonedArguments();
 				if (entry.ResponseCompletionSource is not null)
 				{
 					if (entry.Request.Id.HasValue)
@@ -421,6 +433,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		}
 		catch
 		{
+			entry.ReleaseAbandonedArguments();
 			entry.Dispose();
 			throw;
 		}
@@ -452,6 +465,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		}
 		catch
 		{
+			entry.ReleaseAbandonedArguments();
 			entry.Dispose();
 			throw;
 		}
@@ -555,6 +569,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		private bool sent;
 		private bool canceled;
 		private bool cancellationSubmitted;
+		private bool argumentsReleased;
 
 		internal Entry(
 			JsonRpcBatch owner,
@@ -594,6 +609,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			}
 
 			this.ResponseCompletionSource?.TrySetCanceled(CancellationToken.None);
+			this.ReleaseAbandonedArguments();
 			this.Dispose();
 		}
 
@@ -630,6 +646,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			}
 
 			this.ResponseCompletionSource?.TrySetCanceled(CancellationToken.None);
+			this.ReleaseAbandonedArguments();
 			return true;
 		}
 
@@ -666,6 +683,21 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 				this.cancellationSubmitted = true;
 				return true;
 			}
+		}
+
+		internal void ReleaseAbandonedArguments()
+		{
+			lock (this.syncObject)
+			{
+				if (this.argumentsReleased)
+				{
+					return;
+				}
+
+				this.argumentsReleased = true;
+			}
+
+			this.owner.owner.MarshaledObjects.ReleaseLocalObjects(this.Request.Arguments);
 		}
 
 		internal void Fault(Exception ex)
