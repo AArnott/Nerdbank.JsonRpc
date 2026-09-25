@@ -68,6 +68,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol, InterfaceDeclarationSyntax interfaceDeclaration, Compilation compilation)
 	{
+		INamedTypeSymbol? methodShapeAttribute = compilation.GetTypeByMetadataName("PolyType.MethodShapeAttribute");
 		ImmutableArray<MethodInfo>.Builder methods = ImmutableArray.CreateBuilder<MethodInfo>();
 		ImmutableArray<Diagnostic>.Builder diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
 		if (!interfaceDeclaration.Modifiers.Any(SyntaxKind.PartialKeyword))
@@ -90,7 +91,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				continue;
 			}
 
-			methods.Add(CreateMethodInfo(method));
+			methods.Add(CreateMethodInfo(method, methodShapeAttribute));
 		}
 
 		return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
@@ -185,7 +186,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			.Any(static method => method.IsGenericMethod && method.TypeParameters.Length == 1 && method.ContainingAssembly.Name == "PolyType") is true;
 	}
 
-	private static MethodInfo CreateMethodInfo(IMethodSymbol method)
+	private static MethodInfo CreateMethodInfo(IMethodSymbol method, INamedTypeSymbol? methodShapeAttribute)
 	{
 		bool hasCancellationToken = method.Parameters.LastOrDefault() is { } lastParameter && IsCancellationToken(lastParameter.Type);
 		ImmutableArray<IParameterSymbol> payloadParameters = hasCancellationToken
@@ -193,7 +194,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			: method.Parameters.ToImmutableArray();
 
 		ProxyMethodKind methodKind = GetMethodKind(method.ReturnType, out string? resultTypeName);
-		string? explicitRpcName = GetExplicitRpcName(method);
+		string? explicitRpcName = GetExplicitRpcName(method, methodShapeAttribute);
 
 		return new MethodInfo(method, payloadParameters, hasCancellationToken, methodKind, resultTypeName, explicitRpcName);
 	}
@@ -202,12 +203,13 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	/// Gets the RPC method name explicitly assigned via <c>[MethodShape(Name = "...")]</c> on the given method, if any.
 	/// </summary>
 	/// <param name="method">The method to inspect.</param>
+	/// <param name="methodShapeAttribute">The symbol for the PolyType method shape attribute, if available.</param>
 	/// <returns>The explicit name, or <see langword="null"/> if the method has no explicit <c>MethodShapeAttribute.Name</c>.</returns>
-	private static string? GetExplicitRpcName(IMethodSymbol method)
+	private static string? GetExplicitRpcName(IMethodSymbol method, INamedTypeSymbol? methodShapeAttribute)
 	{
 		foreach (AttributeData attribute in method.GetAttributes())
 		{
-			if (attribute.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) != "global::PolyType.MethodShapeAttribute")
+			if (methodShapeAttribute is null || !SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, methodShapeAttribute))
 			{
 				continue;
 			}

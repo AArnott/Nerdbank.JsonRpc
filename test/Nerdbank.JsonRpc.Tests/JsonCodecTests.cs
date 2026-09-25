@@ -36,7 +36,7 @@ public class JsonCodecTests : TestBase
 		Assert.Equal(7, await proxy.AddAsync(3, 4, this.TimeoutToken));
 		Assert.Equal(7, await client.Attach<ICalculator>(new JsonRpcProxyOptions { UseNamedArguments = true }).AddAsync(3, 4, this.TimeoutToken));
 		Assert.Equal(12, await proxy.MultiplyAsync(3, 4, this.TimeoutToken));
-		Assert.Equal(11, await client.RequestAsync(CommonMethodNameTransforms.Default(nameof(ICalculator.AddAsync)), new JsonDirectArgs { A = 5, B = 6 }, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.JsonDirectArgs, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken));
+		Assert.Equal(11, await client.RequestAsync("add", new JsonDirectArgs { A = 5, B = 6 }, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.JsonDirectArgs, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken));
 		Assert.Equal(2, await client.Attach<INamedCalculator>(new JsonRpcProxyOptions { UseNamedArguments = true }).SubtractAsync(5, 3, this.TimeoutToken));
 		JsonRpcBatch batch = client.CreateBatch();
 		Assert.Same(((IJsonRpcClient)client).Serializer, ((IJsonRpcClient)batch).Serializer);

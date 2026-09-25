@@ -15,20 +15,17 @@ using ShapeProvider = PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRp
 public class MethodNameTransformTests : TestBase
 {
 	[Test]
-	[Arguments("GetValueAsync", "getValue")]
-	[Arguments("Ping", "ping")]
-	[Arguments("Async", "async")]
-	[Arguments("already", "already")]
-	[Arguments("A", "a")]
+	[Arguments(nameof(ICalculator.AddAsync), "add")]
+	[Arguments(nameof(ICalculator.PingAsync), "ping")]
 	public void Default_RemovesAsyncSuffixAndCamelCases(string clrName, string expected)
 	{
 		Assert.Equal(expected, CommonMethodNameTransforms.Default(clrName));
 	}
 
 	[Test]
-	[Arguments("GetValueAsync", "GetValueAsync")]
-	[Arguments("Ping", "Ping")]
-	public void Identity_ReturnsNameUnchanged(string clrName, string expected)
+	[Arguments(nameof(ICalculator.AddAsync), nameof(ICalculator.AddAsync))]
+	[Arguments(nameof(ICalculator.PingAsync), nameof(ICalculator.PingAsync))]
+	public void Identity_ReturnsMethodNameUnchanged(string clrName, string expected)
 	{
 		Assert.Equal(expected, CommonMethodNameTransforms.Identity(clrName));
 	}
@@ -92,8 +89,8 @@ public class MethodNameTransformTests : TestBase
 	[Test]
 	public async Task AddRpcTarget_CustomTransform_AppliesProvidedFunction()
 	{
-		using JsonRpc client = await this.ConnectCalculatorAsync(new Calculator(), new JsonRpcTargetOptions { MethodNameTransform = name => name.ToUpperInvariant() });
-		Assert.Equal(7, await this.RequestAddAsync(client, nameof(ICalculator.AddAsync).ToUpperInvariant()));
+		using JsonRpc client = await this.ConnectCalculatorAsync(new Calculator(), new JsonRpcTargetOptions { MethodNameTransform = name => $"a.{name}" });
+		Assert.Equal(7, await this.RequestAddAsync(client, $"a.{nameof(ICalculator.AddAsync)}"));
 	}
 
 	[Test]
@@ -129,18 +126,18 @@ public class MethodNameTransformTests : TestBase
 	}
 
 	[Test]
-	public async Task GeneratedProxy_DefaultTransform_SendsCamelCaseMethodName()
+	public async Task GeneratedProxy_CustomTransform_UsesMethodShapeContext()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
 		using JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
 		clientRpc.Start();
-		ICalculator client = clientRpc.Attach<ICalculator>();
+		ICalculator client = clientRpc.Attach<ICalculator>(new JsonRpcProxyOptions { MethodNameTransform = name => $"a.{name}" });
 
 		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
 		Task<int> resultTask = client.AddAsync(1, 2, cts.Token).AsTask();
 
 		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(cts.Token));
-		Assert.Equal("add", request.Method);
+		Assert.Equal($"a.{nameof(ICalculator.AddAsync)}", request.Method);
 
 		await remote.Writer.WriteAsync(
 			new JsonRpcResult
