@@ -31,8 +31,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private readonly JsonRpcPipeChannel channel;
 	private readonly JsonRpcSerializer userDataSerializer;
 	private ILogger logger = NullLogger.Instance;
-	private JoinableTaskFactory? joinableTaskFactory;
-	private JoinableTaskTokenTracker joinableTaskTracker = JoinableTaskTokenTracker.Default;
 	private Task? readerTask;
 	private int nextRequestId;
 
@@ -84,11 +82,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <exception cref="InvalidOperationException">Thrown when setting this property after <see cref="Start"/> has been called.</exception>
 	public JoinableTaskFactory? JoinableTaskFactory
 	{
-		get => this.joinableTaskFactory;
+		get => field;
 		set
 		{
 			this.ThrowIfStarted();
-			this.joinableTaskFactory = value;
+			field = value;
 		}
 	}
 
@@ -108,12 +106,12 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <exception cref="InvalidOperationException">Thrown when setting this property after <see cref="Start"/> has been called.</exception>
 	public JoinableTaskTokenTracker JoinableTaskTracker
 	{
-		get => this.joinableTaskTracker;
+		get => field ??= JoinableTaskTokenTracker.Default;
 		set
 		{
 			Requires.NotNull(value);
 			this.ThrowIfStarted();
-			this.joinableTaskTracker = value;
+			field = value;
 		}
 	}
 
@@ -398,7 +396,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <param name="request">A request that expects a response.</param>
 	internal void ApplyJoinableTaskToken(JsonRpcRequest request)
 	{
-		string? token = this.joinableTaskFactory is { } jtf ? jtf.Context.Capture() : this.joinableTaskTracker.Token;
+		string? token = this.JoinableTaskFactory is { } jtf ? jtf.Context.Capture() : this.JoinableTaskTracker.Token;
 		if (token is not null)
 		{
 			request.JoinableTaskToken = token;
@@ -541,10 +539,10 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				{
 					// Changes to the ambient tracker made here are scoped to this async method's execution context.
 					string? parentToken = request.JoinableTaskToken;
-					JoinableTaskFactory? jtf = this.joinableTaskFactory;
+					JoinableTaskFactory? jtf = this.JoinableTaskFactory;
 					if (jtf is null)
 					{
-						this.joinableTaskTracker.Token = parentToken;
+						this.JoinableTaskTracker.Token = parentToken;
 					}
 
 					DispatchResponse response = jtf is not null && parentToken is not null

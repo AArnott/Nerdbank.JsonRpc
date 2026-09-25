@@ -9,6 +9,22 @@ using Microsoft.VisualStudio.Threading;
 using Nerdbank.Streams;
 using PolyType;
 
+/// <summary>Contract for the RPC method invoked by the main-thread client.</summary>
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface ICallbackService
+{
+	Task<int> CallBackAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>Contract for the callback that needs the original caller's main thread.</summary>
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IMainThreadService
+{
+	Task<int> OnMainThreadAsync(CancellationToken cancellationToken);
+}
+
 /// <summary>
 /// Tests for <see cref="JoinableTask"/> token propagation, which is wire compatible with StreamJsonRpc,
 /// and for the top-level envelope property mechanism that carries it.
@@ -127,20 +143,26 @@ public partial class JoinableTaskTokenTests : TestBase
 
 	/// <summary>
 	/// Simulates two processes: A has a main thread and a <see cref="JoinableTaskFactory"/>; B has neither.
-	/// A blocks its main thread on a request to B, which calls back into A with a request that needs A's main thread.
+	/// A blocks its main thread on a generated-proxy call to B, which calls back into A through another generated proxy to reach A's main thread.
 	/// </summary>
+	/// <param name="encoding">The wire format between the two RPC endpoints.</param>
 	[Test]
-	public async Task CallbackThatRequiresMainThreadDoesNotDeadlock()
+	[Arguments(WireEncoding.Json)]
+	[Arguments(WireEncoding.MessagePack)]
+	public async Task CallbackThatRequiresMainThreadDoesNotDeadlock(WireEncoding encoding)
 	{
-		Assert.Equal(42, await this.RunMainThreadCallbackScenarioAsync(configureJoinableTaskFactory: true, this.TimeoutToken));
+		Assert.Equal(42, await this.RunMainThreadCallbackScenarioAsync(configureJoinableTaskFactory: true, encoding, this.TimeoutToken));
 	}
 
 	/// <summary>Verifies that <see cref="CallbackThatRequiresMainThreadDoesNotDeadlock"/> would deadlock without the feature.</summary>
+	/// <param name="encoding">The wire format between the two RPC endpoints.</param>
 	[Test]
-	public async Task CallbackThatRequiresMainThreadDeadlocksWithoutJoinableTaskFactory()
+	[Arguments(WireEncoding.Json)]
+	[Arguments(WireEncoding.MessagePack)]
+	public async Task CallbackThatRequiresMainThreadDeadlocksWithoutJoinableTaskFactory(WireEncoding encoding)
 	{
 		using CancellationTokenSource cts = new(ExpectedTimeout);
-		await Assert.ThrowsAnyAsync<OperationCanceledException>(() => this.RunMainThreadCallbackScenarioAsync(configureJoinableTaskFactory: false, cts.Token));
+		await Assert.ThrowsAnyAsync<OperationCanceledException>(() => this.RunMainThreadCallbackScenarioAsync(configureJoinableTaskFactory: false, encoding, cts.Token));
 	}
 
 	/// <summary>
@@ -412,13 +434,13 @@ public partial class JoinableTaskTokenTests : TestBase
 		return await ReadMessageAsync(outPeer.Input, encoding, this.TimeoutToken);
 	}
 
-	private async Task<int> RunMainThreadCallbackScenarioAsync(bool configureJoinableTaskFactory, CancellationToken cancellationToken)
+	private async Task<int> RunMainThreadCallbackScenarioAsync(bool configureJoinableTaskFactory, WireEncoding encoding, CancellationToken cancellationToken)
 	{
 		(IDuplexPipe aPipe, IDuplexPipe bPipe) = FullDuplexStream.CreatePipePair();
-		await using JsonRpcPipeChannel aChannel = CreateChannel(aPipe, WireEncoding.MessagePack);
-		await using JsonRpcPipeChannel bChannel = CreateChannel(bPipe, WireEncoding.MessagePack);
+		await using JsonRpcPipeChannel aChannel = CreateChannel(aPipe, encoding);
+		await using JsonRpcPipeChannel bChannel = CreateChannel(bPipe, encoding);
 		using JsonRpc b = new(bChannel);
-		b.AddRpcTarget(new ProcessB(b));
+		b.AddRpcTarget(new ProcessB(b.Attach<IMainThreadService>()));
 		b.Start();
 
 		TaskCompletionSource<int> outcome = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -438,7 +460,7 @@ public partial class JoinableTaskTokenTests : TestBase
 				a.Start();
 
 				// Block the main thread until the round trip completes, as a synchronous caller would.
-				int result = context.Factory.Run(() => a.RequestAsync("CallBackAsync", JsonRpcValue.FromMessagePack(EmptyParamsMsgPack), IntShape, cancellationToken).AsTask().WithCancellation(cancellationToken));
+				int result = context.Factory.Run(() => a.Attach<ICallbackService>().CallBackAsync(cancellationToken).WithCancellation(cancellationToken));
 				outcome.SetResult(result);
 			}
 			catch (Exception ex)
@@ -452,8 +474,9 @@ public partial class JoinableTaskTokenTests : TestBase
 		return await outcome.Task.WithCancellation(this.TimeoutToken);
 	}
 
+	/// <summary>Implements the callback, requiring the original caller's main thread.</summary>
 	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
-	internal partial class ProcessA(JoinableTaskContext context)
+	internal partial class ProcessA(JoinableTaskContext context) : IMainThreadService
 	{
 		public async Task<int> OnMainThreadAsync(CancellationToken cancellationToken)
 		{
@@ -463,11 +486,11 @@ public partial class JoinableTaskTokenTests : TestBase
 		}
 	}
 
+	/// <summary>Implements a normal server method that calls back into its client.</summary>
 	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
-	internal partial class ProcessB(JsonRpc rpc)
+	internal partial class ProcessB(IMainThreadService caller) : ICallbackService
 	{
-		public async Task<int> CallBackAsync(CancellationToken cancellationToken)
-			=> await rpc.RequestAsync("OnMainThreadAsync", JsonRpcValue.FromMessagePack(EmptyParamsMsgPack), IntShape, cancellationToken);
+		public Task<int> CallBackAsync(CancellationToken cancellationToken) => caller.OnMainThreadAsync(cancellationToken);
 	}
 
 	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
