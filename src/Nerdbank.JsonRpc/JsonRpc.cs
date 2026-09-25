@@ -67,6 +67,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	JsonRpcSerializer IArgumentsBuilderContext.Serializer => this.userDataSerializer;
 
+	MarshaledObjectManager IArgumentsBuilderContext.MarshaledObjects => this.marshaledObjects;
+
 	public JsonRpcState State =>
 		this.Completion.IsFaulted ? JsonRpcState.Faulted :
 		this.IsDisposed ? JsonRpcState.Disposed :
@@ -148,30 +150,30 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	public ValueTask<TResult> RequestAsync<TArg, TResult>(string method, in TArg arguments, ITypeShape<TArg> argShape, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects();
+		JsonRpcValue serializedArguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = this.GetNextRequestId(),
 			Method = method,
-			Arguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()),
 		};
 
 		ValueTask<JsonRpcResponse> responseTask = this.RequestAsync(request, cancellationToken);
-		marshaledObjectsScope.Commit();
 		return this.AwaitTypedResponseAsync<TResult>(request, resultShape, responseTask, cancellationToken);
 	}
 
 	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects();
+		JsonRpcValue serializedArguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = this.GetNextRequestId(),
 			Method = method,
-			Arguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()),
 		};
 
 		ValueTask<JsonRpcResponse> responseTask = this.RequestAsync(request, cancellationToken);
-		marshaledObjectsScope.Commit();
 		return this.AwaitVoidResponseAsync(responseTask);
 	}
 
@@ -180,11 +182,12 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects();
 		try
 		{
+			JsonRpcValue serializedArguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken);
 			JsonRpcRequest request = new()
 			{
 				Id = null,
 				Method = method,
-				Arguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken),
+				Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()),
 			};
 
 			return this.NotifyAsync(request, marshaledObjectsScope, cancellationToken);
@@ -320,7 +323,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			using Utf8JsonWriter writer = new(buffer);
 			writer.WriteStartArray();
 			writer.WriteNumberValue(handle);
-			writer.WriteBooleanValue(true);
+			writer.WriteBooleanValue(false);
 			writer.WriteEndArray();
 			writer.Flush();
 			return JsonRpcValue.FromJson(buffer.AsReadOnlySequence);
@@ -330,7 +333,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		MessagePackWriter msgpackWriter = new(msgpackBuffer);
 		msgpackWriter.WriteArrayHeader(2);
 		msgpackWriter.Write(handle);
-		msgpackWriter.Write(true);
+		msgpackWriter.Write(false);
 		msgpackWriter.Flush();
 		return JsonRpcValue.FromMessagePack((RawMessagePack)msgpackBuffer.AsReadOnlySequence);
 	}
@@ -614,33 +617,47 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	private async ValueTask<JsonRpcResponse> RequestAsync(JsonRpcRequest request, CancellationToken cancellationToken)
 	{
-		cancellationToken.ThrowIfCancellationRequested();
-		Requires.Argument(request.Id.HasValue, nameof(request), "Request must have an ID for tracking the response.");
-		Verify.Operation(this.State == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.State}.");
-
-		TaskCompletionSource<JsonRpcResponse> responseTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-		Verify.Operation(this.TryRegisterOutboundRequest(request, responseTcs), "A request with this ID is already pending.");
+		TaskCompletionSource<JsonRpcResponse>? responseTcs = null;
+		bool posted = false;
 		try
 		{
+			cancellationToken.ThrowIfCancellationRequested();
+			Requires.Argument(request.Id.HasValue, nameof(request), "Request must have an ID for tracking the response.");
+			Verify.Operation(this.State == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.State}.");
+
+			responseTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+			Verify.Operation(this.TryRegisterOutboundRequest(request, responseTcs), "A request with this ID is already pending.");
 			await this.PostMessageAsync(request, cancellationToken).ConfigureAwait(false);
+			posted = true;
+
+			return await this.AwaitResponseAsync(request, responseTcs, cancellationToken).ConfigureAwait(false);
 		}
-		catch (Exception ex)
+		catch (Exception ex) when (!posted)
 		{
-			this.TryUnregisterOutboundRequest(request.Id.Value);
+			if (request.Id.HasValue)
+			{
+				this.TryUnregisterOutboundRequest(request.Id.Value);
+			}
+
 			this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
-			responseTcs.TrySetException(ex);
+			responseTcs?.TrySetException(ex);
 			throw;
 		}
-
-		return await this.AwaitResponseAsync(request, responseTcs, cancellationToken).ConfigureAwait(false);
 	}
 
 	private async ValueTask NotifyAsync(JsonRpcRequest request, MarshaledObjectManager.HandleScope marshaledObjectsScope, CancellationToken cancellationToken)
 	{
 		using (marshaledObjectsScope)
 		{
-			await this.PostMessageAsync(request, cancellationToken).ConfigureAwait(false);
-			marshaledObjectsScope.Commit();
+			try
+			{
+				await this.PostMessageAsync(request, cancellationToken).ConfigureAwait(false);
+			}
+			catch
+			{
+				this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
+				throw;
+			}
 		}
 	}
 

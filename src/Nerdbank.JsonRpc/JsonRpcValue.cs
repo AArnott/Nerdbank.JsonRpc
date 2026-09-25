@@ -21,10 +21,11 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 {
 	private readonly byte[]? bytes;
 
-	private JsonRpcValue(byte[] bytes, JsonRpcEncoding encoding)
+	private JsonRpcValue(byte[] bytes, JsonRpcEncoding encoding, MarshaledObjectManager.HandleSet? marshaledHandles = null)
 	{
 		this.bytes = bytes;
 		this.Encoding = encoding;
+		this.MarshaledHandles = marshaledHandles;
 	}
 
 	/// <summary>Gets the encoding of this value.</summary>
@@ -38,6 +39,8 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 
 	/// <summary>Gets the internally owned bytes without copying.</summary>
 	internal ReadOnlyMemory<byte> OwnedBytes => this.bytes ?? ReadOnlyMemory<byte>.Empty;
+
+	internal MarshaledObjectManager.HandleSet? MarshaledHandles { get; }
 
 	/// <summary>Converts a MessagePack raw value into a tagged value.</summary>
 	/// <param name="value">The raw value.</param>
@@ -87,6 +90,12 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	/// <summary>Wraps an exclusively owned encoded byte array without copying it.</summary>
 	/// <param name="bytes">The caller-owned byte array.</param>
 	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="marshaledHandles">The marshaled local handles owned by this encoded value.</param>
 	/// <returns>The owned value.</returns>
-	internal static JsonRpcValue FromOwnedBytes(byte[] bytes, JsonRpcEncoding encoding) => new(bytes, encoding);
+	internal static JsonRpcValue FromOwnedBytes(byte[] bytes, JsonRpcEncoding encoding, MarshaledObjectManager.HandleSet? marshaledHandles = null) => new(bytes, encoding, marshaledHandles);
+
+	/// <summary>Creates a copy of this value with marshaled handle ownership attached.</summary>
+	/// <param name="marshaledHandles">The marshaled local handles owned by this encoded value.</param>
+	/// <returns>The copied value.</returns>
+	internal JsonRpcValue WithMarshaledHandles(MarshaledObjectManager.HandleSet marshaledHandles) => new(this.OwnedBytes.ToArray(), this.Encoding, marshaledHandles);
 }

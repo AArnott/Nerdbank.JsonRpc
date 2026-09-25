@@ -11,6 +11,7 @@ namespace Nerdbank.JsonRpc;
 public ref struct JsonRpcArgumentsBuilder
 {
 	private readonly JsonRpcSerializer serializer;
+	private readonly MarshaledObjectManager.HandleScope marshaledObjectsScope;
 	private readonly bool named;
 	private readonly int count;
 	private readonly CancellationToken cancellationToken;
@@ -26,7 +27,13 @@ public ref struct JsonRpcArgumentsBuilder
 	/// <param name="context">The RPC object that supplies serialization and encodes disposable values as marshaled handles.</param>
 	internal JsonRpcArgumentsBuilder(IArgumentsBuilderContext context, bool named, int count, CancellationToken cancellationToken)
 	{
-		this.serializer = (context ?? throw new ArgumentNullException(nameof(context))).Serializer;
+		if (context is null)
+		{
+			throw new ArgumentNullException(nameof(context));
+		}
+
+		this.serializer = context.Serializer;
+		this.marshaledObjectsScope = context.MarshaledObjects.TrackMarshaledObjects();
 		if (count < 0)
 		{
 			throw new ArgumentOutOfRangeException(nameof(count));
@@ -110,13 +117,18 @@ public ref struct JsonRpcArgumentsBuilder
 		}
 
 		this.built = true;
-		return JsonRpcValue.FromOwnedBytes(this.buffer.AsReadOnlySequence.ToArray(), this.serializer.Encoding);
+		return JsonRpcValue.FromOwnedBytes(this.buffer.AsReadOnlySequence.ToArray(), this.serializer.Encoding, this.marshaledObjectsScope.Commit());
 	}
 
 	/// <summary>Releases buffers owned by this builder.</summary>
 	public void Dispose()
 	{
-		this.failed = true;
+		if (!this.built)
+		{
+			this.failed = true;
+		}
+
+		this.marshaledObjectsScope?.Dispose();
 		this.buffer?.Dispose();
 	}
 

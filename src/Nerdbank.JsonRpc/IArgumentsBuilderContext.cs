@@ -6,4 +6,6 @@ namespace Nerdbank.JsonRpc;
 internal interface IArgumentsBuilderContext
 {
 	JsonRpcSerializer Serializer { get; }
+
+	MarshaledObjectManager MarshaledObjects { get; }
 }

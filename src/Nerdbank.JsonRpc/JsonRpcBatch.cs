@@ -33,6 +33,8 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 
 	JsonRpcSerializer IArgumentsBuilderContext.Serializer => this.Serializer;
 
+	MarshaledObjectManager IArgumentsBuilderContext.MarshaledObjects => this.owner.MarshaledObjects;
+
 	/// <inheritdoc/>
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);
 
@@ -128,15 +130,15 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	public ValueTask<TResult> RequestAsync<TArg, TResult>(string method, in TArg arguments, ITypeShape<TArg> argShape, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects();
+		JsonRpcValue serializedArguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = this.owner.GetNextRequestId(),
 			Method = method,
-			Arguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()),
 		};
 
 		ValueTask<JsonRpcResponse> responseTask = this.AddRequestAsync(request, cancellationToken);
-		marshaledObjectsScope.Commit();
 		return this.owner.AwaitTypedResponseAsync(request, resultShape, responseTask, cancellationToken);
 	}
 
@@ -153,15 +155,15 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects();
+		JsonRpcValue serializedArguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = this.owner.GetNextRequestId(),
 			Method = method,
-			Arguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()),
 		};
 
 		ValueTask<JsonRpcResponse> responseTask = this.AddRequestAsync(request, cancellationToken);
-		marshaledObjectsScope.Commit();
 		return this.owner.AwaitVoidResponseAsync(responseTask);
 	}
 
@@ -178,15 +180,15 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	public ValueTask NotifyAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects();
+		JsonRpcValue serializedArguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = null,
 			Method = method,
-			Arguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken),
+			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()),
 		};
 
 		this.AddNotification(request, cancellationToken);
-		marshaledObjectsScope.Commit();
 		return default;
 	}
 

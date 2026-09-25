@@ -64,8 +64,12 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	{
 		if (request.Method == ReleaseMethod)
 		{
-			(long handle, _) = ReadReleaseArguments(request.Arguments);
-			this.ReleaseLocal(handle);
+			(long handle, bool ownedBySender) = ReadReleaseArguments(request.Arguments);
+			if (!ownedBySender)
+			{
+				this.ReleaseLocal(handle);
+			}
+
 			return true;
 		}
 
@@ -87,24 +91,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 	internal HandleScope TrackMarshaledObjects() => new(this);
 
-	internal void ReleaseLocalObjects(JsonRpcValue value)
-	{
-		if (!value.HasValue)
-		{
-			return;
-		}
-
-		if (value.Encoding == JsonRpcEncoding.Json)
-		{
-			using JsonDocument document = JsonDocument.Parse(value.OwnedBytes);
-			this.ReleaseJsonMarkers(document.RootElement);
-		}
-		else
-		{
-			MessagePackReader reader = new(value.AsMessagePack());
-			this.ReleaseMessagePackMarkers(ref reader, new SerializationContext());
-		}
-	}
+	internal void ReleaseLocalObjects(JsonRpcValue value) => value.MarshaledHandles?.ReleaseAll();
 
 	internal void DisposeAll()
 	{
@@ -252,82 +239,6 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		return (positionalHandle, positionalOwned);
 	}
 
-	private void ReleaseJsonMarkers(JsonElement element)
-	{
-		if (element.ValueKind == JsonValueKind.Object)
-		{
-			if (element.TryGetProperty(Marker, out JsonElement marker) && marker.ValueKind == JsonValueKind.Number && marker.GetInt32() == 1 &&
-				element.TryGetProperty(Handle, out JsonElement handle) && handle.ValueKind == JsonValueKind.Number)
-			{
-				this.ReleaseLocal(handle.GetInt64());
-			}
-
-			foreach (JsonProperty property in element.EnumerateObject())
-			{
-				this.ReleaseJsonMarkers(property.Value);
-			}
-		}
-		else if (element.ValueKind == JsonValueKind.Array)
-		{
-			foreach (JsonElement item in element.EnumerateArray())
-			{
-				this.ReleaseJsonMarkers(item);
-			}
-		}
-	}
-
-	private void ReleaseMessagePackMarkers(ref MessagePackReader reader, SerializationContext context)
-	{
-		switch (reader.NextMessagePackType)
-		{
-			case MessagePackType.Array:
-				int itemCount = reader.ReadArrayHeader();
-				for (int i = 0; i < itemCount; i++)
-				{
-					this.ReleaseMessagePackMarkers(ref reader, context);
-				}
-
-				break;
-			case MessagePackType.Map:
-				int propertyCount = reader.ReadMapHeader();
-				long? handle = null;
-				int? marker = null;
-				for (int i = 0; i < propertyCount; i++)
-				{
-					if (reader.NextMessagePackType != MessagePackType.String)
-					{
-						reader.Skip(context);
-						this.ReleaseMessagePackMarkers(ref reader, context);
-						continue;
-					}
-
-					string? key = reader.ReadString();
-					if (key == Handle && reader.NextMessagePackType == MessagePackType.Integer)
-					{
-						handle = reader.ReadInt64();
-					}
-					else if (key == Marker && reader.NextMessagePackType == MessagePackType.Integer)
-					{
-						marker = reader.ReadInt32();
-					}
-					else
-					{
-						this.ReleaseMessagePackMarkers(ref reader, context);
-					}
-				}
-
-				if (marker == 1 && handle.HasValue)
-				{
-					this.ReleaseLocal(handle.Value);
-				}
-
-				break;
-			default:
-				reader.Skip(context);
-				break;
-		}
-	}
-
 	private void ReleaseLocal(long handle)
 	{
 		IDisposable? value = null;
@@ -371,7 +282,27 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 		internal void Add(long handle) => this.handles.Add(handle);
 
-		internal void Commit() => this.committed = true;
+		internal HandleSet Commit()
+		{
+			this.committed = true;
+			return new(this.manager, [.. this.handles]);
+		}
+	}
+
+	internal sealed class HandleSet(MarshaledObjectManager manager, long[] handles)
+	{
+		private int released;
+
+		internal void ReleaseAll()
+		{
+			if (Interlocked.Exchange(ref this.released, 1) == 0)
+			{
+				foreach (long handle in handles)
+				{
+					manager.ReleaseLocal(handle);
+				}
+			}
+		}
 	}
 
 	private sealed class RemoteDisposable(MarshaledObjectManager manager, long handle) : IDisposable
