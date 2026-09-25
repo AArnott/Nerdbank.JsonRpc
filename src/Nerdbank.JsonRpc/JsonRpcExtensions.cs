@@ -29,7 +29,7 @@ public static class JsonRpcExtensions
 	[EditorBrowsable(EditorBrowsableState.Never)]
 	[Obsolete("Use the instance method instead. If using the extension method syntax, check that your type argument actually has a [GenerateShape] attribute or otherwise implements IShapeable<T> to avoid a runtime failure.", error: true)]
 #endif
-	public static void AddRpcTarget<T>(this JsonRpc self, T target) => Requires.NotNull(self).AddRpcTarget(target, PolyType.Abstractions.TypeShapeResolver.ResolveDynamicOrThrow<T>());
+	public static void AddRpcTarget<T>(this JsonRpc self, T target, JsonRpcTargetOptions? options = null) => Requires.NotNull(self).AddRpcTarget(target, PolyType.Abstractions.TypeShapeResolver.ResolveDynamicOrThrow<T>(), options);
 
 #if NET8_0
 	[RequiresDynamicCode(ResolveDynamicMessage)]

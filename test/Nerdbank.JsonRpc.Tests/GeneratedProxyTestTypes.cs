@@ -43,6 +43,36 @@ internal interface INotGeneratedProxy
 {
 }
 
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IGeneratedMemberNameCollision
+{
+	Task NerdbankJsonRpc_TransformedRpcName0(CancellationToken cancellationToken);
+}
+
+#pragma warning disable SA1300 // Element should begin with upper-case letter
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IGeneratedTransformFieldCollision
+{
+	Task methodNameTransform(CancellationToken cancellationToken);
+
+	Task OtherMethod(CancellationToken cancellationToken);
+}
+#pragma warning restore SA1300 // Element should begin with upper-case letter
+
+internal interface IInheritedGeneratedMemberNameCollisionBase
+{
+	Task NerdbankJsonRpc_MethodNameTransform(CancellationToken cancellationToken);
+}
+
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IInheritedGeneratedMemberNameCollision : IInheritedGeneratedMemberNameCollisionBase
+{
+	Task OtherMethod(CancellationToken cancellationToken);
+}
+
 internal sealed class Calculator : ICalculator
 {
 	internal TaskCompletionSource<int> NotificationReceived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

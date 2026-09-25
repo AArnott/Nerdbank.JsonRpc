@@ -29,6 +29,17 @@ internal static class PolyfillExtensions
 	}
 
 	internal static void Deconstruct<TKey, TValue>(this KeyValuePair<TKey, TValue> pair, out TKey key, out TValue value) => (key, value) = (pair.Key, pair.Value);
+
+	internal static bool TryAdd<TKey, TValue>(this Dictionary<TKey, TValue> dictionary, TKey key, TValue value)
+	{
+		if (dictionary.ContainsKey(key))
+		{
+			return false;
+		}
+
+		dictionary.Add(key, value);
+		return true;
+	}
 }
 
 #endif

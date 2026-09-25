@@ -36,7 +36,7 @@ public class JsonCodecTests : TestBase
 		Assert.Equal(7, await proxy.AddAsync(3, 4, this.TimeoutToken));
 		Assert.Equal(7, await client.Attach<ICalculator>(new JsonRpcProxyOptions { UseNamedArguments = true }).AddAsync(3, 4, this.TimeoutToken));
 		Assert.Equal(12, await proxy.MultiplyAsync(3, 4, this.TimeoutToken));
-		Assert.Equal(11, await client.RequestAsync(nameof(ICalculator.AddAsync), new JsonDirectArgs { A = 5, B = 6 }, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.JsonDirectArgs, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken));
+		Assert.Equal(11, await client.RequestAsync("add", new JsonDirectArgs { A = 5, B = 6 }, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.JsonDirectArgs, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken));
 		Assert.Equal(2, await client.Attach<INamedCalculator>(new JsonRpcProxyOptions { UseNamedArguments = true }).SubtractAsync(5, 3, this.TimeoutToken));
 		JsonRpcBatch batch = client.CreateBatch();
 		Assert.Same(((IJsonRpcClient)client).Serializer, ((IJsonRpcClient)batch).Serializer);
@@ -407,7 +407,7 @@ public class JsonCodecTests : TestBase
 		using JsonRpc client = new(clientChannel);
 		using JsonRpc server = new(serverChannel);
 		CancellableTarget target = new();
-		server.AddRpcTarget<ICancellableTarget>(target, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.ICancellableTarget);
+		server.AddRpcTarget<ICancellableTarget>(target, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.ICancellableTarget, new JsonRpcTargetOptions { MethodNameTransform = CommonMethodNameTransforms.Identity });
 		server.Start();
 		client.Start();
 
@@ -431,7 +431,7 @@ public class JsonCodecTests : TestBase
 		await using JsonRpcJsonChannel clientChannel = new(clientPipe, clientPlugin, framing, LoggerFactory.CreateLogger("client"));
 		await using JsonRpcJsonChannel serverChannel = new(serverPipe, serverPlugin, framing, LoggerFactory.CreateLogger("server"));
 		using JsonRpc server = new(serverChannel);
-		server.AddRpcTarget<ICalculator>(new Calculator(), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.ICalculator);
+		server.AddRpcTarget<ICalculator>(new Calculator(), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.ICalculator, new JsonRpcTargetOptions { MethodNameTransform = CommonMethodNameTransforms.Identity });
 		server.Start();
 
 		foreach (RequestId id in new[] { new RequestId("15"), default(RequestId), new RequestId(ulong.MaxValue) })

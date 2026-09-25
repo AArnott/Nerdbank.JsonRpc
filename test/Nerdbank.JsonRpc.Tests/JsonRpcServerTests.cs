@@ -21,7 +21,7 @@ public partial class JsonRpcServerTests : TestBase
 		(this.channel, Channel<JsonRpcMessage> jsonRpcChannel) = MockChannel<JsonRpcMessage>.CreatePair();
 		this.jsonRpc = new(new MockJsonRpcPipeChannel(jsonRpcChannel));
 
-		this.jsonRpc.AddRpcTarget(this.server);
+		this.jsonRpc.AddRpcTarget(this.server, new JsonRpcTargetOptions { MethodNameTransform = CommonMethodNameTransforms.Identity });
 		this.jsonRpc.Start();
 	}
 
