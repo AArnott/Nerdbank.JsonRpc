@@ -1,4 +1,6 @@
 items:
+- name: Analyzer diagnostics
+  href: analyzers/NBJSONRPC001.md
 - name: Docs
   href: docs/
 - name: API

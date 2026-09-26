@@ -21,8 +21,7 @@
 			"groupName": "Microsoft Testing Platform"
 		},
 		{
-			"matchJsonata": ["sharedVariableName='RoslynVersionForAnalyzers'"],
-			"matchUpdateTypes": ["major", "minor"],
+			"matchFileNames": ["Directory.Packages.Analyzers.props"],
 			"enabled": false
 		},
 		{

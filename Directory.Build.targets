@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project>
+  <!-- Import compatibility overrides after central package versions and project-specific markers are available. -->
+  <Import Project="$(MSBuildThisFileDirectory)Directory.Packages.Analyzers.props" Condition="'$(IsAnalyzerCompatibilityProject)' == 'true'" />
   <ItemGroup>
     <!-- Avoid compile error about missing namespace when combining ImplicitUsings with .NET Framework target frameworks. -->
     <Using Remove="System.Net.Http" Condition="'$(TargetFrameworkIdentifier)'=='.NETFramework'" />

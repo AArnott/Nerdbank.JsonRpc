@@ -13,17 +13,7 @@ dotnet add package Nerdbank.JsonRpc
 
 ## Generated client proxy quick start
 
-Generated proxies require the source generator, which is currently built from this repository rather than included in the NuGet package. Add it to your project as an analyzer:
-
-```xml
-<ItemGroup>
-  <ProjectReference Include="path-to-Nerdbank.JsonRpc/src/Nerdbank.JsonRpc.SourceGeneration/Nerdbank.JsonRpc.SourceGeneration.csproj"
-                  OutputItemType="Analyzer"
-                  ReferenceOutputAssembly="false" />
-</ItemGroup>
-```
-
-Then define a shared contract and annotate it for PolyType method-shape and proxy generation:
+The `Nerdbank.JsonRpc` NuGet package includes its source generator as a C# analyzer. After installing the package, define a shared contract and annotate it for PolyType method-shape and proxy generation:
 
 ```csharp
 using Nerdbank.JsonRpc;
