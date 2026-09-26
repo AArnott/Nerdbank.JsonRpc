@@ -21,7 +21,7 @@ public partial class EventNotificationTests : TestBase
 	internal delegate void LookalikeEventHandler(object? sender, int value);
 
 	[Test]
-	public async Task EndToEnd_RaisingEventInvokesRemotePartysMatchingMethods()
+	public async Task EndToEnd_RaisingEventInvokesRemotePartyMatchingMethods()
 	{
 		(IDuplexPipe serverPipe, IDuplexPipe clientPipe) = FullDuplexStream.CreatePipePair();
 
@@ -44,6 +44,16 @@ public partial class EventNotificationTests : TestBase
 		eventSource.RaisePairRaised(3, 4);
 		(int First, int Second) pair = await receiver.PairRaisedInvocation.Task.WithCancellation(this.TimeoutToken);
 		Assert.Equal((3, 4), pair);
+	}
+
+	[Test]
+	public void AddRpcTarget_AfterDisposalThrows()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		using JsonRpc rpc = new(new MockJsonRpcPipeChannel(transport));
+		rpc.Dispose();
+
+		Assert.Throws<ObjectDisposedException>(() => rpc.AddRpcTarget(new EventfulTarget()));
 	}
 
 	[Test]

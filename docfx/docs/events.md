@@ -15,7 +15,7 @@ Registering a target object also wires up any of its public instance events: rai
 
 ## Naming
 
-Event names are mapped to wire names the same way as method names: <xref:Nerdbank.JsonRpc.JsonRpcTargetOptions.EventNameTransform> defaults to <xref:Nerdbank.JsonRpc.CommonMethodNameTransforms.CamelCase>, and an explicit `[EventShape(Name = "...")]` is authoritative and bypasses the transform. See [Method name transforms](method-naming.md) for more on how transforms and explicit names interact.
+Event names use their own <xref:Nerdbank.JsonRpc.JsonRpcTargetOptions.EventNameTransform>, which defaults to `CommonMethodNameTransforms.CamelCase` and converts to camelCase without removing an `Async` suffix. This is separate from the method-name transform, which removes a trailing `Async` suffix by default. An explicit `[EventShape(Name = "...")]` is authoritative and bypasses the event transform. See [Method name transforms](method-naming.md) for more on how transforms and explicit names interact.
 
 ## Opting out
 
@@ -27,7 +27,7 @@ Set <xref:Nerdbank.JsonRpc.JsonRpcTargetOptions.NotifyClientOfEvents> to `false`
 
 A notification is just a request without an `id`, so the remote party receives it the same way it would any other RPC call: by registering a target object whose method names and parameter shapes match the notification. Method name mapping works exactly like [regular RPC methods](method-naming.md) — the default camelCase transform turns a method named `PriceChanged` into the wire name `priceChanged`, matching the notification sent above.
 
-Because it's an ordinary RPC method, a receiving method may also be declared asynchronously: naming it `PriceChangedAsync` (with the trailing `Async` stripped by the default <xref:Nerdbank.JsonRpc.JsonRpcTargetOptions.MethodNameTransform>, just like any other method) and returning `Task` or `ValueTask` both work. The notification carries no reply, so the returned task's result (if any) is discarded, but the method still runs to completion and any exception it throws is logged the same way a fire-and-forget request's would be.
+Because it's an ordinary RPC method, a receiving method may also be declared asynchronously: naming it `PriceChangedAsync` (with the trailing `Async` stripped by the default <xref:Nerdbank.JsonRpc.JsonRpcTargetOptions.MethodNameTransform>, just like any other method) and returning `Task` or `ValueTask` both work. The notification carries no reply, so the returned task's result (if any) is discarded, but the method still runs to completion and any exception it throws is logged the same way a fire-and-forget request's would be. Since the default event-name transform preserves `Async`, an event whose CLR name ends in `Async` will not automatically match a same-named receiver method; configure the event or receiver transform (or an explicit event name) so both sides use the same wire name.
 
 [!code-csharp[](../../samples/cs/events.cs#remote-receiver-contract)]
 

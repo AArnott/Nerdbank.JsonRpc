@@ -32,6 +32,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private readonly Action<object?> cancelOutboundRequestDelegate;
 	private readonly JsonRpcPipeChannel channel;
 	private readonly JsonRpcSerializer userDataSerializer;
+	private bool disposed;
 	private ILogger logger = NullLogger.Instance;
 	private Task? readerTask;
 	private int nextRequestId;
@@ -118,6 +119,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		var registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, options ?? new JsonRpcTargetOptions())!;
 		lock (this.targetRegistrationSync)
 		{
+			if (this.disposed)
+			{
+				throw new ObjectDisposedException(nameof(JsonRpc));
+			}
+
 			foreach (string name in registration.MethodInvokers.Keys)
 			{
 				if (this.handlers.ContainsKey(name))
@@ -293,6 +299,12 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		List<IDisposable> subscriptions;
 		lock (this.targetRegistrationSync)
 		{
+			if (this.disposed)
+			{
+				return;
+			}
+
+			this.disposed = true;
 			subscriptions = new List<IDisposable>(this.eventSubscriptions);
 			this.eventSubscriptions.Clear();
 		}
