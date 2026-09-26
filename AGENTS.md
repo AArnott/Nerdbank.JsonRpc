@@ -18,6 +18,11 @@
 * There should generally be one test project (under the `test` directory) per shipping project (under the `src` directory). Test projects are named after the project being tested with a `.Tests` suffix.
 * Tests use xunit v3 with Microsoft.Testing.Platform (MTP v2). Traditional VSTest `--filter` syntax does NOT work.
 * Some tests are known to be unstable. When running tests, you should skip the unstable ones by using `-- --filter-not-trait "FailsInCloudTest=true"`.
+* Test every new feature first with code that resembles what its users will likely (or may) write.
+  Where applicable, test from both parties' perspectives (e.g. client and server).
+  Then add tests that focus on the feature's underlying mechanics where necessary for full coverage.
+* Avoid reflection in tests. Base assertions on user-observable behavior (including the wire protocol) rather than private fields or other implementation details.
+  Do not use `InternalsVisibleTo` between product and test assemblies.
 
 ### Running Tests
 
