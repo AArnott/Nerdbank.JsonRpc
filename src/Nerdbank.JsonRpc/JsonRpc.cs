@@ -27,10 +27,12 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private readonly object targetRegistrationSync = new();
 	private readonly CancellationTokenSource disposalSource = new();
 	private readonly ConcurrentDictionary<string, (object? Target, MethodInvoker Invoker)> handlers = new();
+	private readonly List<IDisposable> eventSubscriptions = [];
 	private readonly ConcurrentDictionary<RequestId, TaskCompletionSource<JsonRpcResponse>> pendingOutboundRequests = new();
 	private readonly Action<object?> cancelOutboundRequestDelegate;
 	private readonly JsonRpcPipeChannel channel;
 	private readonly JsonRpcSerializer userDataSerializer;
+	private bool disposed;
 	private ILogger logger = NullLogger.Instance;
 	private Task? readerTask;
 	private int nextRequestId;
@@ -166,10 +168,15 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	{
 		Requires.NotNull(shape);
 
-		var invokers = (Dictionary<string, MethodInvoker>)shape.Accept(RpcTargetVisitor.Instance, options ?? new JsonRpcTargetOptions())!;
+		var registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, options ?? new JsonRpcTargetOptions())!;
 		lock (this.targetRegistrationSync)
 		{
-			foreach (string name in invokers.Keys)
+			if (this.disposed)
+			{
+				throw new ObjectDisposedException(nameof(JsonRpc));
+			}
+
+			foreach (string name in registration.MethodInvokers.Keys)
 			{
 				if (this.handlers.ContainsKey(name))
 				{
@@ -177,9 +184,14 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				}
 			}
 
-			foreach ((string name, MethodInvoker invoker) in invokers)
+			foreach ((string name, MethodInvoker invoker) in registration.MethodInvokers)
 			{
 				this.handlers[name] = (target, invoker);
+			}
+
+			foreach (IEventTargetRegistration eventRegistration in registration.Events)
+			{
+				this.eventSubscriptions.Add(eventRegistration.Subscribe(target, this));
 			}
 		}
 	}
@@ -335,6 +347,25 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <inheritdoc/>
 	public void Dispose()
 	{
+		// Unsubscribe from target object events first so that none can be raised (and attempt to notify) during the rest of disposal.
+		List<IDisposable> subscriptions;
+		lock (this.targetRegistrationSync)
+		{
+			if (this.disposed)
+			{
+				return;
+			}
+
+			this.disposed = true;
+			subscriptions = new List<IDisposable>(this.eventSubscriptions);
+			this.eventSubscriptions.Clear();
+		}
+
+		foreach (IDisposable subscription in subscriptions)
+		{
+			subscription.Dispose();
+		}
+
 		this.disposalSource.Cancel();
 		lock (this.connectionSync)
 		{

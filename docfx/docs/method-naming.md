@@ -20,5 +20,4 @@ StreamJsonRpc's default behavior is to send and expect CLR-style method names (f
 
 Set <xref:Nerdbank.JsonRpc.JsonRpcTargetOptions.MethodNameTransform> or <xref:Nerdbank.JsonRpc.JsonRpcProxyOptions.MethodNameTransform> to a `Func<string, string>` to fully control implicit name mapping. The function receives the CLR method name. It must return a non-null, non-empty result; registering a target throws if two methods transform to the same wire name, or if the transform returns a null or empty value.
 
-> [!NOTE]
-> Event-to-notification name transformation is not yet applicable, since this library does not yet support declaring notifications as CLR events. That will be addressed when event support is added.
+Events use the separate <xref:Nerdbank.JsonRpc.JsonRpcTargetOptions.EventNameTransform>, which defaults to camelCase only and preserves a trailing `Async` suffix. Unlike method naming, the default event transform does not remove `Async`; see [Events as notifications](events.md).
