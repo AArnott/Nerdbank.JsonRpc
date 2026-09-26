@@ -13,11 +13,11 @@
 
 ## Testing
 
-**IMPORTANT**: This repository uses Microsoft.Testing.Platform (MTP v2) with xunit v3. Traditional `--filter` syntax does NOT work. Use the options below instead.
+**IMPORTANT**: This repository uses [TUnit](https://tunit.dev) on Microsoft.Testing.Platform (MTP v2). Neither the traditional VSTest `--filter` syntax nor xunit's `--filter-method`/`--filter-trait` options work. Use `--treenode-filter` as shown below.
 
 * There should generally be one test project (under the `test` directory) per shipping project (under the `src` directory). Test projects are named after the project being tested with a `.Tests` suffix.
-* Tests use xunit v3 with Microsoft.Testing.Platform (MTP v2). Traditional VSTest `--filter` syntax does NOT work.
-* Some tests are known to be unstable. When running tests, you should skip the unstable ones by using `-- --filter-not-trait "FailsInCloudTest=true"`.
+* Tests are written with TUnit (`[Test]`, `[Arguments(...)]`, etc.). Assertions use the `xunit.v3.assert` package (`Assert.Equal`, `Assert.ThrowsAsync`, etc.).
+* Some tests are known to be unstable. When running tests, you should skip the unstable ones by using `-- --treenode-filter "/**[Category!=FailsInCloudTest]"`.
 * Test every new feature first with code that resembles what its users will likely (or may) write.
   Where applicable, test from both parties' perspectives (e.g. client and server).
   Then add tests that focus on the feature's underlying mechanics where necessary for full coverage.
@@ -38,27 +38,27 @@ dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Rele
 
 **Run a single test method**:
 ```bash
-dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release -- --filter-method ClassName.MethodName
+dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release -- --treenode-filter "/*/*/ClassName/MethodName"
 ```
 
 **Run all tests in a test class**:
 ```bash
-dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release -- --filter-class ClassName
+dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release -- --treenode-filter "/*/*/ClassName/*"
 ```
 
-**Run tests with wildcard matching** (supports wildcards at beginning and/or end):
+**Run tests with wildcard matching**:
 ```bash
-dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release -- --filter-method "*Pattern*"
+dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release -- --treenode-filter "/*/*/*/*Pattern*"
 ```
 
-**Run tests with a specific trait** (equivalent to category filtering):
+**Run tests with a specific property** (e.g. `[Category("value")]`):
 ```bash
-dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release -- --filter-trait "TraitName=value"
+dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release -- --treenode-filter "/**[Category=value]"
 ```
 
-**Exclude tests with a specific trait** (skip unstable tests):
+**Exclude tests with a specific property** (skip unstable tests):
 ```bash
-dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release -- --filter-not-trait "TestCategory=FailsInCloudTest"
+dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release -- --treenode-filter "/**[Category!=FailsInCloudTest]"
 ```
 
 **Run tests for a specific framework only**:
@@ -72,14 +72,13 @@ cd test/Library.Tests
 dotnet run --no-build -c Release --framework net9.0 -- --list-tests
 ```
 
-**Key points about test filtering with MTP v2 / xunit v3**:
+**Key points about test filtering with TUnit / MTP v2**:
 - Options after `--` are passed to the test runner, not to `dotnet test`
-- Use `--filter-method`, `--filter-class`, `--filter-namespace` for simple filtering
-- Use `--filter-trait` and `--filter-not-trait` for trait-based filtering (replaces `--filter "TestCategory=..."`)
-- Traditional VSTest `--filter` expressions do NOT work
-- Wildcards `*` are supported at the beginning and/or end of filter values
-- Multiple simple filters of the same type use OR logic, different types combine with AND
-- See `--help` for query filter language for advanced scenarios
+- `--treenode-filter` paths have the form `/Assembly/Namespace/Class/Method`; use `*` for any single segment and `/**` to match any depth
+- Test classes in the global namespace still need a namespace segment, so use `/*/*/Class/Method`
+- Append `[Property=value]` or `[Property!=value]` to filter on test properties such as `Category`
+- A test run that matches zero tests exits with code 5, which usually indicates a malformed filter
+- Traditional VSTest `--filter` expressions and xunit's `--filter-*` options do NOT work
 
 ## Coding style
 
