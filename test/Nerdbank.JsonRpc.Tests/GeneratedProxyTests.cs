@@ -185,6 +185,31 @@ public class GeneratedProxyTests
 	}
 
 	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task GeneratedProxy_MarshalsAttributedInterfaceEndToEnd(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		RemoteCounterService target = new();
+		serverRpc.AddRpcTarget<IRemoteCounterService>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IRemoteCounterService client = clientRpc.Attach<IRemoteCounterService>();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+
+		IRemoteCounter remoteCounter = await client.GetCounterAsync(cts.Token);
+		Assert.Equal(1, await remoteCounter.IncrementAsync(cts.Token));
+		Assert.True(await client.IsSameCounterAsync(remoteCounter, cts.Token));
+
+		remoteCounter.Dispose();
+
+		await target.Counter.Disposed.Task.WithCancellation(cts.Token);
+		Assert.True(target.Counter.IsDisposed);
+	}
+
+	[Test]
 	public async Task GeneratedProxy_IncludesInheritedInterfaceMethods()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();

@@ -36,6 +36,7 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 		=> new JsonSerializerPlugin(this.Serializer with
 		{
 			Converters = new Nerdbank.Json.ConverterCollection([new MarshaledDisposableJsonConverter(manager), .. this.Serializer.Converters]),
+			ConverterFactories = [new MarshaledInterfaceJsonConverterFactory(manager), .. this.Serializer.ConverterFactories],
 		});
 
 	/// <inheritdoc/>

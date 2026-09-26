@@ -7,6 +7,8 @@ items:
   href: encodings.md
 - name: Generated client proxies
   href: client-proxies.md
+- name: RPC-marshalable interfaces
+  href: rpc-marshalable-interfaces.md
 - name: Method name transforms
   href: method-naming.md
 - name: Events as notifications

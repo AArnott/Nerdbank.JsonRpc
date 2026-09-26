@@ -48,25 +48,43 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		IncrementalValuesProvider<InterfaceInfo> proxyInterfaces = context.SyntaxProvider.ForAttributeWithMetadataName(
 			"Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute",
 			static (node, _) => node is InterfaceDeclarationSyntax,
-			static (ctx, _) => CreateInterfaceInfo((INamedTypeSymbol)ctx.TargetSymbol, (InterfaceDeclarationSyntax)ctx.TargetNode, ctx.SemanticModel.Compilation));
-
-		context.RegisterSourceOutput(proxyInterfaces, static (ctx, info) =>
-		{
-			foreach (Diagnostic diagnostic in info.Diagnostics)
+			static (ctx, _) =>
 			{
-				ctx.ReportDiagnostic(diagnostic);
-			}
+				INamedTypeSymbol symbol = (INamedTypeSymbol)ctx.TargetSymbol;
+				bool isMarshalable = symbol.GetAttributes().Any(static attribute => attribute.AttributeClass?.ToDisplayString() == "Nerdbank.JsonRpc.RpcMarshalableAttribute");
+				return CreateInterfaceInfo(symbol, (InterfaceDeclarationSyntax)ctx.TargetNode, ctx.SemanticModel.Compilation, isMarshalable, hasGenerateProxyAttribute: true);
+			});
 
-			if (info.Diagnostics.Length > 0)
+		IncrementalValuesProvider<InterfaceInfo> marshalableInterfaces = context.SyntaxProvider.ForAttributeWithMetadataName(
+			"Nerdbank.JsonRpc.RpcMarshalableAttribute",
+			static (node, _) => node is InterfaceDeclarationSyntax,
+			static (ctx, _) =>
 			{
-				return;
-			}
+				INamedTypeSymbol symbol = (INamedTypeSymbol)ctx.TargetSymbol;
+				bool hasGeneratedProxyAttribute = symbol.GetAttributes().Any(static attribute => attribute.AttributeClass?.ToDisplayString() == "Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute");
+				return CreateInterfaceInfo(symbol, (InterfaceDeclarationSyntax)ctx.TargetNode, ctx.SemanticModel.Compilation, isMarshalable: true, hasGenerateProxyAttribute: hasGeneratedProxyAttribute);
+			}).Where(static info => !info.HasGenerateProxyAttribute);
 
-			ctx.AddSource(info.HintName, SourceText.From(RenderProxy(info), Encoding.UTF8));
-		});
+		context.RegisterSourceOutput(proxyInterfaces, static (ctx, info) => EmitProxy(ctx, info));
+		context.RegisterSourceOutput(marshalableInterfaces, static (ctx, info) => EmitProxy(ctx, info));
 	}
 
-	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol, InterfaceDeclarationSyntax interfaceDeclaration, Compilation compilation)
+	private static void EmitProxy(SourceProductionContext context, InterfaceInfo info)
+	{
+		foreach (Diagnostic diagnostic in info.Diagnostics)
+		{
+			context.ReportDiagnostic(diagnostic);
+		}
+
+		if (info.Diagnostics.Length > 0)
+		{
+			return;
+		}
+
+		context.AddSource(info.HintName, SourceText.From(RenderProxy(info), Encoding.UTF8));
+	}
+
+	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol, InterfaceDeclarationSyntax interfaceDeclaration, Compilation compilation, bool isMarshalable, bool hasGenerateProxyAttribute)
 	{
 		INamedTypeSymbol? methodShapeAttribute = compilation.GetTypeByMetadataName("PolyType.MethodShapeAttribute");
 		ImmutableArray<MethodInfo>.Builder methods = ImmutableArray.CreateBuilder<MethodInfo>();
@@ -74,18 +92,18 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		if (!interfaceDeclaration.Modifiers.Any(SyntaxKind.PartialKeyword))
 		{
 			diagnostics.Add(Diagnostic.Create(UnsupportedInterface, interfaceDeclaration.Identifier.GetLocation(), interfaceSymbol.ToDisplayString(), "annotated interfaces must be partial"));
-			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
+			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, hasGenerateProxyAttribute, diagnostics.ToImmutable());
 		}
 
-		if (GetUnsupportedInterfaceReason(interfaceSymbol) is string interfaceReason)
+		if (GetUnsupportedInterfaceReason(interfaceSymbol, isMarshalable) is string interfaceReason)
 		{
 			diagnostics.Add(Diagnostic.Create(UnsupportedInterface, interfaceSymbol.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), interfaceReason));
-			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
+			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, hasGenerateProxyAttribute, diagnostics.ToImmutable());
 		}
 
 		foreach (IMethodSymbol method in GetProxyMethods(interfaceSymbol))
 		{
-			if (GetUnsupportedSignatureReason(method) is string reason)
+			if (GetUnsupportedSignatureReason(method, isMarshalable) is string reason)
 			{
 				diagnostics.Add(Diagnostic.Create(UnsupportedMethodSignature, method.Locations.FirstOrDefault(), method.ToDisplayString(), reason));
 				continue;
@@ -94,7 +112,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			methods.Add(CreateMethodInfo(method, methodShapeAttribute));
 		}
 
-		return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), diagnostics.ToImmutable());
+		return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, hasGenerateProxyAttribute, diagnostics.ToImmutable());
 	}
 
 	private static IEnumerable<IMethodSymbol> GetProxyMethods(INamedTypeSymbol interfaceSymbol)
@@ -121,7 +139,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				.. method.Parameters.Select(static parameter => $"{parameter.RefKind}:{parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}"),
 			]);
 
-	private static string? GetUnsupportedInterfaceReason(INamedTypeSymbol interfaceSymbol)
+	private static string? GetUnsupportedInterfaceReason(INamedTypeSymbol interfaceSymbol, bool isMarshalable = false)
 	{
 		if (interfaceSymbol.TypeParameters.Length > 0)
 		{
@@ -133,14 +151,33 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			return "nested interfaces are not supported yet";
 		}
 
+		if (isMarshalable)
+		{
+			if (!interfaceSymbol.AllInterfaces.Any(static baseInterface => baseInterface.ToDisplayString() == "System.IDisposable"))
+			{
+				return "marshalable interfaces must extend IDisposable";
+			}
+
+			if (interfaceSymbol.AllInterfaces.Concat([interfaceSymbol]).Any(static type => type.GetMembers().Any(static member => member is IPropertySymbol or IEventSymbol)))
+			{
+				return "marshalable interfaces cannot declare properties or events";
+			}
+		}
+
 		return null;
 	}
 
-	private static string? GetUnsupportedSignatureReason(IMethodSymbol method)
+	private static string? GetUnsupportedSignatureReason(IMethodSymbol method, bool isMarshalable)
 	{
 		if (method.IsGenericMethod)
 		{
 			return "generic methods are not supported yet";
+		}
+
+		bool isDisposeMethod = method.Name == "Dispose" && method.ContainingType.ToDisplayString() == "System.IDisposable" && method.Parameters.Length == 0;
+		if (isMarshalable && !isDisposeMethod && method.ReturnsVoid)
+		{
+			return "marshalable interface methods must return Task or ValueTask";
 		}
 
 		for (int parameterIndex = 0; parameterIndex < method.Parameters.Length; parameterIndex++)
@@ -258,10 +295,10 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	{
 		StringBuilder builder = new();
 		ImmutableArray<ShapeFieldInfo> shapeFields = GetShapeFields(info.Methods);
-		bool needsMethodNameTransform = info.Methods.Any(static m => m.ExplicitRpcName is null && m.Kind is not ProxyMethodKind.Unsupported);
+		bool needsMethodNameTransform = info.Methods.Any(m => m.ExplicitRpcName is null && m.Kind is not ProxyMethodKind.Unsupported && !(info.IsMarshalable && IsDisposeMethod(m)));
 		string? methodNameTransformField = needsMethodNameTransform ? GetGeneratedMemberName(info, "NerdbankJsonRpc_MethodNameTransform") : null;
 		ImmutableArray<string?> transformedRpcNameFields = info.Methods
-			.Select((method, index) => method is { ExplicitRpcName: null, Kind: not ProxyMethodKind.Unsupported } ? GetGeneratedMemberName(info, $"NerdbankJsonRpc_TransformedRpcName{index}") : null)
+			.Select((method, index) => method is { ExplicitRpcName: null, Kind: not ProxyMethodKind.Unsupported } && !(info.IsMarshalable && IsDisposeMethod(method)) ? GetGeneratedMemberName(info, $"NerdbankJsonRpc_TransformedRpcName{index}") : null)
 			.ToImmutableArray();
 		builder.AppendLine("#nullable enable");
 		builder.AppendLine();
@@ -344,7 +381,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		for (int i = 0; i < info.Methods.Length; i++)
 		{
 			builder.AppendLine();
-			builder.Append(RenderMethod(info.Methods[i], shapeFields, transformedRpcNameFields[i], methodNameTransformField));
+			builder.Append(RenderMethod(info.Methods[i], shapeFields, transformedRpcNameFields[i], methodNameTransformField, info.IsMarshalable));
 		}
 
 		builder.AppendLine("}");
@@ -391,7 +428,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 	}
 
-	private static string RenderMethod(MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields, string? transformedRpcNameField, string? methodNameTransformField)
+	private static string RenderMethod(MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields, string? transformedRpcNameField, string? methodNameTransformField, bool isMarshalable)
 	{
 		StringBuilder builder = new();
 		string parameters = string.Join(", ", method.Symbol.Parameters.Select(static p => $"{p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} {EscapeIdentifier(p.Name)}"));
@@ -440,7 +477,16 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 					break;
 				case ProxyMethodKind.Notification:
 					builder.Append("\t\tthis.jsonRpc.NotifyAsync(");
-					AppendRpcMethodName(builder, method, transformedRpcNameField, methodNameTransformField).Append(", arguments, ");
+					if (isMarshalable && IsDisposeMethod(method))
+					{
+						AppendQuoted(builder, "dispose");
+					}
+					else
+					{
+						AppendRpcMethodName(builder, method, transformedRpcNameField, methodNameTransformField);
+					}
+
+					builder.Append(", arguments, ");
 					builder.Append(cancellationToken).AppendLine(").Preserve();");
 					builder.AppendLine("\t\treturn;");
 					break;
@@ -457,6 +503,9 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		return builder.ToString();
 	}
+
+	private static bool IsDisposeMethod(MethodInfo method)
+		=> method.Symbol.Name == "Dispose" && method.Symbol.ContainingType.ToDisplayString() == "System.IDisposable" && method.Symbol.Parameters.Length == 0;
 
 	/// <summary>
 	/// Appends a C# expression that evaluates to the JSON-RPC wire name for the given method: the exact
@@ -511,7 +560,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			_ => "internal",
 		};
 
-	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods, bool HasStaticTypeShapeResolver, ImmutableArray<Diagnostic> Diagnostics)
+	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods, bool HasStaticTypeShapeResolver, bool IsMarshalable, bool HasGenerateProxyAttribute, ImmutableArray<Diagnostic> Diagnostics)
 	{
 		internal string HintName => this.Symbol.ContainingNamespace.IsGlobalNamespace ? this.ProxyName + ".g.cs" : this.Symbol.ContainingNamespace.ToDisplayString() + "." + this.ProxyName + ".g.cs";
 

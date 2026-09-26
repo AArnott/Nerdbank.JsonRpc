@@ -144,6 +144,76 @@ public class ClientProxyGeneratorTests
 	}
 
 	[Test]
+	public async Task RpcMarshalableInterfaceGeneratesProxyWithoutGenerateProxyAttribute()
+	{
+		const string Source = """
+			using System;
+			using System.Threading;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+			using PolyType;
+
+			[RpcMarshalable]
+			[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+			internal partial interface IRemoteObject : IDisposable
+			{
+				Task<int> CallAsync(CancellationToken cancellationToken);
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source);
+	}
+
+	[Test]
+	public async Task RpcMarshalableInterfacesMustExtendDisposableAndCannotDeclarePropertiesOrEvents()
+	{
+		const string Source = """
+			using System;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			[RpcMarshalable]
+			internal partial interface {|#0:INotDisposable|}
+			{
+				Task CallAsync();
+			}
+
+			[RpcMarshalable]
+			internal partial interface {|#1:IHasProperty|} : IDisposable
+			{
+				int Count { get; }
+			}
+
+			[RpcMarshalable]
+			internal partial interface {|#2:IHasEvent|} : IDisposable
+			{
+				event EventHandler Changed;
+			}
+
+			[RpcMarshalable]
+			internal partial interface IHasNotification : IDisposable
+			{
+				void {|#3:Notify|}();
+			}
+			""";
+
+		DiagnosticResult noDisposable = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(0)
+			.WithArguments("INotDisposable", "marshalable interfaces must extend IDisposable");
+		DiagnosticResult hasProperty = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(1)
+			.WithArguments("IHasProperty", "marshalable interfaces cannot declare properties or events");
+		DiagnosticResult hasEvent = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(2)
+			.WithArguments("IHasEvent", "marshalable interfaces cannot declare properties or events");
+		DiagnosticResult hasNotification = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(3)
+			.WithArguments("IHasNotification.Notify()", "marshalable interface methods must return Task or ValueTask");
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, noDisposable, hasProperty, hasEvent, hasNotification);
+	}
+
+	[Test]
 	public async Task KeywordIdentifiersAreEscapedInGeneratedProxy()
 	{
 		const string Source = """
