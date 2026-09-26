@@ -1,6 +1,7 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.Buffers;
 using System.IO.Pipelines;
 using System.Reflection;
 using System.Text;
@@ -14,6 +15,31 @@ namespace Nerdbank.JsonRpc.Tests;
 
 public partial class MarshaledObjectManagerTests : TestBase
 {
+	[Test]
+	public async Task MessagePackMarkerRejectsNilLifetime()
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe, NullLogger.Instance));
+		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe, NullLogger.Instance));
+		serverRpc.AddRpcTarget<IRemoteCounterService>(new RemoteCounterService());
+		serverRpc.Start();
+		clientRpc.Start();
+		Sequence<byte> bytes = new();
+		MessagePackWriter writer = new(bytes);
+		writer.WriteArrayHeader(1);
+		writer.WriteMapHeader(3);
+		writer.Write("__jsonrpc_marshaled");
+		writer.Write(1);
+		writer.Write("handle");
+		writer.Write(1L);
+		writer.Write("lifetime");
+		writer.WriteNil();
+		writer.Flush();
+		JsonRpcValue arguments = JsonRpcValue.FromMessagePack((RawMessagePack)bytes.AsReadOnlySequence.ToArray());
+
+		await Assert.ThrowsAsync<JsonRpcException>(() => clientRpc.RequestAsync("isSameCounter", arguments, CancellationToken.None).AsTask());
+	}
+
 	[Test]
 	public async Task DisposingRemoteProxySendsReleaseNotification()
 	{

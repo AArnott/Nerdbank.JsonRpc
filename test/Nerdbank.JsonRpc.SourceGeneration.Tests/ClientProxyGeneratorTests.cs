@@ -204,6 +204,26 @@ public class ClientProxyGeneratorTests
 	}
 
 	[Test]
+	public async Task CallScopedRpcMarshalableInterfaceDoesNotRequireDisposable()
+	{
+		const string Source = """
+			using System.Threading;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+			using PolyType;
+
+			[RpcMarshalable(CallScopedLifetime = true)]
+			[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+			internal partial interface ITemporaryObject
+			{
+				Task<int> GetValueAsync(CancellationToken cancellationToken);
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source);
+	}
+
+	[Test]
 	public async Task RpcMarshalableInterfacesMustExtendDisposableAndCannotDeclarePropertiesOrEvents()
 	{
 		const string Source = """

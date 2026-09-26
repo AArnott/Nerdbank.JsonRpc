@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO.Pipelines;
+using System.Reflection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.Threading;
 using Nerdbank.Streams;
@@ -207,6 +208,124 @@ public class GeneratedProxyTests
 
 		await target.Counter.Disposed.Task.WithCancellation(cts.Token);
 		Assert.True(target.Counter.IsDisposed);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task MarshaledInterfaceCannotBeSentInNotification(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc rpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IRemoteCounterService>(new RemoteCounterService());
+		serverRpc.Start();
+		rpc.Start();
+		IRemoteCounterService remoteService = rpc.Attach<IRemoteCounterService>();
+		IRemoteCounter remoteCounter = await remoteService.GetCounterAsync(CancellationToken.None);
+		CallScopedCounter localCounter = new();
+
+		await Assert.ThrowsAsync<InvalidOperationException>(() => rpc.NotifyAsync("notify", localCounter, ShapeProvider.Default.ICallScopedCounter, CancellationToken.None).AsTask());
+		await Assert.ThrowsAsync<InvalidOperationException>(() => rpc.NotifyAsync("notify", remoteCounter, ShapeProvider.Default.IRemoteCounter, CancellationToken.None).AsTask());
+		using JsonRpcBatch batch = rpc.CreateBatch();
+		Assert.Throws<InvalidOperationException>(() => batch.NotifyAsync("notify", remoteCounter, ShapeProvider.Default.IRemoteCounter, CancellationToken.None));
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task InvokeProxyAfterHandleReleaseReturnsMethodNotFound(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		RemoteCounterService target = new();
+		serverRpc.AddRpcTarget<IRemoteCounterService>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IRemoteCounterService client = clientRpc.Attach<IRemoteCounterService>();
+		IRemoteCounter proxy = await client.GetCounterAsync(CancellationToken.None);
+		FieldInfo clientField = Assert.Single(proxy.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic), static field => field.FieldType == typeof(IJsonRpcClient));
+		object proxyClient = clientField.GetValue(proxy)!;
+		long handle = (long)Assert.Single(proxyClient.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic), static field => field.FieldType == typeof(long)).GetValue(proxyClient)!;
+
+		proxy.Dispose();
+		await target.Counter.Disposed.Task;
+		JsonRpcValue arguments;
+		using (JsonRpcArgumentsBuilder argumentsBuilder = clientRpc.CreateArguments(named: false, count: 0))
+		{
+			arguments = argumentsBuilder.Build();
+		}
+
+		JsonRpcException exception = await Assert.ThrowsAsync<JsonRpcException>(() => clientRpc.RequestAsync($"$/invokeProxy/{handle}/increment", arguments, ShapeProvider.Default.Int32, CancellationToken.None).AsTask());
+
+		Assert.Equal(JsonRpcErrorCode.MethodNotFound, exception.ErrorDetails.Code);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task CallScopedMarshalableInterfaceLivesOnlyForCall(JsonRpcEncoding encoding)
+	{
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		RemoteCounterService target = new();
+		CallScopedCounter localCounter = new();
+		clientRpc.AddRpcTarget<ICallScopedCounter>(localCounter);
+		serverRpc.AddRpcTarget<IRemoteCounterService>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IRemoteCounterService client = clientRpc.Attach<IRemoteCounterService>();
+
+		Assert.Equal(1, await client.UseCallScopedCounterAsync(localCounter, cts.Token));
+		Assert.Equal(1, localCounter.Count);
+		Assert.NotNull(target.LastCallScopedProxy);
+		await Assert.ThrowsAsync<ObjectDisposedException>(() => target.LastCallScopedProxy.IncrementAsync(cts.Token));
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task CallScopedMarshalableInterfaceCannotBeReturned(JsonRpcEncoding encoding)
+	{
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		RemoteCounterService target = new();
+		serverRpc.AddRpcTarget<IRemoteCounterService>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IRemoteCounterService client = clientRpc.Attach<IRemoteCounterService>();
+
+		await Assert.ThrowsAsync<JsonRpcException>(() => client.ReturnCallScopedCounterAsync(cts.Token));
+		CallScopedCounter localCounter = new();
+		await Assert.ThrowsAsync<JsonRpcException>(() => client.EchoCallScopedCounterAsync(localCounter, cts.Token));
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task ExplicitMarshalableArgumentsAreReleasedAndInvalidatedAfterRemoteError(JsonRpcEncoding encoding)
+	{
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		RemoteCounterService target = new();
+		serverRpc.AddRpcTarget<IRemoteCounterService>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IRemoteCounterService client = clientRpc.Attach<IRemoteCounterService>();
+		RemoteCounter localCounter = new();
+
+		await Assert.ThrowsAsync<JsonRpcException>(() => client.FailAfterReceivingAsync(localCounter, cts.Token));
+
+		Assert.True(localCounter.IsDisposed);
+		Assert.NotNull(target.LastExplicitProxy);
+		await Assert.ThrowsAsync<ObjectDisposedException>(() => target.LastExplicitProxy.IncrementAsync(cts.Token));
 	}
 
 	[Test]

@@ -164,7 +164,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		};
 
 		ValueTask<JsonRpcResponse> responseTask = this.AddRequestAsync(request, cancellationToken);
-		return this.owner.AwaitVoidResponseAsync(responseTask);
+		return this.owner.AwaitVoidResponseAsync(request, responseTask);
 	}
 
 	/// <summary>
@@ -181,6 +181,11 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	{
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects();
 		JsonRpcValue serializedArguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken);
+		if (marshaledObjectsScope.HasMarshaledObjects)
+		{
+			throw new InvalidOperationException("Marshaled objects cannot be sent in notifications because the sender cannot know whether the receiver accepted them.");
+		}
+
 		JsonRpcRequest request = new()
 		{
 			Id = null,
@@ -203,7 +208,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			Arguments = arguments,
 		};
 
-		return this.owner.AwaitVoidResponseAsync(this.AddRequestAsync(request, cancellationToken));
+		return this.owner.AwaitVoidResponseAsync(request, this.AddRequestAsync(request, cancellationToken));
 	}
 
 	/// <inheritdoc/>
@@ -226,6 +231,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
 	public ValueTask NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
+		this.owner.MarshaledObjects.EnsureNoMarshaledObjects(arguments);
 		JsonRpcRequest request = new()
 		{
 			Id = null,

@@ -219,7 +219,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 						response = new JsonRpcResult
 						{
 							Id = id,
-							Result = dispatch.UserDataSerializer.Serialize(result, methodShape.ReturnType, dispatch.JsonRpc.DisposalToken),
+							Result = dispatch.JsonRpc.SerializeMarshaledResult(result, methodShape.ReturnType, dispatch.JsonRpc.DisposalToken),
 						};
 					}
 					else
