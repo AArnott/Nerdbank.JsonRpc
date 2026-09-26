@@ -44,6 +44,7 @@ Building, testing, and packing this repository can be done by using the standard
 You can use `dotnet test` to build and/or test the repo.
 
 There may be tests that are known to be unstable or have special requirements. These can be avoided by running tests using the [dotnet-test-cloud.ps1](tools/dotnet-test-cloud.ps1) script *after* running `dotnet build`.
+To include the pre-published NativeAOT runtime tests, pass `-IncludeNativeAOT` to that script.
 
 ## Releases
 

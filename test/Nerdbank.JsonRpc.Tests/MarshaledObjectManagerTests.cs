@@ -2,7 +2,6 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO.Pipelines;
-using System.Reflection;
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.Threading;
@@ -84,19 +83,16 @@ public partial class MarshaledObjectManagerTests : TestBase
 		using JsonRpc clientRpc = new(new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
 		using JsonRpc serverRpc = new(new JsonRpcJsonChannel(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
 		DisposableTarget target = new();
-		serverRpc.AddRpcTarget<IDisposableContract>(target);
 		serverRpc.Start();
 		clientRpc.Start();
-		IDisposableContract client = clientRpc.Attach<IDisposableContract>();
-		IDisposable remoteDisposable = await client.GetDisposableAsync(this.TimeoutToken);
-		FieldInfo handleField = Assert.Single(remoteDisposable.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic), static field => field.FieldType == typeof(long));
-		long handle = (long)handleField.GetValue(remoteDisposable)!;
+		JsonRpcValue marshaledArguments = MarshalDisposable(serverRpc, target.ReturnedDisposable, out long handle);
 		JsonRpcValue namedReleaseArguments = JsonRpcValue.FromJson(Encoding.UTF8.GetBytes($$"""{"handle":{{handle}},"ownedBySender":false}"""));
 
 		await clientRpc.NotifyAsync("$/releaseMarshaledObject", namedReleaseArguments, this.TimeoutToken);
 
 		await target.ReturnedDisposable.Disposed.WithCancellation(this.TimeoutToken);
 		Assert.True(target.ReturnedDisposable.IsDisposed);
+		GC.KeepAlive(marshaledArguments);
 	}
 
 	[Test]
@@ -106,13 +102,9 @@ public partial class MarshaledObjectManagerTests : TestBase
 		using JsonRpc clientRpc = new(new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
 		using JsonRpc serverRpc = new(new JsonRpcJsonChannel(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
 		DisposableTarget target = new();
-		serverRpc.AddRpcTarget<IDisposableContract>(target);
 		serverRpc.Start();
 		clientRpc.Start();
-		IDisposableContract client = clientRpc.Attach<IDisposableContract>();
-		IDisposable remoteDisposable = await client.GetDisposableAsync(this.TimeoutToken);
-		FieldInfo handleField = Assert.Single(remoteDisposable.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic), static field => field.FieldType == typeof(long));
-		long handle = (long)handleField.GetValue(remoteDisposable)!;
+		JsonRpcValue marshaledArguments = MarshalDisposable(serverRpc, target.ReturnedDisposable, out long handle);
 		JsonRpcValue senderOwnedReleaseArguments = JsonRpcValue.FromJson(Encoding.UTF8.GetBytes($$"""{"handle":{{handle}},"ownedBySender":true}"""));
 
 		await clientRpc.NotifyAsync("$/releaseMarshaledObject", senderOwnedReleaseArguments, this.TimeoutToken);
@@ -125,6 +117,7 @@ public partial class MarshaledObjectManagerTests : TestBase
 
 		await target.ReturnedDisposable.Disposed.WithCancellation(this.TimeoutToken);
 		Assert.True(target.ReturnedDisposable.IsDisposed);
+		GC.KeepAlive(marshaledArguments);
 	}
 
 	[Test]
@@ -165,6 +158,16 @@ public partial class MarshaledObjectManagerTests : TestBase
 		await disposable.Disposed.WithCancellation(this.TimeoutToken);
 		Assert.True(disposable.IsDisposed);
 		await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pendingRequest.WithCancellation(this.TimeoutToken));
+	}
+
+	private static JsonRpcValue MarshalDisposable(JsonRpc rpc, IDisposable disposable, out long handle)
+	{
+		using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named: false, count: 1);
+		builder.Add(null, disposable, TypeShapeResolver.ResolveDynamicOrThrow<IDisposable, Witness>());
+		JsonRpcValue arguments = builder.Build();
+		using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse(arguments.Bytes);
+		handle = document.RootElement[0].GetProperty("handle").GetInt64();
+		return arguments;
 	}
 
 	[GenerateShapeFor<IDisposable>]
