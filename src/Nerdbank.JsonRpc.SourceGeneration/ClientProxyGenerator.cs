@@ -16,13 +16,16 @@ namespace Nerdbank.JsonRpc.SourceGeneration;
 [Generator(LanguageNames.CSharp)]
 public sealed class ClientProxyGenerator : IIncrementalGenerator
 {
+	private const string DiagnosticHelpLink = "https://aarnott.github.io/Nerdbank.JsonRpc/analyzers/NBJSONRPC001.html";
+
 	private static readonly DiagnosticDescriptor UnsupportedMethodSignature = new(
 		"NBJSONRPC001",
 		"Unsupported JSON-RPC proxy method signature",
 		"Method '{0}' cannot be generated as a JSON-RPC client proxy because {1}",
 		"Usage",
 		DiagnosticSeverity.Warning,
-		isEnabledByDefault: true);
+		isEnabledByDefault: true,
+		helpLinkUri: DiagnosticHelpLink);
 
 	private static readonly DiagnosticDescriptor UnsupportedInterface = new(
 		"NBJSONRPC001",
@@ -30,7 +33,8 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		"Interface '{0}' cannot be generated as a JSON-RPC client proxy because {1}",
 		"Usage",
 		DiagnosticSeverity.Warning,
-		isEnabledByDefault: true);
+		isEnabledByDefault: true,
+		helpLinkUri: DiagnosticHelpLink);
 
 	private enum ProxyMethodKind
 	{
@@ -45,41 +49,26 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	/// <inheritdoc />
 	public void Initialize(IncrementalGeneratorInitializationContext context)
 	{
-		IncrementalValueProvider<AttributeSymbols> attributeSymbols = context.CompilationProvider.Select(static (compilation, _) => new AttributeSymbols(
-			compilation.GetTypeByMetadataName("Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute"),
-			compilation.GetTypeByMetadataName("Nerdbank.JsonRpc.RpcMarshalableAttribute")));
-
-		IncrementalValuesProvider<InterfaceInfo> proxyInterfaces = context.SyntaxProvider.ForAttributeWithMetadataName(
-			"Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute",
+		IncrementalValuesProvider<ProxyOutput> proxyInterfaces = context.SyntaxProvider.ForAttributeWithMetadataName(
+			KnownApis.GenerateJsonRpcProxyAttribute,
 			static (node, _) => node is InterfaceDeclarationSyntax,
-			static (ctx, _) => ctx)
-			.Combine(attributeSymbols)
-			.Select(static (pair, _) =>
-			{
-				GeneratorAttributeSyntaxContext ctx = pair.Left;
-				AttributeSymbols symbols = pair.Right;
-				INamedTypeSymbol symbol = (INamedTypeSymbol)ctx.TargetSymbol;
-				bool isMarshalable = HasAttribute(symbol, symbols.RpcMarshalableAttribute);
-				bool isCallScoped = GetCallScopedLifetime(symbol, symbols.RpcMarshalableAttribute);
-				return CreateInterfaceInfo(symbol, (InterfaceDeclarationSyntax)ctx.TargetNode, ctx.SemanticModel.Compilation, isMarshalable, isCallScoped, hasGenerateProxyAttribute: true, symbols.RpcMarshalableAttribute);
-			});
+			static (ctx, cancellationToken) => CreateProxyOutput(ctx, hasGenerateProxyAttribute: true, cancellationToken)!)
+			.WithTrackingName("GenerateJsonRpcProxyModels")
+			.WithComparer(ProxyOutputComparer.Instance)
+			.WithTrackingName("GenerateJsonRpcProxyOutputs");
 
-		IncrementalValuesProvider<InterfaceInfo> marshalableInterfaces = context.SyntaxProvider.ForAttributeWithMetadataName(
-			"Nerdbank.JsonRpc.RpcMarshalableAttribute",
+		IncrementalValuesProvider<ProxyOutput> marshalableInterfaces = context.SyntaxProvider.ForAttributeWithMetadataName(
+			KnownApis.RpcMarshalableAttribute,
 			static (node, _) => node is InterfaceDeclarationSyntax,
-			static (ctx, _) => ctx)
-			.Combine(attributeSymbols)
-			.Select(static (pair, _) =>
-			{
-				GeneratorAttributeSyntaxContext ctx = pair.Left;
-				AttributeSymbols symbols = pair.Right;
-				INamedTypeSymbol symbol = (INamedTypeSymbol)ctx.TargetSymbol;
-				bool hasGeneratedProxyAttribute = HasAttribute(symbol, symbols.GenerateJsonRpcProxyAttribute);
-				bool isCallScoped = GetCallScopedLifetime(symbol, symbols.RpcMarshalableAttribute);
-				return CreateInterfaceInfo(symbol, (InterfaceDeclarationSyntax)ctx.TargetNode, ctx.SemanticModel.Compilation, isMarshalable: true, isCallScoped, hasGenerateProxyAttribute: hasGeneratedProxyAttribute, symbols.RpcMarshalableAttribute);
-			}).Where(static info => !info.HasGenerateProxyAttribute);
-		context.RegisterSourceOutput(proxyInterfaces, static (ctx, info) => EmitProxy(ctx, info));
-		context.RegisterSourceOutput(marshalableInterfaces, static (ctx, info) => EmitProxy(ctx, info));
+			static (ctx, cancellationToken) => CreateProxyOutput(ctx, hasGenerateProxyAttribute: false, cancellationToken))
+			.Where(static output => output is not null)
+			.Select(static (output, _) => output!)
+			.WithTrackingName("RpcMarshalableProxyModels")
+			.WithComparer(ProxyOutputComparer.Instance)
+			.WithTrackingName("RpcMarshalableProxyOutputs");
+
+		context.RegisterSourceOutput(proxyInterfaces, static (ctx, output) => EmitProxy(ctx, output));
+		context.RegisterSourceOutput(marshalableInterfaces, static (ctx, output) => EmitProxy(ctx, output));
 	}
 
 	private static bool HasAttribute(INamedTypeSymbol symbol, INamedTypeSymbol? attributeSymbol)
@@ -96,50 +85,78 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		{
 			if (SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, marshalableAttribute))
 			{
-				return attribute.NamedArguments.Any(static argument => argument.Key == "CallScopedLifetime" && argument.Value.Value is true);
+				return attribute.NamedArguments.Any(static argument => argument.Key == KnownApis.CallScopedLifetime && argument.Value.Value is true);
 			}
 		}
 
 		return false;
 	}
 
-	private static void EmitProxy(SourceProductionContext context, InterfaceInfo info)
+	private static ProxyOutput? CreateProxyOutput(GeneratorAttributeSyntaxContext context, bool hasGenerateProxyAttribute, CancellationToken cancellationToken)
 	{
-		foreach (Diagnostic diagnostic in info.Diagnostics)
+		cancellationToken.ThrowIfCancellationRequested();
+		INamedTypeSymbol interfaceSymbol = (INamedTypeSymbol)context.TargetSymbol;
+		Compilation compilation = context.SemanticModel.Compilation;
+		INamedTypeSymbol? generateProxyAttribute = compilation.GetTypeByMetadataName(KnownApis.GenerateJsonRpcProxyAttribute);
+		INamedTypeSymbol? rpcMarshalableAttribute = compilation.GetTypeByMetadataName(KnownApis.RpcMarshalableAttribute);
+		bool hasGeneratedProxyAttribute = hasGenerateProxyAttribute || HasAttribute(interfaceSymbol, generateProxyAttribute);
+		if (!hasGenerateProxyAttribute && hasGeneratedProxyAttribute)
 		{
-			context.ReportDiagnostic(diagnostic);
+			return null;
 		}
 
-		if (info.Diagnostics.Length > 0)
-		{
-			return;
-		}
-
-		context.AddSource(info.HintName, SourceText.From(RenderProxy(info), Encoding.UTF8));
+		bool isMarshalable = !hasGenerateProxyAttribute || HasAttribute(interfaceSymbol, rpcMarshalableAttribute);
+		bool isCallScoped = isMarshalable && GetCallScopedLifetime(interfaceSymbol, rpcMarshalableAttribute);
+		InterfaceInfo info = CreateInterfaceInfo(
+			interfaceSymbol,
+			(InterfaceDeclarationSyntax)context.TargetNode,
+			compilation,
+			isMarshalable,
+			isCallScoped,
+			hasGeneratedProxyAttribute,
+			rpcMarshalableAttribute,
+			cancellationToken);
+		ImmutableArray<DiagnosticInfo> diagnostics = info.Diagnostics;
+		string? source = diagnostics.IsEmpty ? RenderProxy(info) : null;
+		return new ProxyOutput(info.HintName, source, diagnostics);
 	}
 
-	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol, InterfaceDeclarationSyntax interfaceDeclaration, Compilation compilation, bool isMarshalable, bool isCallScoped, bool hasGenerateProxyAttribute, INamedTypeSymbol? marshalableAttribute)
+	private static void EmitProxy(SourceProductionContext context, ProxyOutput output)
 	{
-		INamedTypeSymbol? methodShapeAttribute = compilation.GetTypeByMetadataName("PolyType.MethodShapeAttribute");
+		foreach (DiagnosticInfo diagnostic in output.Diagnostics)
+		{
+			context.ReportDiagnostic(diagnostic.ToDiagnostic());
+		}
+
+		if (output.Source is not null)
+		{
+			context.AddSource(output.HintName, SourceText.From(output.Source, Encoding.UTF8));
+		}
+	}
+
+	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol, InterfaceDeclarationSyntax interfaceDeclaration, Compilation compilation, bool isMarshalable, bool isCallScoped, bool hasGenerateProxyAttribute, INamedTypeSymbol? marshalableAttribute, CancellationToken cancellationToken)
+	{
+		INamedTypeSymbol? methodShapeAttribute = compilation.GetTypeByMetadataName(KnownApis.MethodShapeAttribute);
 		ImmutableArray<MethodInfo>.Builder methods = ImmutableArray.CreateBuilder<MethodInfo>();
-		ImmutableArray<Diagnostic>.Builder diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
+		ImmutableArray<DiagnosticInfo>.Builder diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
 		if (!interfaceDeclaration.Modifiers.Any(SyntaxKind.PartialKeyword))
 		{
-			diagnostics.Add(Diagnostic.Create(UnsupportedInterface, interfaceDeclaration.Identifier.GetLocation(), interfaceSymbol.ToDisplayString(), "annotated interfaces must be partial"));
+			diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceDeclaration.Identifier.GetLocation(), interfaceSymbol.ToDisplayString(), "annotated interfaces must be partial"));
 			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasGenerateProxyAttribute, diagnostics.ToImmutable());
 		}
 
 		if (GetUnsupportedInterfaceReason(interfaceSymbol, isMarshalable, isCallScoped) is string interfaceReason)
 		{
-			diagnostics.Add(Diagnostic.Create(UnsupportedInterface, interfaceSymbol.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), interfaceReason));
+			diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceSymbol.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), interfaceReason));
 			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasGenerateProxyAttribute, diagnostics.ToImmutable());
 		}
 
 		foreach (IMethodSymbol method in GetProxyMethods(interfaceSymbol))
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			if (GetUnsupportedSignatureReason(method, isMarshalable, marshalableAttribute) is string reason)
 			{
-				diagnostics.Add(Diagnostic.Create(UnsupportedMethodSignature, method.Locations.FirstOrDefault(), method.ToDisplayString(), reason));
+				diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: true, method.Locations.FirstOrDefault(), method.ToDisplayString(), reason));
 				continue;
 			}
 
@@ -187,7 +204,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		if (isMarshalable)
 		{
-			if (!isCallScoped && !interfaceSymbol.AllInterfaces.Any(static baseInterface => baseInterface.ToDisplayString() == "System.IDisposable"))
+			if (!isCallScoped && !interfaceSymbol.AllInterfaces.Any(static baseInterface => baseInterface.ToDisplayString() == KnownApis.IDisposable))
 			{
 				return "marshalable interfaces must extend IDisposable";
 			}
@@ -213,7 +230,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			return "generic methods are not supported yet";
 		}
 
-		bool isDisposeMethod = method.Name == "Dispose" && method.ContainingType.ToDisplayString() == "System.IDisposable" && method.Parameters.Length == 0;
+		bool isDisposeMethod = method.Name == KnownApis.Dispose && method.ContainingType.ToDisplayString() == KnownApis.IDisposable && method.Parameters.Length == 0;
 		if (isMarshalable && !isDisposeMethod && method.ReturnsVoid)
 		{
 			return "marshalable interface methods must return Task or ValueTask";
@@ -268,14 +285,14 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	}
 
 	private static bool IsCancellationToken(ITypeSymbol type)
-		=> type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.Threading.CancellationToken";
+		=> type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == KnownApis.CancellationToken;
 
 	private static bool HasStaticTypeShapeResolver(Compilation compilation)
 	{
-		INamedTypeSymbol? resolver = compilation.GetTypeByMetadataName("PolyType.Abstractions.TypeShapeResolver");
-		return resolver?.GetMembers("Resolve")
+		INamedTypeSymbol? resolver = compilation.GetTypeByMetadataName(KnownApis.TypeShapeResolver);
+		return resolver?.GetMembers(KnownApis.TypeShapeResolve)
 			.OfType<IMethodSymbol>()
-			.Any(static method => method.IsGenericMethod && method.TypeParameters.Length == 1 && method.ContainingAssembly.Name == "PolyType") is true;
+			.Any(static method => method.IsGenericMethod && method.TypeParameters.Length == 1 && method.ContainingAssembly.Name == KnownApis.PolyTypeAssembly) is true;
 	}
 
 	private static MethodInfo CreateMethodInfo(IMethodSymbol method, INamedTypeSymbol? methodShapeAttribute)
@@ -308,7 +325,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 			foreach (KeyValuePair<string, TypedConstant> namedArgument in attribute.NamedArguments)
 			{
-				if (namedArgument.Key == "Name" && namedArgument.Value.Value is string explicitName)
+				if (namedArgument.Key == KnownApis.MethodShapeName && namedArgument.Value.Value is string explicitName)
 				{
 					return explicitName;
 				}
@@ -323,7 +340,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		resultTypeName = null;
 		string returnTypeName = returnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
-		if (returnTypeName == "void")
+		if (returnTypeName == KnownApis.Void)
 		{
 			return ProxyMethodKind.Notification;
 		}
@@ -331,24 +348,24 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		if (returnType is INamedTypeSymbol namedReturnType && namedReturnType.IsGenericType)
 		{
 			string genericTypeName = namedReturnType.ConstructedFrom.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-			if (genericTypeName is "global::System.Threading.Tasks.ValueTask<TResult>" or "global::System.Threading.Tasks.Task<TResult>")
+			if (genericTypeName is KnownApis.ValueTaskOfT or KnownApis.TaskOfT)
 			{
 				resultTypeName = namedReturnType.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-				return genericTypeName == "global::System.Threading.Tasks.ValueTask<TResult>" ? ProxyMethodKind.ValueTaskOfT : ProxyMethodKind.TaskOfT;
+				return genericTypeName == KnownApis.ValueTaskOfT ? ProxyMethodKind.ValueTaskOfT : ProxyMethodKind.TaskOfT;
 			}
 		}
 
 		return returnTypeName switch
 		{
-			"global::System.Threading.Tasks.ValueTask" => ProxyMethodKind.ValueTask,
-			"global::System.Threading.Tasks.Task" => ProxyMethodKind.Task,
+			KnownApis.ValueTask => ProxyMethodKind.ValueTask,
+			KnownApis.Task => ProxyMethodKind.Task,
 			_ => ProxyMethodKind.Unsupported,
 		};
 	}
 
 	private static string RenderProxy(InterfaceInfo info)
 	{
-		StringBuilder builder = new();
+		SourceWriter builder = new();
 		ImmutableArray<ShapeFieldInfo> shapeFields = GetShapeFields(info.Methods);
 		bool needsMethodNameTransform = info.Methods.Any(m => m.ExplicitRpcName is null && m.Kind is not ProxyMethodKind.Unsupported && !(info.IsMarshalable && IsDisposeMethod(m)));
 		string? methodNameTransformField = needsMethodNameTransform ? GetGeneratedMemberName(info, "NerdbankJsonRpc_MethodNameTransform") : null;
@@ -365,12 +382,12 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		builder.Append("[global::Nerdbank.JsonRpc.JsonRpcProxyImplementationAttribute(typeof(").Append(info.ProxyTypeName).AppendLine("))]");
 		builder.Append(GetAccessibility(info.Symbol.DeclaredAccessibility)).Append(" partial interface ").Append(info.Symbol.Name).AppendLine();
-		builder.AppendLine("{");
-		builder.AppendLine("}");
+		builder.OpenBlock();
+		builder.CloseBlock();
 		builder.AppendLine();
 
 		builder.Append("internal sealed class ").Append(info.ProxyName).Append(" : ").Append(info.InterfaceName).AppendLine();
-		builder.AppendLine("{");
+		builder.OpenBlock();
 		builder.AppendLine("\tprivate readonly global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc;");
 		builder.AppendLine("\tprivate readonly bool useNamedArguments;");
 
@@ -404,7 +421,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 
 		builder.Append("\tinternal ").Append(info.ProxyName).Append("(global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc, global::Nerdbank.JsonRpc.JsonRpcProxyOptions options)").AppendLine();
-		builder.AppendLine("\t{");
+		builder.OpenBlock("\t");
 		builder.AppendLine("\t\tthis.jsonRpc = jsonRpc;");
 		builder.AppendLine("\t\tthis.useNamedArguments = options.UseNamedArguments;");
 		if (needsMethodNameTransform)
@@ -415,7 +432,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		if (shapeFields.Length > 0)
 		{
 			builder.Append("\t\tglobal::PolyType.ITypeShapeProvider typeShapeProvider = global::PolyType.Abstractions.TypeShapeResolver.")
-				.Append(info.HasStaticTypeShapeResolver ? "Resolve" : "ResolveDynamicOrThrow")
+				.Append(info.HasStaticTypeShapeResolver ? KnownApis.TypeShapeResolve : KnownApis.TypeShapeResolveDynamicOrThrow)
 				.Append('<')
 				.Append(info.InterfaceName)
 				.AppendLine(">().Provider;");
@@ -431,7 +448,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				.AppendLine();
 		}
 
-		builder.AppendLine("\t}");
+		builder.CloseBlock("\t");
 
 		for (int i = 0; i < info.Methods.Length; i++)
 		{
@@ -439,7 +456,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.Append(RenderMethod(info.Methods[i], shapeFields, transformedRpcNameFields[i], methodNameTransformField, info.IsMarshalable));
 		}
 
-		builder.AppendLine("}");
+		builder.CloseBlock();
 		return builder.ToString();
 	}
 
@@ -485,12 +502,12 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 	private static string RenderMethod(MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields, string? transformedRpcNameField, string? methodNameTransformField, bool isMarshalable)
 	{
-		StringBuilder builder = new();
+		SourceWriter builder = new();
 		string parameters = string.Join(", ", method.Symbol.Parameters.Select(static p => $"{p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} {EscapeIdentifier(p.Name)}"));
-		string cancellationToken = method.HasCancellationToken ? EscapeIdentifier(method.Symbol.Parameters[^1].Name) : "global::System.Threading.CancellationToken.None";
+		string cancellationToken = method.HasCancellationToken ? EscapeIdentifier(method.Symbol.Parameters[^1].Name) : KnownApis.CancellationToken + ".None";
 
 		builder.Append("\tpublic ").Append(method.Symbol.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append(' ').Append(EscapeIdentifier(method.Symbol.Name)).Append('(').Append(parameters).AppendLine(")");
-		builder.AppendLine("\t{");
+		builder.OpenBlock("\t");
 
 		if (method.Kind is not ProxyMethodKind.Unsupported)
 		{
@@ -554,13 +571,13 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.AppendLine(");");
 		}
 
-		builder.AppendLine("\t}");
+		builder.CloseBlock("\t");
 
 		return builder.ToString();
 	}
 
 	private static bool IsDisposeMethod(MethodInfo method)
-		=> method.Symbol.Name == "Dispose" && method.Symbol.ContainingType.ToDisplayString() == "System.IDisposable" && method.Symbol.Parameters.Length == 0;
+		=> method.Symbol.Name == KnownApis.Dispose && method.Symbol.ContainingType.ToDisplayString() == KnownApis.IDisposable && method.Symbol.Parameters.Length == 0;
 
 	/// <summary>
 	/// Appends a C# expression that evaluates to the JSON-RPC wire name for the given method: the exact
@@ -572,7 +589,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	/// <param name="transformedRpcNameField">The generated field used to cache the transformed name, or <see langword="null"/> for explicit names.</param>
 	/// <param name="methodNameTransformField">The generated field containing the configured transform.</param>
 	/// <returns><paramref name="builder"/>, for chaining.</returns>
-	private static StringBuilder AppendRpcMethodName(StringBuilder builder, MethodInfo method, string? transformedRpcNameField, string? methodNameTransformField)
+	private static SourceWriter AppendRpcMethodName(SourceWriter builder, MethodInfo method, string? transformedRpcNameField, string? methodNameTransformField)
 	{
 		if (method.ExplicitRpcName is string explicitRpcName)
 		{
@@ -597,7 +614,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		throw new InvalidOperationException($"No cached shape field found for type '{typeName}'.");
 	}
 
-	private static StringBuilder AppendQuoted(StringBuilder builder, string value)
+	private static SourceWriter AppendQuoted(SourceWriter builder, string value)
 		=> builder.Append(Microsoft.CodeAnalysis.CSharp.SyntaxFactory.Literal(value).ToFullString());
 
 	private static string EscapeIdentifier(string identifier)
@@ -615,9 +632,95 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			_ => "internal",
 		};
 
-	private sealed record AttributeSymbols(INamedTypeSymbol? GenerateJsonRpcProxyAttribute, INamedTypeSymbol? RpcMarshalableAttribute);
+	private sealed record ProxyOutput(string HintName, string? Source, ImmutableArray<DiagnosticInfo> Diagnostics);
 
-	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods, bool HasStaticTypeShapeResolver, bool IsMarshalable, bool IsCallScoped, bool HasGenerateProxyAttribute, ImmutableArray<Diagnostic> Diagnostics)
+	private sealed class ProxyOutputComparer : IEqualityComparer<ProxyOutput>
+	{
+		internal static readonly ProxyOutputComparer Instance = new();
+
+		public bool Equals(ProxyOutput? x, ProxyOutput? y)
+			=> ReferenceEquals(x, y) || (x is not null && y is not null
+				&& x.HintName == y.HintName
+				&& x.Source == y.Source
+				&& x.Diagnostics.SequenceEqual(y.Diagnostics));
+
+		public int GetHashCode(ProxyOutput obj)
+		{
+			int hash = 17;
+			hash = (hash * 31) + StringComparer.Ordinal.GetHashCode(obj.HintName);
+			hash = (hash * 31) + (obj.Source is null ? 0 : StringComparer.Ordinal.GetHashCode(obj.Source));
+			foreach (DiagnosticInfo diagnostic in obj.Diagnostics)
+			{
+				hash = (hash * 31) + diagnostic.GetHashCode();
+			}
+
+			return hash;
+		}
+	}
+
+	private sealed record DiagnosticInfo(
+		bool IsMethodDiagnostic,
+		string FilePath,
+		int SpanStart,
+		int SpanLength,
+		int StartLine,
+		int StartCharacter,
+		int EndLine,
+		int EndCharacter,
+		string Argument0,
+		string Argument1)
+	{
+		internal static DiagnosticInfo Create(bool isMethodDiagnostic, Location? location, string argument0, string argument1)
+		{
+			FileLinePositionSpan lineSpan = location?.GetLineSpan() ?? default;
+			return new DiagnosticInfo(
+				isMethodDiagnostic,
+				location?.SourceTree?.FilePath ?? string.Empty,
+				location?.SourceSpan.Start ?? 0,
+				location?.SourceSpan.Length ?? 0,
+				lineSpan.StartLinePosition.Line,
+				lineSpan.StartLinePosition.Character,
+				lineSpan.EndLinePosition.Line,
+				lineSpan.EndLinePosition.Character,
+				argument0,
+				argument1);
+		}
+
+		internal Diagnostic ToDiagnostic()
+		{
+			DiagnosticDescriptor descriptor = this.IsMethodDiagnostic ? UnsupportedMethodSignature : UnsupportedInterface;
+			Location location = this.FilePath.Length == 0
+				? Location.None
+				: Location.Create(
+					this.FilePath,
+					new TextSpan(this.SpanStart, this.SpanLength),
+					new LinePositionSpan(new LinePosition(this.StartLine, this.StartCharacter), new LinePosition(this.EndLine, this.EndCharacter)));
+			return Diagnostic.Create(descriptor, location, this.Argument0, this.Argument1);
+		}
+	}
+
+	private static class KnownApis
+	{
+		internal const string GenerateJsonRpcProxyAttribute = "Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute";
+		internal const string RpcMarshalableAttribute = "Nerdbank.JsonRpc.RpcMarshalableAttribute";
+		internal const string MethodShapeAttribute = "PolyType.MethodShapeAttribute";
+		internal const string TypeShapeResolver = "PolyType.Abstractions.TypeShapeResolver";
+		internal const string CallScopedLifetime = "CallScopedLifetime";
+		internal const string MethodShapeName = "Name";
+		internal const string TypeShapeResolve = "Resolve";
+		internal const string TypeShapeResolveDynamicOrThrow = "ResolveDynamicOrThrow";
+		internal const string IDisposable = "System.IDisposable";
+		internal const string PolyTypeAssembly = "PolyType";
+		internal const string Dispose = "Dispose";
+		internal const string CancellationToken = "global::System.Threading.CancellationToken";
+		internal const string ValueTaskOfT = "global::System.Threading.Tasks.ValueTask<TResult>";
+		internal const string TaskOfT = "global::System.Threading.Tasks.Task<TResult>";
+		internal const string ValueTask = "global::System.Threading.Tasks.ValueTask";
+		internal const string Task = "global::System.Threading.Tasks.Task";
+		internal const string Void = "void";
+	}
+
+	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods, bool HasStaticTypeShapeResolver, bool IsMarshalable, bool IsCallScoped, bool HasGenerateProxyAttribute, ImmutableArray<DiagnosticInfo> Diagnostics)
 	{
 		internal string HintName => this.Symbol.ContainingNamespace.IsGlobalNamespace ? this.ProxyName + ".g.cs" : this.Symbol.ContainingNamespace.ToDisplayString() + "." + this.ProxyName + ".g.cs";
 

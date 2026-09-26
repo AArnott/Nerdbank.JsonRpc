@@ -1,6 +1,7 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Testing;
@@ -17,7 +18,7 @@ internal static class CSharpSourceGeneratorVerifier
 	internal static DiagnosticResult Diagnostic(string diagnosticId)
 		=> new(diagnosticId, DiagnosticSeverity.Warning);
 
-	internal static async Task VerifyGeneratorAsync(string source, params DiagnosticResult[] expected)
+	internal static async Task VerifyGeneratorAsync([StringSyntax("c#-test")] string source, params DiagnosticResult[] expected)
 	{
 		Test test = new()
 		{

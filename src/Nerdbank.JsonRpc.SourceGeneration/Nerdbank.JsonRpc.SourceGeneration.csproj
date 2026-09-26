@@ -1,8 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
+    <Import Project="..\AnalyzerCompatibility.props" />
     <PropertyGroup>
         <TargetFramework>netstandard2.0</TargetFramework>
         <IsPackable>false</IsPackable>
         <IsAnalyzerProject>true</IsAnalyzerProject>
+        <!-- Honor this generator project's version.json and produce a unique assembly identity per commit. -->
+        <GitVersionBaseDirectory>$(MSBuildProjectDirectory)</GitVersionBaseDirectory>
         <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
         <NoWarn>$(NoWarn);RS2008</NoWarn>
     </PropertyGroup>
@@ -11,4 +14,11 @@
         <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" PrivateAssets="all" />
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
     </ItemGroup>
+
+    <Target Name="SetAnalyzerAssemblyVersion" AfterTargets="GetBuildVersion">
+        <PropertyGroup>
+            <!-- NBGV's inherited root version keeps AssemblyVersion stable, so use this project's full Git version for analyzer host identity. -->
+            <AssemblyVersion>$(BuildVersion)</AssemblyVersion>
+        </PropertyGroup>
+    </Target>
 </Project>
