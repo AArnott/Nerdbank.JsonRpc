@@ -263,7 +263,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		};
 
 		ValueTask<JsonRpcResponse> responseTask = this.RequestAsync(request, cancellationToken);
-		return this.AwaitVoidResponseAsync(responseTask);
+		return this.AwaitVoidResponseAsync(request, responseTask);
 	}
 
 	public ValueTask NotifyAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
@@ -272,6 +272,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		try
 		{
 			JsonRpcValue serializedArguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken);
+			if (marshaledObjectsScope.HasMarshaledObjects)
+			{
+				throw new InvalidOperationException("Marshaled objects cannot be sent in notifications because the sender cannot know whether the receiver accepted them.");
+			}
+
 			JsonRpcRequest request = new()
 			{
 				Id = null,
@@ -298,7 +303,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			Arguments = arguments,
 		};
 
-		return this.AwaitVoidResponseAsync(this.RequestAsync(request, cancellationToken));
+		return this.AwaitVoidResponseAsync(request, this.RequestAsync(request, cancellationToken));
 	}
 
 	/// <inheritdoc/>
@@ -320,6 +325,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	public ValueTask NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
+		this.marshaledObjects.EnsureNoMarshaledObjects(arguments);
 
 		JsonRpcRequest request = new()
 		{
@@ -514,33 +520,56 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
-	internal async ValueTask AwaitVoidResponseAsync(ValueTask<JsonRpcResponse> responseTask)
+	internal async ValueTask AwaitVoidResponseAsync(JsonRpcRequest request, ValueTask<JsonRpcResponse> responseTask)
 	{
-		JsonRpcResponse response = await responseTask.ConfigureAwait(false);
-		switch (response)
+		try
 		{
-			case JsonRpcResult:
-				return;
-			case JsonRpcError error:
-				throw new JsonRpcException(error.Error);
-			default:
-				throw new InvalidOperationException("Received an unknown response type.");
+			JsonRpcResponse response = await responseTask.ConfigureAwait(false);
+			switch (response)
+			{
+				case JsonRpcResult:
+					return;
+				case JsonRpcError error:
+					this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
+					throw new JsonRpcException(error.Error);
+				default:
+					throw new InvalidOperationException("Received an unknown response type.");
+			}
+		}
+		finally
+		{
+			this.marshaledObjects.ReleaseCallScopedObjects(request.Arguments);
 		}
 	}
 
 	internal async ValueTask<TResult> AwaitTypedResponseAsync<TResult>(JsonRpcRequest request, ITypeShape<TResult> resultShape, ValueTask<JsonRpcResponse> responseTask, CancellationToken cancellationToken)
 	{
-		JsonRpcResponse response = await responseTask.ConfigureAwait(false);
-		switch (response)
+		try
 		{
-			case JsonRpcResult result:
-				TResult returnValue = this.userDataSerializer.Deserialize(result.Result, resultShape, cancellationToken)!;
-				return returnValue;
-			case JsonRpcError error:
-				throw new JsonRpcException(error.Error);
-			default:
-				throw new InvalidOperationException("Received an unknown response type.");
+			JsonRpcResponse response = await responseTask.ConfigureAwait(false);
+			switch (response)
+			{
+				case JsonRpcResult result:
+					TResult returnValue = this.userDataSerializer.Deserialize(result.Result, resultShape, cancellationToken)!;
+					return returnValue;
+				case JsonRpcError error:
+					this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
+					throw new JsonRpcException(error.Error);
+				default:
+					throw new InvalidOperationException("Received an unknown response type.");
+			}
 		}
+		finally
+		{
+			this.marshaledObjects.ReleaseCallScopedObjects(request.Arguments);
+		}
+	}
+
+	internal JsonRpcValue SerializeMarshaledResult<T>(T value, ITypeShape<T> shape, CancellationToken cancellationToken)
+	{
+		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects(allowCallScopedLifetime: false);
+		JsonRpcValue serialized = this.userDataSerializer.Serialize(value, shape, cancellationToken);
+		return serialized.WithMarshaledHandles(marshaledObjectsScope.Commit());
 	}
 
 	private Task<JsonRpcResponse?> DispatchAsync(JsonRpcRequest request)
@@ -598,6 +627,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			{
 				try
 				{
+					using MarshaledObjectManager.InboundCallScope inboundCallScope = this.marshaledObjects.TrackInboundCall(request.Id.HasValue);
+
 					// Changes to the ambient tracker made here are scoped to this async method's execution context.
 					string? parentToken = request.JoinableTaskToken;
 					JoinableTaskFactory? jtf = this.JoinableTaskFactory;
@@ -610,6 +641,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 						? await jtf.RunAsync(() => handler.Invoker(dispatchRequest).AsTask(), parentToken, JoinableTaskCreationOptions.None)
 						: await handler.Invoker(dispatchRequest).ConfigureAwait(false);
 					Assumes.True(request.Id is null == response.Response is null, "A response is expected iff the request included an ID.");
+					inboundCallScope.Complete(response.Response is not JsonRpcError);
 					return response.Response;
 				}
 				finally

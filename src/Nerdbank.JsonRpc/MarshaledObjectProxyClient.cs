@@ -3,7 +3,7 @@
 
 namespace Nerdbank.JsonRpc;
 
-internal sealed class MarshaledObjectProxyClient(JsonRpc owner, long handle) : IJsonRpcClient
+internal sealed class MarshaledObjectProxyClient(JsonRpc owner, long handle, MarshaledObjectManager.CallScopedHandle callScopedHandle) : IJsonRpcClient
 {
 	private int disposed;
 
@@ -31,7 +31,7 @@ internal sealed class MarshaledObjectProxyClient(JsonRpc owner, long handle) : I
 	{
 		if (method == "dispose")
 		{
-			if (Interlocked.Exchange(ref this.disposed, 1) == 0)
+			if (Interlocked.Exchange(ref this.disposed, 1) == 0 && !callScopedHandle.IsCallScoped)
 			{
 				owner.MarshaledObjects.Release(handle);
 			}
@@ -51,5 +51,7 @@ internal sealed class MarshaledObjectProxyClient(JsonRpc owner, long handle) : I
 		{
 			throw new ObjectDisposedException("marshaled proxy");
 		}
+
+		callScopedHandle.ThrowIfExpired();
 	}
 }

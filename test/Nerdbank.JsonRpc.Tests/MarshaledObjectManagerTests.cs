@@ -1,6 +1,7 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.Buffers;
 using System.IO.Pipelines;
 using System.Reflection;
 using System.Text;
@@ -14,6 +15,80 @@ namespace Nerdbank.JsonRpc.Tests;
 
 public partial class MarshaledObjectManagerTests : TestBase
 {
+	[Test]
+	public async Task MessagePackMarkerRejectsNilLifetime()
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe, NullLogger.Instance));
+		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe, NullLogger.Instance));
+		serverRpc.AddRpcTarget<IRemoteCounterService>(new RemoteCounterService());
+		serverRpc.Start();
+		clientRpc.Start();
+		Sequence<byte> bytes = new();
+		MessagePackWriter writer = new(bytes);
+		writer.WriteArrayHeader(1);
+		writer.WriteMapHeader(3);
+		writer.Write("__jsonrpc_marshaled");
+		writer.Write(1);
+		writer.Write("handle");
+		writer.Write(1L);
+		writer.Write("lifetime");
+		writer.WriteNil();
+		writer.Flush();
+		JsonRpcValue arguments = JsonRpcValue.FromMessagePack((RawMessagePack)bytes.AsReadOnlySequence.ToArray());
+
+		await Assert.ThrowsAsync<JsonRpcException>(() => clientRpc.RequestAsync("isSameCounter", arguments, CancellationToken.None).AsTask());
+	}
+
+	[Test]
+	public async Task JsonMarkerRejectsNonStringLifetime()
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
+		using JsonRpc serverRpc = new(new JsonRpcJsonChannel(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
+		serverRpc.AddRpcTarget<IRemoteCounterService>(new RemoteCounterService());
+		serverRpc.Start();
+		clientRpc.Start();
+		JsonRpcValue arguments = JsonRpcValue.FromJson("""[{"__jsonrpc_marshaled":1,"handle":1,"lifetime":null}]"""u8.ToArray());
+
+		await Assert.ThrowsAsync<JsonRpcException>(() => clientRpc.RequestAsync("isSameCounter", arguments, this.TimeoutToken).AsTask());
+	}
+
+	[Test]
+	public async Task RejectedRawNotificationReleasesMarshaledArguments()
+	{
+		(IDuplexPipe localPipe, _) = FullDuplexStream.CreatePipePair();
+		using JsonRpc rpc = new(new JsonRpcMessagePackChannel(localPipe, NullLogger.Instance));
+		TestDisposable disposable = new();
+		JsonRpcValue arguments;
+		using (JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named: false, count: 1, this.TimeoutToken))
+		{
+			builder.Add(null, disposable, TypeShapeResolver.ResolveDynamicOrThrow<IDisposable, Witness>());
+			arguments = builder.Build();
+		}
+
+		await Assert.ThrowsAsync<InvalidOperationException>(() => rpc.NotifyAsync("notify", arguments, this.TimeoutToken).AsTask());
+		Assert.True(disposable.IsDisposed);
+	}
+
+	[Test]
+	public void RejectedRawBatchNotificationReleasesMarshaledArguments()
+	{
+		(IDuplexPipe localPipe, _) = FullDuplexStream.CreatePipePair();
+		using JsonRpc rpc = new(new JsonRpcMessagePackChannel(localPipe, NullLogger.Instance));
+		TestDisposable disposable = new();
+		JsonRpcValue arguments;
+		using (JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named: false, count: 1, this.TimeoutToken))
+		{
+			builder.Add(null, disposable, TypeShapeResolver.ResolveDynamicOrThrow<IDisposable, Witness>());
+			arguments = builder.Build();
+		}
+
+		using JsonRpcBatch batch = rpc.CreateBatch();
+		Assert.Throws<InvalidOperationException>(() => batch.NotifyAsync("notify", arguments, this.TimeoutToken));
+		Assert.True(disposable.IsDisposed);
+	}
+
 	[Test]
 	public async Task DisposingRemoteProxySendsReleaseNotification()
 	{
