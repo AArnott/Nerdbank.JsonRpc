@@ -178,7 +178,7 @@ if ($isMTP) {
             }
 
             Write-Host "Running NativeAOT tests for $framework from '$($nativeAotExecutables[0].FullName)'." -ForegroundColor Cyan
-            & $nativeAotExecutables[0].FullName @nativeAotArgs @extraArgs
+            & $nativeAotExecutables[0].FullName '--treenode-filter=/*/*/*/*[TestCategory!=FailsInCloudTest]' @nativeAotArgs @extraArgs
             if ($LASTEXITCODE -ne 0) { $failedTests += 1 }
         }
     }
