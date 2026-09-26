@@ -77,7 +77,6 @@ public class GeneratedProxyTests
 	[Arguments(JsonRpcEncoding.Json)]
 	public async Task GeneratedProxy_MarshalsDisposableParameterEndToEnd(JsonRpcEncoding encoding)
 	{
-		NativeAotTestHelper.SkipNerdbankJsonOnNativeAot(encoding);
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
 		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
@@ -100,7 +99,6 @@ public class GeneratedProxyTests
 	[Arguments(JsonRpcEncoding.Json)]
 	public async Task GeneratedProxy_MarshalsDisposableReturnValueEndToEnd(JsonRpcEncoding encoding)
 	{
-		NativeAotTestHelper.SkipNerdbankJsonOnNativeAot(encoding);
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
 		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
@@ -123,7 +121,6 @@ public class GeneratedProxyTests
 	[Arguments(JsonRpcEncoding.Json)]
 	public async Task GeneratedProxy_PreservesRemoteDisposableWhenSentBack(JsonRpcEncoding encoding)
 	{
-		NativeAotTestHelper.SkipNerdbankJsonOnNativeAot(encoding);
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
 		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
@@ -143,7 +140,6 @@ public class GeneratedProxyTests
 	[Arguments(JsonRpcEncoding.Json)]
 	public async Task GeneratedProxy_MarshalsDisposablePropertyEndToEnd(JsonRpcEncoding encoding)
 	{
-		NativeAotTestHelper.SkipNerdbankJsonOnNativeAot(encoding);
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
 		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
@@ -167,7 +163,6 @@ public class GeneratedProxyTests
 	[Arguments(JsonRpcEncoding.Json)]
 	public async Task GeneratedProxy_SerializesConcreteDisposablePropertyByValue(JsonRpcEncoding encoding)
 	{
-		NativeAotTestHelper.SkipNerdbankJsonOnNativeAot(encoding);
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
 		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));

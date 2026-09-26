@@ -160,7 +160,7 @@ if ($isMTP) {
 
     if ($IncludeNativeAOT) {
         $projectName = 'Nerdbank.JsonRpc.Tests'
-        $framework = 'net9.0'
+        $framework = 'net10.0'
         $testExecutableName = if ($IsMacOS -or $IsLinux) { $projectName } else { "$projectName.exe" }
         $nativeAotExecutables = @(
             Get-ChildItem -Path (Join-Path $RepoRoot "bin/$projectName/$Configuration/$framework/*/publish/$testExecutableName") -File -ErrorAction SilentlyContinue
