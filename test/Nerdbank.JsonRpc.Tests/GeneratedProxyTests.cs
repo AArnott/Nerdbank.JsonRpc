@@ -2,7 +2,6 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO.Pipelines;
-using System.Reflection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.Threading;
 using Nerdbank.Streams;
@@ -243,22 +242,16 @@ public class GeneratedProxyTests
 		serverRpc.AddRpcTarget<IRemoteCounterService>(target);
 		serverRpc.Start();
 		clientRpc.Start();
-		IRemoteCounterService client = clientRpc.Attach<IRemoteCounterService>();
-		IRemoteCounter proxy = await client.GetCounterAsync(CancellationToken.None);
-		FieldInfo clientField = Assert.Single(proxy.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic), static field => field.FieldType == typeof(IJsonRpcClient));
-		object proxyClient = clientField.GetValue(proxy)!;
-		long handle = (long)Assert.Single(proxyClient.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic), static field => field.FieldType == typeof(long)).GetValue(proxyClient)!;
 
-		proxy.Dispose();
+		// Read the raw wire marker instead of a generated proxy so the test can drive the protocol directly.
+		MarshaledObjectMarker marker = await clientRpc.RequestAsync("getCounter", CreateEmptyArguments(clientRpc), ShapeProvider.Default.MarshaledObjectMarker, CancellationToken.None);
+		string incrementMethod = $"$/invokeProxy/{marker.Handle}/increment";
+		Assert.Equal(1, await clientRpc.RequestAsync(incrementMethod, CreateEmptyArguments(clientRpc), ShapeProvider.Default.Int32, CancellationToken.None));
+
+		await clientRpc.NotifyAsync("$/releaseMarshaledObject", marker, ShapeProvider.Default.MarshaledObjectMarker, CancellationToken.None);
 		await target.Counter.Disposed.Task;
-		JsonRpcValue arguments;
-		using (JsonRpcArgumentsBuilder argumentsBuilder = clientRpc.CreateArguments(named: false, count: 0))
-		{
-			arguments = argumentsBuilder.Build();
-		}
 
-		JsonRpcException exception = await Assert.ThrowsAsync<JsonRpcException>(() => clientRpc.RequestAsync($"$/invokeProxy/{handle}/increment", arguments, ShapeProvider.Default.Int32, CancellationToken.None).AsTask());
-
+		JsonRpcException exception = await Assert.ThrowsAsync<JsonRpcException>(() => clientRpc.RequestAsync(incrementMethod, CreateEmptyArguments(clientRpc), ShapeProvider.Default.Int32, CancellationToken.None).AsTask());
 		Assert.Equal(JsonRpcErrorCode.MethodNotFound, exception.ErrorDetails.Code);
 	}
 
@@ -493,6 +486,12 @@ public class GeneratedProxyTests
 
 		ArgumentException ex = Assert.Throws<ArgumentException>(() => clientRpc.Attach(typeof(string)));
 		Assert.Contains("interface", ex.Message, StringComparison.OrdinalIgnoreCase);
+	}
+
+	private static JsonRpcValue CreateEmptyArguments(JsonRpc rpc)
+	{
+		using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named: false, count: 0);
+		return builder.Build();
 	}
 
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
