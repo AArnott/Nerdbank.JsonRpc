@@ -169,6 +169,11 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 	private static string? GetUnsupportedSignatureReason(IMethodSymbol method, bool isMarshalable)
 	{
+		if (method.ReturnsVoid && method.Parameters.Any(static parameter => ContainsRpcMarshalableInterface(parameter.Type)))
+		{
+			return "notification methods cannot accept RPC-marshalable interface parameters";
+		}
+
 		if (method.IsGenericMethod)
 		{
 			return "generic methods are not supported yet";
@@ -210,6 +215,23 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 
 		return null;
+	}
+
+	private static bool ContainsRpcMarshalableInterface(ITypeSymbol type)
+	{
+		if (type is IArrayTypeSymbol arrayType)
+		{
+			return ContainsRpcMarshalableInterface(arrayType.ElementType);
+		}
+
+		if (type is not INamedTypeSymbol namedType)
+		{
+			return false;
+		}
+
+		return (namedType.TypeKind == TypeKind.Interface
+			&& namedType.GetAttributes().Any(static attribute => attribute.AttributeClass?.ToDisplayString() == "Nerdbank.JsonRpc.RpcMarshalableAttribute"))
+			|| namedType.TypeArguments.Any(ContainsRpcMarshalableInterface);
 	}
 
 	private static bool IsCancellationToken(ITypeSymbol type)
