@@ -550,7 +550,12 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			return Task.FromResult<JsonRpcResponse?>(null);
 		}
 
-		if (!this.handlers.TryGetValue(request.Method, out (object? Target, MethodInvoker Invoker) handler))
+		(object? Target, MethodInvoker Invoker) handler;
+		if (this.marshaledObjects.TryGetMethodInvoker(request, out object? marshaledTarget, out MethodInvoker? marshaledInvoker))
+		{
+			handler = (marshaledTarget, marshaledInvoker);
+		}
+		else if (!this.handlers.TryGetValue(request.Method, out handler))
 		{
 			return Task.FromResult<JsonRpcResponse?>(request.Id is RequestId missingId
 				? new JsonRpcError { Id = missingId, Error = new() { Code = JsonRpcErrorCode.MethodNotFound, Message = $"The method {request.Method} is not supported." } }

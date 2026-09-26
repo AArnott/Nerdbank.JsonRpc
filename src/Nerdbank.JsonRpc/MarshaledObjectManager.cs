@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Nerdbank.MessagePack;
 using Nerdbank.Streams;
@@ -14,9 +15,10 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	private const string Handle = "handle";
 	private const string Lifetime = "lifetime";
 	private const string ReleaseMethod = "$/releaseMarshaledObject";
+	private static readonly ConditionalWeakTable<object, RemoteObjectHandle> RemoteHandles = new();
 	private readonly object sync = new();
-	private readonly Dictionary<long, LocalObjectLease> localObjects = [];
-	private readonly Dictionary<IDisposable, long> localHandles = new(ReferenceEqualityComparer<IDisposable>.Instance);
+	private readonly Dictionary<long, MarshaledLocalObject> localObjects = [];
+	private readonly Dictionary<IDisposable, LocalObjectLease> localLeases = new(ReferenceEqualityComparer<IDisposable>.Instance);
 	private readonly AsyncLocal<HandleScope?> activeScope = new();
 	private long nextHandle;
 
@@ -27,28 +29,18 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new ArgumentNullException(nameof(value));
 		}
 
-		if (value is RemoteDisposable { Owner: var remoteOwner, Handle: long remoteHandle } && ReferenceEquals(remoteOwner, this))
+		return this.Marshal(value, typeof(IDisposable), registration: null, encoding);
+	}
+
+	internal JsonRpcValue MarshalMarshalable<T>(T value, ITypeShape<T> shape, JsonRpcEncoding encoding)
+	{
+		if (value is not IDisposable disposable)
 		{
-			return encoding == JsonRpcEncoding.Json ? WriteJson(remoteHandle, direction: 0) : WriteMessagePack(remoteHandle, direction: 0);
+			throw new InvalidOperationException($"Values marshaled as '{shape.Type}' must implement IDisposable.");
 		}
 
-		long handle;
-		lock (this.sync)
-		{
-			if (this.localHandles.TryGetValue(value, out handle))
-			{
-				this.localObjects[handle].AddRef();
-			}
-			else
-			{
-				handle = Interlocked.Increment(ref this.nextHandle);
-				this.localObjects.Add(handle, new(value));
-				this.localHandles.Add(value, handle);
-			}
-		}
-
-		this.activeScope.Value?.Add(handle);
-		return encoding == JsonRpcEncoding.Json ? WriteJson(handle, direction: 1) : WriteMessagePack(handle, direction: 1);
+		TargetRegistration registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, new JsonRpcTargetOptions())!;
+		return this.Marshal(disposable, shape.Type, registration, encoding);
 	}
 
 	internal IDisposable Unmarshal(JsonRpcValue value)
@@ -58,9 +50,9 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		{
 			lock (this.sync)
 			{
-				if (this.localObjects.TryGetValue(handle, out LocalObjectLease? local))
+				if (this.localObjects.TryGetValue(handle, out MarshaledLocalObject? local))
 				{
-					return local.Value;
+					return local.Lease.Value;
 				}
 			}
 
@@ -68,6 +60,57 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		}
 
 		return new RemoteDisposable(this, handle);
+	}
+
+	internal T UnmarshalMarshalable<T>(JsonRpcValue value, ITypeShape<T> shape)
+	{
+		(long handle, int direction) = ReadMarker(value);
+		if (direction == 0)
+		{
+			lock (this.sync)
+			{
+				if (this.localObjects.TryGetValue(handle, out MarshaledLocalObject? local))
+				{
+					return (T)(object)local.Lease.Value;
+				}
+			}
+
+			throw new InvalidOperationException($"Marshaled object handle {handle} is not available.");
+		}
+
+		object proxy = JsonRpc.AttachCore(new MarshaledObjectProxyClient(owner, handle), typeof(T));
+		RemoteHandles.Add(proxy, new(this, handle));
+		return (T)proxy;
+	}
+
+	internal bool TryGetMethodInvoker(JsonRpcRequest request, out object? target, out MethodInvoker invoker)
+	{
+		target = null;
+		invoker = null!;
+		const string prefix = "$/invokeProxy/";
+		if (!request.Method.StartsWith(prefix, StringComparison.Ordinal))
+		{
+			return false;
+		}
+
+		int separator = request.Method.IndexOf('/', prefix.Length);
+		if (separator < 0 || !long.TryParse(request.Method.Substring(prefix.Length, separator - prefix.Length), out long handle))
+		{
+			return false;
+		}
+
+		string method = request.Method[(separator + 1)..];
+		lock (this.sync)
+		{
+			if (this.localObjects.TryGetValue(handle, out MarshaledLocalObject? local) && local.MethodInvokers.TryGetValue(method, out MethodInvoker? foundInvoker))
+			{
+				target = local.Lease.Value;
+				invoker = foundInvoker;
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	internal bool TryHandleNotification(JsonRpcRequest request)
@@ -81,17 +124,6 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			}
 
 			return true;
-		}
-
-		const string prefix = "$/invokeProxy/";
-		if (request.Method.StartsWith(prefix, StringComparison.Ordinal))
-		{
-			string[] parts = request.Method.Split('/');
-			if (parts.Length == 4 && parts[3] == "Dispose" && long.TryParse(parts[2], out long handle))
-			{
-				this.ReleaseLocal(handle);
-				return true;
-			}
 		}
 
 		return false;
@@ -108,9 +140,9 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		IDisposable[] values;
 		lock (this.sync)
 		{
-			values = [.. this.localObjects.Values.Select(static lease => lease.Value)];
+			values = [.. this.localLeases.Keys];
 			this.localObjects.Clear();
-			this.localHandles.Clear();
+			this.localLeases.Clear();
 		}
 
 		List<Exception>? exceptions = null;
@@ -250,16 +282,64 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		return (positionalHandle, positionalOwned);
 	}
 
+	private JsonRpcValue Marshal(IDisposable value, Type contractType, TargetRegistration? registration, JsonRpcEncoding encoding)
+	{
+		if (value is RemoteDisposable { Owner: var remoteOwner, Handle: long remoteHandle } && ReferenceEquals(remoteOwner, this))
+		{
+			return encoding == JsonRpcEncoding.Json ? WriteJson(remoteHandle, direction: 0) : WriteMessagePack(remoteHandle, direction: 0);
+		}
+
+		if (RemoteHandles.TryGetValue(value, out RemoteObjectHandle? remoteObject) && ReferenceEquals(remoteObject.Manager, this))
+		{
+			return encoding == JsonRpcEncoding.Json ? WriteJson(remoteObject.Handle, direction: 0) : WriteMessagePack(remoteObject.Handle, direction: 0);
+		}
+
+		long handle;
+		lock (this.sync)
+		{
+			if (!this.localLeases.TryGetValue(value, out LocalObjectLease? lease))
+			{
+				lease = new(value);
+				this.localLeases.Add(value, lease);
+			}
+
+			if (lease.Handles.TryGetValue(contractType, out handle))
+			{
+				this.localObjects[handle].AddRef();
+			}
+			else
+			{
+				handle = Interlocked.Increment(ref this.nextHandle);
+				MarshaledLocalObject marshaledObject = new(lease, contractType);
+				if (registration is not null)
+				{
+					marshaledObject.AddRegistration(registration);
+				}
+
+				lease.Handles.Add(contractType, handle);
+				this.localObjects.Add(handle, marshaledObject);
+			}
+		}
+
+		this.activeScope.Value?.Add(handle);
+		return encoding == JsonRpcEncoding.Json ? WriteJson(handle, direction: 1) : WriteMessagePack(handle, direction: 1);
+	}
+
 	private void ReleaseLocal(long handle)
 	{
 		IDisposable? value = null;
 		lock (this.sync)
 		{
-			if (this.localObjects.TryGetValue(handle, out LocalObjectLease? lease) && lease.Release())
+			if (this.localObjects.TryGetValue(handle, out MarshaledLocalObject? marshaledObject) && marshaledObject.Release())
 			{
+				LocalObjectLease lease = marshaledObject.Lease;
 				this.localObjects.Remove(handle);
-				this.localHandles.Remove(lease.Value);
-				value = lease.Value;
+				lease.Handles.Remove(marshaledObject.ContractType!);
+				if (lease.Handles.Count == 0)
+				{
+					this.localLeases.Remove(lease.Value);
+					value = lease.Value;
+				}
 			}
 		}
 
@@ -319,14 +399,38 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 	private sealed class LocalObjectLease(IDisposable value)
 	{
-		private int count = 1;
-
 		internal IDisposable Value => value;
 
-		internal void AddRef() => this.count++;
-
-		internal bool Release() => --this.count == 0;
+		internal Dictionary<Type, long> Handles { get; } = [];
 	}
+
+	private sealed class MarshaledLocalObject(LocalObjectLease lease, Type contractType)
+	{
+		private int referenceCount = 1;
+
+		internal LocalObjectLease Lease => lease;
+
+		internal Type ContractType => contractType;
+
+		internal Dictionary<string, MethodInvoker> MethodInvokers { get; } = new(StringComparer.Ordinal);
+
+		internal void AddRef() => this.referenceCount++;
+
+		internal bool Release() => --this.referenceCount == 0;
+
+		internal void AddRegistration(TargetRegistration registration)
+		{
+			foreach ((string name, MethodInvoker invoker) in registration.MethodInvokers)
+			{
+				if (!this.MethodInvokers.TryAdd(name, invoker))
+				{
+					throw new InvalidOperationException($"Multiple marshalable methods map to '{name}'.");
+				}
+			}
+		}
+	}
+
+	private sealed record RemoteObjectHandle(MarshaledObjectManager Manager, long Handle);
 
 	private sealed class ReferenceEqualityComparer<T> : IEqualityComparer<T>
 		where T : class

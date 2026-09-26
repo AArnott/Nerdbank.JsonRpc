@@ -30,6 +30,7 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 		=> new MessagePackSerializerPlugin(this.Serializer with
 		{
 			Converters = ConverterCollection.Create([new MarshaledDisposableMessagePackConverter(manager), .. this.Serializer.Converters]),
+			ConverterFactories = [new MarshaledInterfaceMessagePackConverterFactory(manager), .. this.Serializer.ConverterFactories],
 		});
 
 	/// <inheritdoc/>
