@@ -174,8 +174,9 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 	internal void EnsureNoMarshaledObjects(JsonRpcValue arguments)
 	{
-		if (arguments.MarshaledHandles?.HasMarshaledObjects is true)
+		if (arguments.MarshaledHandles is { HasMarshaledObjects: true } handles)
 		{
+			handles.ReleaseAll();
 			throw new InvalidOperationException("Marshaled objects cannot be sent in notifications because the sender cannot know whether the receiver accepted them.");
 		}
 	}
