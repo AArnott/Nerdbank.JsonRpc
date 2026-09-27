@@ -21,7 +21,7 @@ public partial class ProgressTests
 		serverRpc.Start();
 		clientRpc.Start();
 		IProgressService client = clientRpc.Attach<IProgressService>();
-		RecordingProgress progress = new();
+		RecordingProgress<int> progress = new();
 
 		Assert.Equal(3, await client.ReportProgressAsync(progress, CancellationToken.None));
 		Assert.Equal(new[] { 1, 2 }, progress.Values);
@@ -56,7 +56,7 @@ public partial class ProgressTests
 		clientRpc.Start();
 		using JsonRpcBatch batch = clientRpc.CreateBatch();
 		IProgressService client = batch.Attach<IProgressService>();
-		RecordingProgress progress = new();
+		RecordingProgress<int> progress = new();
 
 		Task<int> result = client.ReportProgressAsync(progress, CancellationToken.None);
 		await batch.SendAsync();
@@ -76,11 +76,31 @@ public partial class ProgressTests
 		serverRpc.Start();
 		clientRpc.Start();
 		IProgressService client = clientRpc.Attach<IProgressService>();
-		RecordingProgress progress = new();
+		RecordingProgress<int> progress = new();
 
 		await client.ReportProgressAsync(progress, CancellationToken.None);
 		Assert.True(await client.ReportAfterCompletionAsync(CancellationToken.None));
 		Assert.Equal(new[] { 1, 2 }, progress.Values);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task MultipleProgressParametersOfDistinctTypesReportIndependently(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IProgressService>(new ProgressService());
+		serverRpc.Start();
+		clientRpc.Start();
+		IProgressService client = clientRpc.Attach<IProgressService>();
+		RecordingProgress<int> numbers = new();
+		RecordingProgress<string> messages = new();
+
+		Assert.Equal(3, await client.ReportMultipleProgressAsync(numbers, messages, CancellationToken.None));
+		Assert.Equal(new[] { 1, 2 }, numbers.Values);
+		Assert.Equal(new[] { "a", "b" }, messages.Values);
 	}
 
 	[Test]
@@ -92,7 +112,7 @@ public partial class ProgressTests
 		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
 		ITypeShape<IProgress<int>> shape = TypeShapeResolver.ResolveDynamicOrThrow<IProgress<int>, Witness>();
 
-		await Assert.ThrowsAsync<InvalidOperationException>(() => clientRpc.NotifyAsync("report", new RecordingProgress(), shape, CancellationToken.None).AsTask());
+		await Assert.ThrowsAsync<InvalidOperationException>(() => clientRpc.NotifyAsync("report", new RecordingProgress<int>(), shape, CancellationToken.None).AsTask());
 	}
 
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)

@@ -10,4 +10,6 @@ internal partial interface IProgressService
 	Task<int> ReportProgressAsync(IProgress<int>? progress, CancellationToken cancellationToken);
 
 	Task<bool> ReportAfterCompletionAsync(CancellationToken cancellationToken);
+
+	Task<int> ReportMultipleProgressAsync(IProgress<int>? numbers, IProgress<string>? messages, CancellationToken cancellationToken);
 }

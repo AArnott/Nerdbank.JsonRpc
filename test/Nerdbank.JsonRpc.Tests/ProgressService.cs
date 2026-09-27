@@ -18,4 +18,13 @@ internal sealed class ProgressService : IProgressService
 		this.progress?.Report(3);
 		return Task.FromResult(true);
 	}
+
+	public Task<int> ReportMultipleProgressAsync(IProgress<int>? numbers, IProgress<string>? messages, CancellationToken cancellationToken)
+	{
+		numbers?.Report(1);
+		messages?.Report("a");
+		numbers?.Report(2);
+		messages?.Report("b");
+		return Task.FromResult(3);
+	}
 }

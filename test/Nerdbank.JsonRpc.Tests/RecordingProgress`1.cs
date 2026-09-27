@@ -1,11 +1,11 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-internal sealed class RecordingProgress : IProgress<int>
+internal sealed class RecordingProgress<T> : IProgress<T>
 {
-	private readonly List<int> values = [];
+	private readonly List<T> values = [];
 
-	internal IReadOnlyList<int> Values
+	internal IReadOnlyList<T> Values
 	{
 		get
 		{
@@ -16,7 +16,7 @@ internal sealed class RecordingProgress : IProgress<int>
 		}
 	}
 
-	public void Report(int value)
+	public void Report(T value)
 	{
 		lock (this.values)
 		{
