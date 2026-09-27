@@ -26,7 +26,7 @@ public partial class ObserverTests
 		IObserverService client = clientRpc.Attach<IObserverService>();
 		TestObserver observer = new();
 
-		await client.SubscribeAsync(observer, cts.Token);
+		using IDisposable subscription = await client.SubscribeAsync(observer, cts.Token);
 		Assert.NotNull(service.Subscriber);
 		service.Subscriber.OnNext(42);
 		service.Subscriber.OnCompleted();
@@ -34,6 +34,47 @@ public partial class ObserverTests
 		await observer.Completed.Task.WithCancellation(cts.Token);
 		Assert.False(observer.IsDisposed);
 		Assert.Throws<ObjectDisposedException>(() => service.Subscriber.OnNext(43));
+	}
+
+	/// <summary>Verifies remote unsubscription stops updates after the server processes disposal.</summary>
+	/// <param name="encoding">The wire encoding to exercise.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task DisposingSubscriptionStopsUpdates(JsonRpcEncoding encoding)
+	{
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		ObserverService service = new();
+		serverRpc.AddRpcTarget<IObserverService>(service);
+		serverRpc.Start();
+		clientRpc.Start();
+		IObserverService client = clientRpc.Attach<IObserverService>();
+		TestObserver observer = new();
+		TestObserver remainingObserver = new();
+		using IDisposable subscription = await client.SubscribeAsync(observer, cts.Token);
+		using IDisposable remainingSubscription = await client.SubscribeAsync(remainingObserver, cts.Token);
+
+		service.Publish(1);
+		Assert.Equal(1, await observer.Updates.DequeueAsync(cts.Token));
+		Assert.Equal(1, await remainingObserver.Updates.DequeueAsync(cts.Token));
+
+		// This update may still be in flight when Dispose returns and must not be treated as a failure.
+		service.Publish(2);
+		subscription.Dispose();
+		await service.Unsubscribed.Task.WithCancellation(cts.Token);
+		service.Publish(3);
+
+		Assert.Equal(2, await remainingObserver.Updates.DequeueAsync(cts.Token));
+		Assert.Equal(3, await remainingObserver.Updates.DequeueAsync(cts.Token));
+
+		// Both observers share an ordered connection. The last update is a delivery barrier, not a delay.
+		Assert.Equal(new[] { 1, 2 }, observer.Values.ToArray());
+		Assert.Equal(new[] { 1, 2, 3 }, remainingObserver.Values.ToArray());
+		Assert.False(observer.IsDisposed);
 	}
 
 	[Test]

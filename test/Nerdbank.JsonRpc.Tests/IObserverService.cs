@@ -7,7 +7,7 @@ using PolyType;
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IObserverService
 {
-	Task SubscribeAsync(IObserver<int> observer, CancellationToken cancellationToken);
+	Task<IDisposable> SubscribeAsync(IObserver<int> observer, CancellationToken cancellationToken);
 
 	Task<IObserver<int>> GetObserverAsync(CancellationToken cancellationToken);
 

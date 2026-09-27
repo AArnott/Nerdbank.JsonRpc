@@ -26,8 +26,10 @@ Set <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute.CallScopedLifetime> to `true`
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface ISubscriptionService
 {
-    Task SubscribeAsync(IObserver<int> observer, CancellationToken cancellationToken);
+    Task<IDisposable> SubscribeAsync(IObserver<int> observer, CancellationToken cancellationToken);
 }
 ```
+
+Returning `IDisposable` from a subscription method lets the caller unsubscribe by disposing the returned proxy. Disposal is a notification: updates already in flight can still arrive until the server processes the unsubscribe.
 
 `OnError` transports the exception message; the remote endpoint receives an `Exception` with that message, not the original exception type. See StreamJsonRpc's [observer documentation](https://microsoft.github.io/vs-streamjsonrpc/exotic_types/observer.html) for protocol details.
