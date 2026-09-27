@@ -54,7 +54,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 		this.marshaledObjects = new(this);
 		this.progress = new(this);
-		this.outOfBandStreams = new(this);
+		this.outOfBandStreams = new();
 		this.userDataSerializer = serializer.WithMarshaledObjectManager(this.marshaledObjects, this.progress, this.outOfBandStreams);
 
 		// Store a delegate we can reuse to avoid allocations.
@@ -264,12 +264,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	{
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects();
 		using ProgressManager.RegistrationScope progressScope = this.progress.TrackRegistrations();
+		using OutOfBandStreamManager.OutboundScope outOfBandStreamScope = this.outOfBandStreams.TrackOutboundRequest();
 		JsonRpcValue serializedArguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = this.GetNextRequestId(),
 			Method = method,
-			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithProgressRegistrations(progressScope.Commit()),
+			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithProgressRegistrations(progressScope.Commit()).WithOutOfBandChannels(outOfBandStreamScope.Commit()),
 		};
 
 		ValueTask<JsonRpcResponse> responseTask = this.RequestAsync(request, cancellationToken);
@@ -280,12 +281,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	{
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects();
 		using ProgressManager.RegistrationScope progressScope = this.progress.TrackRegistrations();
+		using OutOfBandStreamManager.OutboundScope outOfBandStreamScope = this.outOfBandStreams.TrackOutboundRequest();
 		JsonRpcValue serializedArguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = this.GetNextRequestId(),
 			Method = method,
-			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithProgressRegistrations(progressScope.Commit()),
+			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithProgressRegistrations(progressScope.Commit()).WithOutOfBandChannels(outOfBandStreamScope.Commit()),
 		};
 
 		ValueTask<JsonRpcResponse> responseTask = this.RequestAsync(request, cancellationToken);
@@ -589,7 +591,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 						return returnValue;
 					}
 
-
 				case JsonRpcError error:
 					this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
 					throw new JsonRpcException(error.Error);
@@ -608,8 +609,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects(allowCallScopedLifetime: false);
 		using OutOfBandStreamManager.OutboundScope outOfBandStreamScope = this.outOfBandStreams.TrackOutboundRequest();
 		JsonRpcValue serialized = this.userDataSerializer.Serialize(value, shape, cancellationToken);
-		outOfBandStreamScope.Commit();
-		return serialized.WithMarshaledHandles(marshaledObjectsScope.Commit());
+		OutOfBandStreamManager.ChannelSet outOfBandChannels = outOfBandStreamScope.Commit();
+		this.outOfBandStreams.TrackActiveChannels(outOfBandChannels);
+		return serialized.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithOutOfBandChannels(outOfBandChannels);
 	}
 
 	private Task<JsonRpcResponse?> DispatchAsync(JsonRpcRequest request)
@@ -724,6 +726,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			if (this.pendingOutboundRequests.TryRemove(response.Id, out TaskCompletionSource<JsonRpcResponse>? tcs))
 			{
 				this.progress.UnregisterOutboundRequest(response.Id);
+				this.outOfBandStreams.CompleteOutboundRequest(response.Id, successful: response is JsonRpcResult);
 				tcs.TrySetResult(response);
 			}
 			else

@@ -8,14 +8,31 @@ using Nerdbank.Streams;
 
 namespace Nerdbank.JsonRpc;
 
-internal sealed class OutOfBandStreamManager(JsonRpc owner) : IDisposable
+internal sealed class OutOfBandStreamManager : IDisposable
 {
 	private readonly object sync = new();
 	private readonly Dictionary<RequestId, ChannelSet> outboundChannels = [];
+	private readonly List<ChannelSet> activeChannels = [];
 	private readonly AsyncLocal<OutboundScope?> activeOutboundScope = new();
 	private readonly AsyncLocal<InboundScope?> activeInboundScope = new();
 
 	internal MultiplexingStream? MultiplexingStream { get; set; }
+
+	public void Dispose()
+	{
+		ChannelSet[] channels;
+		lock (this.sync)
+		{
+			channels = [.. this.outboundChannels.Values, .. this.activeChannels];
+			this.outboundChannels.Clear();
+			this.activeChannels.Clear();
+		}
+
+		foreach (ChannelSet set in channels)
+		{
+			set.Dispose();
+		}
+	}
 
 	internal OutboundScope TrackOutboundRequest() => new(this);
 
@@ -68,11 +85,28 @@ internal sealed class OutOfBandStreamManager(JsonRpc owner) : IDisposable
 			}
 
 			this.outboundChannels.Remove(id);
+			if (successful)
+			{
+				this.activeChannels.Add(channels);
+				return;
+			}
 		}
 
-		if (!successful)
+		channels.Dispose();
+	}
+
+	/// <summary>Keeps a set of channels alive (and disposes them when this connection is disposed) after ownership has successfully transferred to a peer.</summary>
+	/// <param name="channels">The channels to track.</param>
+	internal void TrackActiveChannels(ChannelSet channels)
+	{
+		if (channels.IsEmpty)
 		{
-			channels.Dispose();
+			return;
+		}
+
+		lock (this.sync)
+		{
+			this.activeChannels.Add(channels);
 		}
 	}
 
@@ -81,21 +115,6 @@ internal sealed class OutOfBandStreamManager(JsonRpc owner) : IDisposable
 		if (arguments.OutOfBandChannels is ChannelSet { IsEmpty: false })
 		{
 			throw new InvalidOperationException("Out-of-band streams cannot be sent in notifications.");
-		}
-	}
-
-	public void Dispose()
-	{
-		ChannelSet[] channels;
-		lock (this.sync)
-		{
-			channels = [.. this.outboundChannels.Values];
-			this.outboundChannels.Clear();
-		}
-
-		foreach (ChannelSet set in channels)
-		{
-			set.Dispose();
 		}
 	}
 
@@ -142,14 +161,6 @@ internal sealed class OutOfBandStreamManager(JsonRpc owner) : IDisposable
 			manager.activeOutboundScope.Value = this;
 		}
 
-		internal void Add(MultiplexingStream.Channel channel) => this.channels.Add(channel);
-
-		internal ChannelSet Commit()
-		{
-			this.committed = true;
-			return new([.. this.channels]);
-		}
-
 		public void Dispose()
 		{
 			this.manager.activeOutboundScope.Value = this.priorScope;
@@ -157,6 +168,14 @@ internal sealed class OutOfBandStreamManager(JsonRpc owner) : IDisposable
 			{
 				new ChannelSet([.. this.channels]).Dispose();
 			}
+		}
+
+		internal void Add(MultiplexingStream.Channel channel) => this.channels.Add(channel);
+
+		internal ChannelSet Commit()
+		{
+			this.committed = true;
+			return new([.. this.channels]);
 		}
 	}
 
@@ -177,23 +196,28 @@ internal sealed class OutOfBandStreamManager(JsonRpc owner) : IDisposable
 
 		internal bool HasResponse { get; }
 
-		internal void Add(MultiplexingStream.Channel channel) => this.channels.Add(channel);
-
-		internal void Complete(bool successful)
-		{
-			this.completed = true;
-			if (!successful)
-			{
-				new ChannelSet([.. this.channels]).Dispose();
-			}
-		}
-
 		public void Dispose()
 		{
 			this.manager.activeInboundScope.Value = this.priorScope;
 			if (!this.completed)
 			{
 				new ChannelSet([.. this.channels]).Dispose();
+			}
+		}
+
+		internal void Add(MultiplexingStream.Channel channel) => this.channels.Add(channel);
+
+		internal void Complete(bool successful)
+		{
+			this.completed = true;
+			ChannelSet set = new([.. this.channels]);
+			if (successful)
+			{
+				this.manager.TrackActiveChannels(set);
+			}
+			else
+			{
+				set.Dispose();
 			}
 		}
 	}

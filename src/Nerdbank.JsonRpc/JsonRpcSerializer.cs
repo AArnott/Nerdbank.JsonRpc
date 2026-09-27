@@ -44,7 +44,7 @@ public abstract class JsonRpcSerializer
 	/// <summary>Creates a serializer configured to marshal disposable values for one RPC connection.</summary>
 	/// <param name="manager">The connection's marshaled-object manager.</param>
 	/// <param name="progress">The connection's progress manager.</param>
-	/// <param name="outOfBandStreams"></param>
+	/// <param name="outOfBandStreams">The connection's out-of-band stream manager.</param>
 	/// <returns>A serializer configured for the connection.</returns>
 	internal virtual JsonRpcSerializer WithMarshaledObjectManager(MarshaledObjectManager manager, ProgressManager progress, OutOfBandStreamManager outOfBandStreams) => this;
 

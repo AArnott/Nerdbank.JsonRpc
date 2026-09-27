@@ -135,12 +135,13 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	{
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects();
 		using ProgressManager.RegistrationScope progressScope = this.owner.Progress.TrackRegistrations();
+		using OutOfBandStreamManager.OutboundScope outOfBandStreamScope = this.owner.OutOfBandStreams.TrackOutboundRequest();
 		JsonRpcValue serializedArguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = this.owner.GetNextRequestId(),
 			Method = method,
-			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithProgressRegistrations(progressScope.Commit()),
+			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithProgressRegistrations(progressScope.Commit()).WithOutOfBandChannels(outOfBandStreamScope.Commit()),
 		};
 
 		ValueTask<JsonRpcResponse> responseTask = this.AddRequestAsync(request, cancellationToken);
@@ -161,12 +162,13 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	{
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects();
 		using ProgressManager.RegistrationScope progressScope = this.owner.Progress.TrackRegistrations();
+		using OutOfBandStreamManager.OutboundScope outOfBandStreamScope = this.owner.OutOfBandStreams.TrackOutboundRequest();
 		JsonRpcValue serializedArguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = this.owner.GetNextRequestId(),
 			Method = method,
-			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithProgressRegistrations(progressScope.Commit()),
+			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithProgressRegistrations(progressScope.Commit()).WithOutOfBandChannels(outOfBandStreamScope.Commit()),
 		};
 
 		ValueTask<JsonRpcResponse> responseTask = this.AddRequestAsync(request, cancellationToken);
