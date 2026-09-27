@@ -22,6 +22,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	private readonly ConcurrentDictionary<RequestId, PendingInboundRequest> pendingInboundRequests = [];
 	private readonly MarshaledObjectManager marshaledObjects;
+	private readonly ProgressManager progress;
 	private readonly TaskCompletionSource<bool> completionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
 	private readonly object connectionSync = new();
 	private readonly object targetRegistrationSync = new();
@@ -51,7 +52,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 
 		this.marshaledObjects = new(this);
-		this.userDataSerializer = serializer.WithMarshaledObjectManager(this.marshaledObjects);
+		this.progress = new(this);
+		this.userDataSerializer = serializer.WithMarshaledObjectManager(this.marshaledObjects, this.progress);
 
 		// Store a delegate we can reuse to avoid allocations.
 		this.cancelOutboundRequestDelegate = this.CancelOutboundRequest;
@@ -124,6 +126,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	MarshaledObjectManager IArgumentsBuilderContext.MarshaledObjects => this.marshaledObjects;
 
+	ProgressManager IArgumentsBuilderContext.Progress => this.progress;
+
 	public JsonRpcState State =>
 		this.Completion.IsFaulted ? JsonRpcState.Faulted :
 		this.IsDisposed ? JsonRpcState.Disposed :
@@ -142,6 +146,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	internal JsonRpcSerializer UserDataSerializer => this.userDataSerializer;
 
 	internal MarshaledObjectManager MarshaledObjects => this.marshaledObjects;
+
+	internal ProgressManager Progress => this.progress;
 
 	/// <inheritdoc/>
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);
@@ -239,12 +245,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	public ValueTask<TResult> RequestAsync<TArg, TResult>(string method, in TArg arguments, ITypeShape<TArg> argShape, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects();
+		using ProgressManager.RegistrationScope progressScope = this.progress.TrackRegistrations();
 		JsonRpcValue serializedArguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = this.GetNextRequestId(),
 			Method = method,
-			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()),
+			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithProgressRegistrations(progressScope.Commit()),
 		};
 
 		ValueTask<JsonRpcResponse> responseTask = this.RequestAsync(request, cancellationToken);
@@ -254,12 +261,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects();
+		using ProgressManager.RegistrationScope progressScope = this.progress.TrackRegistrations();
 		JsonRpcValue serializedArguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = this.GetNextRequestId(),
 			Method = method,
-			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()),
+			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithProgressRegistrations(progressScope.Commit()),
 		};
 
 		ValueTask<JsonRpcResponse> responseTask = this.RequestAsync(request, cancellationToken);
@@ -269,6 +277,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	public ValueTask NotifyAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
 		MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects();
+		using ProgressManager.RegistrationScope progressScope = this.progress.TrackRegistrations();
 		try
 		{
 			JsonRpcValue serializedArguments = this.userDataSerializer.Serialize(arguments, argShape, cancellationToken);
@@ -277,11 +286,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				throw new InvalidOperationException("Marshaled objects cannot be sent in notifications because the sender cannot know whether the receiver accepted them.");
 			}
 
+			this.progress.EnsureNoProgressRegistrations(serializedArguments.WithProgressRegistrations(progressScope.Commit()));
+
 			JsonRpcRequest request = new()
 			{
 				Id = null,
 				Method = method,
-				Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()),
+				Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithProgressRegistrations(progressScope.Commit()),
 			};
 
 			return this.NotifyAsync(request, marshaledObjectsScope, cancellationToken);
@@ -326,6 +337,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	{
 		cancellationToken.ThrowIfCancellationRequested();
 		this.marshaledObjects.EnsureNoMarshaledObjects(arguments);
+		this.progress.EnsureNoProgressRegistrations(arguments);
 
 		JsonRpcRequest request = new()
 		{
@@ -574,7 +586,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	private Task<JsonRpcResponse?> DispatchAsync(JsonRpcRequest request)
 	{
-		if (request.Id is null && this.marshaledObjects.TryHandleNotification(request))
+		if (request.Id is null && (this.progress.TryHandleNotification(request) || this.marshaledObjects.TryHandleNotification(request)))
 		{
 			return Task.FromResult<JsonRpcResponse?>(null);
 		}
@@ -628,6 +640,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				try
 				{
 					using MarshaledObjectManager.InboundCallScope inboundCallScope = this.marshaledObjects.TrackInboundCall(request.Id.HasValue);
+					using ProgressManager.InboundScope progressScope = this.progress.TrackInboundCall(request.Id.HasValue);
 
 					// Changes to the ambient tracker made here are scoped to this async method's execution context.
 					string? parentToken = request.JoinableTaskToken;
@@ -679,6 +692,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 			if (this.pendingOutboundRequests.TryRemove(response.Id, out TaskCompletionSource<JsonRpcResponse>? tcs))
 			{
+				this.progress.UnregisterOutboundRequest(response.Id);
 				tcs.TrySetResult(response);
 			}
 			else
@@ -795,6 +809,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 			responseTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 			Verify.Operation(this.TryRegisterOutboundRequest(request, responseTcs), "A request with this ID is already pending.");
+			this.progress.RegisterOutboundRequest(request);
 			this.ApplyJoinableTaskToken(request);
 			await this.PostMessageAsync(request, cancellationToken).ConfigureAwait(false);
 			posted = true;
@@ -806,6 +821,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			if (request.Id.HasValue)
 			{
 				this.TryUnregisterOutboundRequest(request.Id.Value);
+				this.progress.UnregisterOutboundRequest(request);
 			}
 
 			this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
