@@ -393,6 +393,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			{
 				if (this.pendingOutboundRequests.TryRemove(id, out _))
 				{
+					this.progress.UnregisterOutboundRequest(id);
 					pending.TrySetException(new ObjectDisposedException(nameof(JsonRpc)));
 				}
 			}
@@ -653,6 +654,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 					DispatchResponse response = jtf is not null && parentToken is not null
 						? await jtf.RunAsync(() => handler.Invoker(dispatchRequest).AsTask(), parentToken, JoinableTaskCreationOptions.None)
 						: await handler.Invoker(dispatchRequest).ConfigureAwait(false);
+					await progressScope.CompleteAsync().ConfigureAwait(false);
 					Assumes.True(request.Id is null == response.Response is null, "A response is expected iff the request included an ID.");
 					inboundCallScope.Complete(response.Response is not JsonRpcError);
 					return response.Response;
@@ -905,6 +907,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			{
 				if (this.pendingOutboundRequests.TryRemove(id, out _))
 				{
+					this.progress.UnregisterOutboundRequest(id);
 					pending.TrySetException(exception);
 				}
 			}

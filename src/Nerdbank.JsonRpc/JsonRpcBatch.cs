@@ -725,6 +725,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			if (this.Request.Id.HasValue)
 			{
 				this.owner.owner.TryUnregisterOutboundRequest(this.Request.Id.Value);
+				this.owner.owner.Progress.UnregisterOutboundRequest(this.Request);
 			}
 
 			this.ResponseCompletionSource?.TrySetException(ex);

@@ -151,6 +151,8 @@ internal sealed class ProgressManager(JsonRpc owner)
 		}
 	}
 
+	private ValueTask PostProgressAsync(JsonRpcRequest notification) => owner.PostMessageAsync(notification);
+
 	private JsonRpcValue CreateToken(JsonRpcEncoding encoding)
 	{
 		long token = Interlocked.Increment(ref this.nextToken);
@@ -209,11 +211,14 @@ internal sealed class ProgressManager(JsonRpc owner)
 		internal bool IsEmpty => this.registrations.Length == 0;
 	}
 
+#pragma warning disable VSTHRD003 // The queue is built exclusively by this scope.
 	internal sealed class InboundScope : IDisposable
 	{
 		private readonly ProgressManager manager;
 		private readonly InboundScope? priorScope;
-		private int active = 1;
+		private readonly object sync = new();
+		private Task reportsQueued = Task.CompletedTask;
+		private bool active = true;
 
 		internal InboundScope(ProgressManager manager, bool hasResponse)
 		{
@@ -225,14 +230,43 @@ internal sealed class ProgressManager(JsonRpc owner)
 
 		internal bool HasResponse { get; }
 
-		internal bool IsActive => Volatile.Read(ref this.active) != 0;
-
 		public void Dispose()
 		{
 			this.manager.activeInboundScope.Value = this.priorScope;
-			Interlocked.Exchange(ref this.active, 0);
+			_ = this.CompleteAsync();
+		}
+
+		internal void Report(Func<JsonRpcRequest> createNotification)
+		{
+			lock (this.sync)
+			{
+				if (!this.active)
+				{
+					return;
+				}
+
+				JsonRpcRequest notification = createNotification();
+				this.reportsQueued = this.PostAfterAsync(this.reportsQueued, notification);
+			}
+		}
+
+		internal Task CompleteAsync()
+		{
+			lock (this.sync)
+			{
+				this.active = false;
+				return this.reportsQueued;
+			}
+		}
+
+		private async Task PostAfterAsync(Task priorReport, JsonRpcRequest notification)
+		{
+			await priorReport.ConfigureAwait(false);
+			await this.manager.PostProgressAsync(notification).ConfigureAwait(false);
 		}
 	}
+
+#pragma warning restore VSTHRD003
 
 	internal abstract class Registration
 	{
@@ -249,14 +283,12 @@ internal sealed class ProgressManager(JsonRpc owner)
 	{
 		public void Report(T value)
 		{
-			if (!scope.IsActive)
+			scope.Report(() =>
 			{
-				return;
-			}
-
-			JsonRpcValue serializedValue = owner.UserDataSerializer.Serialize(value, valueShape, owner.DisposalToken);
-			owner.MarshaledObjects.EnsureNoMarshaledObjects(serializedValue);
-			owner.PostMarshaledNotification(ProgressMethod, CreateArguments(token, serializedValue));
+				JsonRpcValue serializedValue = owner.UserDataSerializer.Serialize(value, valueShape, owner.DisposalToken);
+				owner.MarshaledObjects.EnsureNoMarshaledObjects(serializedValue);
+				return new JsonRpcRequest { Method = ProgressMethod, Arguments = CreateArguments(token, serializedValue) };
+			});
 		}
 
 		private static JsonRpcValue CreateArguments(JsonRpcValue token, JsonRpcValue value)
