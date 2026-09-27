@@ -23,6 +23,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private readonly ConcurrentDictionary<RequestId, PendingInboundRequest> pendingInboundRequests = [];
 	private readonly MarshaledObjectManager marshaledObjects;
 	private readonly ProgressManager progress;
+	private readonly OutOfBandStreamManager outOfBandStreams;
 	private readonly TaskCompletionSource<bool> completionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
 	private readonly object connectionSync = new();
 	private readonly object targetRegistrationSync = new();
@@ -53,12 +54,25 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 		this.marshaledObjects = new(this);
 		this.progress = new(this);
-		this.userDataSerializer = serializer.WithMarshaledObjectManager(this.marshaledObjects, this.progress);
+		this.outOfBandStreams = new(this);
+		this.userDataSerializer = serializer.WithMarshaledObjectManager(this.marshaledObjects, this.progress, this.outOfBandStreams);
 
 		// Store a delegate we can reuse to avoid allocations.
 		this.cancelOutboundRequestDelegate = this.CancelOutboundRequest;
 
 		this.AddRpcTarget(new SpecialMethodsTarget(this));
+	}
+
+	/// <summary>Gets or sets the multiplexing stream used to send and receive out-of-band streams.</summary>
+	/// <remarks>This property must be set before <see cref="Start"/>.</remarks>
+	public MultiplexingStream? MultiplexingStream
+	{
+		get => this.outOfBandStreams.MultiplexingStream;
+		set
+		{
+			this.ThrowIfStarted();
+			this.outOfBandStreams.MultiplexingStream = value;
+		}
 	}
 
 	/// <summary>Gets the logger for request and connection failures. Defaults to <see cref="NullLogger.Instance"/>.</summary>
@@ -128,6 +142,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	ProgressManager IArgumentsBuilderContext.Progress => this.progress;
 
+	OutOfBandStreamManager IArgumentsBuilderContext.OutOfBandStreams => this.outOfBandStreams;
+
 	public JsonRpcState State =>
 		this.Completion.IsFaulted ? JsonRpcState.Faulted :
 		this.IsDisposed ? JsonRpcState.Disposed :
@@ -148,6 +164,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	internal MarshaledObjectManager MarshaledObjects => this.marshaledObjects;
 
 	internal ProgressManager Progress => this.progress;
+
+	internal OutOfBandStreamManager OutOfBandStreams => this.outOfBandStreams;
 
 	/// <inheritdoc/>
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);
@@ -400,6 +418,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 
 		this.marshaledObjects.DisposeAll();
+		this.outOfBandStreams.Dispose();
 	}
 
 	internal static object AttachCore(IJsonRpcClient client, Type interfaceType, JsonRpcProxyOptions? options = null)
@@ -563,8 +582,14 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			switch (response)
 			{
 				case JsonRpcResult result:
-					TResult returnValue = this.userDataSerializer.Deserialize(result.Result, resultShape, cancellationToken)!;
-					return returnValue;
+					{
+						using OutOfBandStreamManager.InboundScope outOfBandStreamScope = this.outOfBandStreams.TrackInboundRequest(hasResponse: true);
+						TResult returnValue = this.userDataSerializer.Deserialize(result.Result, resultShape, cancellationToken)!;
+						outOfBandStreamScope.Complete(successful: true);
+						return returnValue;
+					}
+
+
 				case JsonRpcError error:
 					this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
 					throw new JsonRpcException(error.Error);
@@ -581,7 +606,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	internal JsonRpcValue SerializeMarshaledResult<T>(T value, ITypeShape<T> shape, CancellationToken cancellationToken)
 	{
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects(allowCallScopedLifetime: false);
+		using OutOfBandStreamManager.OutboundScope outOfBandStreamScope = this.outOfBandStreams.TrackOutboundRequest();
 		JsonRpcValue serialized = this.userDataSerializer.Serialize(value, shape, cancellationToken);
+		outOfBandStreamScope.Commit();
 		return serialized.WithMarshaledHandles(marshaledObjectsScope.Commit());
 	}
 
@@ -642,6 +669,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				{
 					using MarshaledObjectManager.InboundCallScope inboundCallScope = this.marshaledObjects.TrackInboundCall(request.Id.HasValue);
 					using ProgressManager.InboundScope progressScope = this.progress.TrackInboundCall(request.Id.HasValue);
+					using OutOfBandStreamManager.InboundScope outOfBandStreamScope = this.outOfBandStreams.TrackInboundRequest(request.Id.HasValue);
 
 					// Changes to the ambient tracker made here are scoped to this async method's execution context.
 					string? parentToken = request.JoinableTaskToken;
@@ -657,6 +685,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 					await progressScope.CompleteAsync().ConfigureAwait(false);
 					Assumes.True(request.Id is null == response.Response is null, "A response is expected iff the request included an ID.");
 					inboundCallScope.Complete(response.Response is not JsonRpcError);
+					outOfBandStreamScope.Complete(response.Response is not JsonRpcError);
 					return response.Response;
 				}
 				finally
@@ -812,6 +841,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			responseTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 			Verify.Operation(this.TryRegisterOutboundRequest(request, responseTcs), "A request with this ID is already pending.");
 			this.progress.RegisterOutboundRequest(request);
+			this.outOfBandStreams.RegisterOutboundRequest(request);
 			this.ApplyJoinableTaskToken(request);
 			await this.PostMessageAsync(request, cancellationToken).ConfigureAwait(false);
 			posted = true;
@@ -824,6 +854,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			{
 				this.TryUnregisterOutboundRequest(request.Id.Value);
 				this.progress.UnregisterOutboundRequest(request);
+				this.outOfBandStreams.CompleteOutboundRequest(request.Id.Value, successful: false);
 			}
 
 			this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
@@ -919,6 +950,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		try
 		{
 			this.marshaledObjects.DisposeAll();
+			this.outOfBandStreams.Dispose();
 		}
 		catch (Exception ex)
 		{

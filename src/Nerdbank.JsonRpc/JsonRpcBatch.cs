@@ -37,6 +37,8 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 
 	ProgressManager IArgumentsBuilderContext.Progress => this.owner.Progress;
 
+	OutOfBandStreamManager IArgumentsBuilderContext.OutOfBandStreams => this.owner.OutOfBandStreams;
+
 	/// <inheritdoc/>
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);
 
@@ -294,6 +296,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 					}
 
 					this.owner.Progress.RegisterOutboundRequest(entry.Request);
+					this.owner.OutOfBandStreams.RegisterOutboundRequest(entry.Request);
 				}
 			}
 
@@ -335,6 +338,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 					{
 						this.owner.TryUnregisterOutboundRequest(entry.Request.Id.Value);
 						this.owner.Progress.UnregisterOutboundRequest(entry.Request);
+						this.owner.OutOfBandStreams.CompleteOutboundRequest(entry.Request.Id.Value, successful: false);
 					}
 
 					entry.ResponseCompletionSource.TrySetException(ex);
@@ -726,6 +730,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			{
 				this.owner.owner.TryUnregisterOutboundRequest(this.Request.Id.Value);
 				this.owner.owner.Progress.UnregisterOutboundRequest(this.Request);
+				this.owner.owner.OutOfBandStreams.CompleteOutboundRequest(this.Request.Id.Value, successful: false);
 			}
 
 			this.ResponseCompletionSource?.TrySetException(ex);

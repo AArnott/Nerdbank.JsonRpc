@@ -26,11 +26,11 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	public override T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => this.Serializer.Deserialize(value.AsMessagePack(), shape, cancellationToken)!;
 
 	/// <inheritdoc/>
-	internal override JsonRpcSerializer WithMarshaledObjectManager(MarshaledObjectManager manager, ProgressManager progress)
+	internal override JsonRpcSerializer WithMarshaledObjectManager(MarshaledObjectManager manager, ProgressManager progress, OutOfBandStreamManager outOfBandStreams)
 		=> new MessagePackSerializerPlugin(this.Serializer with
 		{
 			Converters = ConverterCollection.Create([new MarshaledDisposableMessagePackConverter(manager), .. this.Serializer.Converters]),
-			ConverterFactories = [new MarshaledInterfaceMessagePackConverterFactory(manager, progress), .. this.Serializer.ConverterFactories],
+			ConverterFactories = [new OutOfBandStreamMessagePackConverterFactory(outOfBandStreams), new MarshaledInterfaceMessagePackConverterFactory(manager, progress), .. this.Serializer.ConverterFactories],
 		});
 
 	/// <inheritdoc/>
