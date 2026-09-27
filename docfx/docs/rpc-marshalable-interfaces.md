@@ -16,3 +16,18 @@ internal partial interface ICounter : IDisposable
 The interface itself does not also need <xref:Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute>; the JSON-RPC source generator creates its marshaled proxy from <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute>. A typical use is to return the interface from a normal RPC contract, call methods on the returned proxy, and dispose it when finished.
 
 Set <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute.CallScopedLifetime> to `true` for a call-scoped interface. Such an interface need not inherit `IDisposable`; its proxy is valid only while the receiving RPC method is running, and the target remains under the sender's lifetime control. Call-scoped interfaces are supported only in request arguments, not return values. No marshalable interface may be sent in a notification because there is no response to confirm acceptance. When a request returns a JSON-RPC error, its marshaled arguments are released; successful explicit-lifetime proxies remain valid until disposed or the connection closes. Optional interfaces are not yet supported.
+
+## Observer callbacks
+
+`IObserver<T>` parameters and return values are marshaled by reference without `[RpcMarshalable]` or a generated observer proxy. Provide a PolyType shape for `T` through the containing RPC contract's shape provider. The endpoint receiving the observer can call `OnNext(T)` repeatedly, then `OnCompleted()` or `OnError(Exception)` once. Terminal callbacks release the remote handle; subsequent callbacks fail with `ObjectDisposedException`. Releasing an observer handle does not dispose the observer instance. Observers may not be passed in notifications.
+
+```csharp
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface ISubscriptionService
+{
+    Task SubscribeAsync(IObserver<int> observer, CancellationToken cancellationToken);
+}
+```
+
+`OnError` transports the exception message; the remote endpoint receives an `Exception` with that message, not the original exception type. See StreamJsonRpc's [observer documentation](https://microsoft.github.io/vs-streamjsonrpc/exotic_types/observer.html) for protocol details.

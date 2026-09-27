@@ -12,7 +12,7 @@ internal sealed class MarshaledInterfaceMessagePackConverterFactory(MarshaledObj
 {
 	public MessagePackConverter? CreateConverter(Type type, ITypeShape? shape, in ConverterContext context)
 	{
-		if (!type.IsInterface || !type.IsDefined(typeof(RpcMarshalableAttribute), inherit: false))
+		if (!type.IsInterface || (!type.IsDefined(typeof(RpcMarshalableAttribute), inherit: false) && !(type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IObserver<>))))
 		{
 			return null;
 		}
@@ -26,8 +26,10 @@ internal sealed class MarshaledInterfaceMessagePackConverterFactory(MarshaledObj
 
 	private sealed class Converter<T>(MarshaledObjectManager manager, ITypeShape<T> shape) : MessagePackConverter<T>
 	{
+		private readonly bool typeIsObserver = typeof(T).IsGenericType && typeof(T).GetGenericTypeDefinition() == typeof(IObserver<>);
+
 		public override T? Read(ref MessagePackReader reader, SerializationContext context)
-			=> reader.TryReadNil() ? default : manager.UnmarshalMarshalable<T>(JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape);
+			=> reader.TryReadNil() ? default : this.typeIsObserver ? (T)ObserverMarshaler.CreateProxy(manager, JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape) : manager.UnmarshalMarshalable<T>(JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape);
 
 		public override void Write(ref MessagePackWriter writer, in T? value, SerializationContext context)
 		{
@@ -37,7 +39,8 @@ internal sealed class MarshaledInterfaceMessagePackConverterFactory(MarshaledObj
 				return;
 			}
 
-			writer.Write(manager.MarshalMarshalable(value, shape, JsonRpcEncoding.MessagePack).AsMessagePack());
+			JsonRpcValue marker = this.typeIsObserver ? ObserverMarshaler.Marshal(manager, value, shape, JsonRpcEncoding.MessagePack) : manager.MarshalMarshalable(value, shape, JsonRpcEncoding.MessagePack);
+			writer.Write(marker.AsMessagePack());
 		}
 	}
 }
