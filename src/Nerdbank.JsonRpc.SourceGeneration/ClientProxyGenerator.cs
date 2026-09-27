@@ -500,10 +500,16 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 	}
 
+	private static string GetTypeName(ITypeSymbol type, NullableAnnotation nullableAnnotation)
+	{
+		string typeName = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+		return nullableAnnotation == NullableAnnotation.Annotated ? typeName + "?" : typeName;
+	}
+
 	private static string RenderMethod(MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields, string? transformedRpcNameField, string? methodNameTransformField, bool isMarshalable)
 	{
 		SourceWriter builder = new();
-		string parameters = string.Join(", ", method.Symbol.Parameters.Select(static p => $"{p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} {EscapeIdentifier(p.Name)}"));
+		string parameters = string.Join(", ", method.Symbol.Parameters.Select(static p => $"{GetTypeName(p.Type, p.NullableAnnotation)} {EscapeIdentifier(p.Name)}"));
 		string cancellationToken = method.HasCancellationToken ? EscapeIdentifier(method.Symbol.Parameters[^1].Name) : KnownApis.CancellationToken + ".None";
 
 		builder.Append("\tpublic ").Append(method.Symbol.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append(' ').Append(EscapeIdentifier(method.Symbol.Name)).Append('(').Append(parameters).AppendLine(")");
@@ -516,7 +522,13 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			{
 				builder.Append("\t\targumentsBuilder.Add(");
 				AppendQuoted(builder, parameter.Name);
-				builder.Append(", ").Append(EscapeIdentifier(parameter.Name)).Append(", this.")
+				builder.Append(", ").Append(EscapeIdentifier(parameter.Name));
+				if (parameter.NullableAnnotation == NullableAnnotation.Annotated && parameter.Type.IsReferenceType)
+				{
+					builder.Append('!');
+				}
+
+				builder.Append(", this.")
 					.Append(GetShapeFieldName(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), shapeFields))
 					.AppendLine(");");
 			}

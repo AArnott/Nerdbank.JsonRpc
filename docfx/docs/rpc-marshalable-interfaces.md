@@ -33,3 +33,18 @@ internal partial interface ISubscriptionService
 Returning `IDisposable` from a subscription method lets the caller unsubscribe by disposing the returned proxy. Disposal is a notification: updates already in flight can still arrive until the server processes the unsubscribe.
 
 `OnError` transports the exception message; the remote endpoint receives an `Exception` with that message, not the original exception type. See StreamJsonRpc's [observer documentation](https://microsoft.github.io/vs-streamjsonrpc/exotic_types/observer.html) for protocol details.
+
+## Progress notifications
+
+`IProgress<T>` request parameters are encoded as opaque progress tokens. During the request, the server receives an `IProgress<T>` that sends each `Report` call as a `$/progress` notification with named `token` and `value` parameters. The client invokes its supplied `IProgress<T>` in report order before completing the RPC call. The server-side progress instance becomes inert when the request completes, and subsequent notifications for the token are ignored. `IProgress<T>` is supported only in request arguments; passing one in a notification is rejected. Pass `null` when a caller does not want updates.
+
+```csharp
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IWorkService
+{
+    Task RunAsync(IProgress<int>? progress, CancellationToken cancellationToken);
+}
+```
+
+This matches StreamJsonRpc's [`IProgress<T>` protocol](https://microsoft.github.io/vs-streamjsonrpc/exotic_types/progresssupport.html).

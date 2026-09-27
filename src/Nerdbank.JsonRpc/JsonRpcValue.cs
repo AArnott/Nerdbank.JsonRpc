@@ -21,11 +21,12 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 {
 	private readonly byte[]? bytes;
 
-	private JsonRpcValue(byte[] bytes, JsonRpcEncoding encoding, MarshaledObjectManager.HandleSet? marshaledHandles = null)
+	private JsonRpcValue(byte[] bytes, JsonRpcEncoding encoding, MarshaledObjectManager.HandleSet? marshaledHandles = null, ProgressManager.RegistrationSet? progressRegistrations = null)
 	{
 		this.bytes = bytes;
 		this.Encoding = encoding;
 		this.MarshaledHandles = marshaledHandles;
+		this.ProgressRegistrations = progressRegistrations;
 	}
 
 	/// <summary>Gets the encoding of this value.</summary>
@@ -41,6 +42,8 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	internal ReadOnlyMemory<byte> OwnedBytes => this.bytes ?? ReadOnlyMemory<byte>.Empty;
 
 	internal MarshaledObjectManager.HandleSet? MarshaledHandles { get; }
+
+	internal ProgressManager.RegistrationSet? ProgressRegistrations { get; }
 
 	/// <summary>Converts a MessagePack raw value into a tagged value.</summary>
 	/// <param name="value">The raw value.</param>
@@ -97,5 +100,7 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	/// <summary>Creates a copy of this value with marshaled handle ownership attached.</summary>
 	/// <param name="marshaledHandles">The marshaled local handles owned by this encoded value.</param>
 	/// <returns>The copied value.</returns>
-	internal JsonRpcValue WithMarshaledHandles(MarshaledObjectManager.HandleSet marshaledHandles) => new(this.OwnedBytes.ToArray(), this.Encoding, marshaledHandles);
+	internal JsonRpcValue WithMarshaledHandles(MarshaledObjectManager.HandleSet marshaledHandles) => new(this.OwnedBytes.ToArray(), this.Encoding, marshaledHandles, this.ProgressRegistrations);
+
+	internal JsonRpcValue WithProgressRegistrations(ProgressManager.RegistrationSet progressRegistrations) => new(this.OwnedBytes.ToArray(), this.Encoding, this.MarshaledHandles, progressRegistrations);
 }
