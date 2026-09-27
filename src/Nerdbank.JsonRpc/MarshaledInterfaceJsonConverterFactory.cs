@@ -12,7 +12,7 @@ internal sealed class MarshaledInterfaceJsonConverterFactory(MarshaledObjectMana
 {
 	public Nerdbank.Json.JsonConverter? CreateConverter(Type type, ITypeShape? shape, in Nerdbank.Json.JsonConverterFactoryContext context)
 	{
-		if (!type.IsInterface || !type.IsDefined(typeof(RpcMarshalableAttribute), inherit: false))
+		if (!type.IsInterface || (!type.IsDefined(typeof(RpcMarshalableAttribute), inherit: false) && !(type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IObserver<>))))
 		{
 			return null;
 		}
@@ -26,10 +26,12 @@ internal sealed class MarshaledInterfaceJsonConverterFactory(MarshaledObjectMana
 
 	private sealed class Converter<T>(MarshaledObjectManager manager, ITypeShape<T> shape) : Nerdbank.Json.JsonConverter<T>
 	{
+		private readonly bool typeIsObserver = typeof(T).IsGenericType && typeof(T).GetGenericTypeDefinition() == typeof(IObserver<>);
+
 		public override T? Read(ref Nerdbank.Json.JsonReader reader, Nerdbank.Json.SerializationContext context)
 		{
 			string rawValue = reader.ReadRawValue();
-			return rawValue == "null" ? default : manager.UnmarshalMarshalable<T>(JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(rawValue)), shape);
+			return rawValue == "null" ? default : this.typeIsObserver ? (T)ObserverMarshaler.CreateProxy(manager, JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(rawValue)), shape) : manager.UnmarshalMarshalable<T>(JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(rawValue)), shape);
 		}
 
 		public override void Write(ref Nerdbank.Json.JsonWriter writer, T? value, Nerdbank.Json.SerializationContext context)
@@ -40,7 +42,7 @@ internal sealed class MarshaledInterfaceJsonConverterFactory(MarshaledObjectMana
 				return;
 			}
 
-			JsonRpcValue marker = manager.MarshalMarshalable(value, shape, JsonRpcEncoding.Json);
+			JsonRpcValue marker = this.typeIsObserver ? ObserverMarshaler.Marshal(manager, value, shape, JsonRpcEncoding.Json) : manager.MarshalMarshalable(value, shape, JsonRpcEncoding.Json);
 			writer.WriteRawValue(Encoding.UTF8.GetString(marker.OwnedBytes.Span));
 		}
 	}

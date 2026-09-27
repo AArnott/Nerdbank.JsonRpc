@@ -116,6 +116,44 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		return (T)proxy;
 	}
 
+	internal JsonRpcValue MarshalObserver<T>(IObserver<T> observer, ITypeShape<T> valueShape, JsonRpcEncoding encoding)
+	{
+		TargetRegistration registration = ObserverMarshaler.CreateRegistration(valueShape);
+		return this.Marshal(observer, registration, callScopedLifetime: false, encoding, disposeTarget: false);
+	}
+
+	internal IObserver<T> UnmarshalObserver<T>(JsonRpcValue value, ITypeShape<T> valueShape)
+	{
+		(long handle, int direction, bool callScopedLifetime) = ReadMarker(value);
+		if (callScopedLifetime)
+		{
+			throw new FormatException("IObserver<T> requires an explicit lifetime.");
+		}
+
+		if (this.activeInboundCall.Value is { HasResponse: false })
+		{
+			throw new FormatException("Marshaled observers cannot be received in notifications.");
+		}
+
+		if (direction == 0)
+		{
+			lock (this.sync)
+			{
+				if (this.localObjects.TryGetValue(handle, out MarshaledLocalObject? local) && local.Lease.Value is IObserver<T> observer)
+				{
+					return observer;
+				}
+			}
+
+			throw new InvalidOperationException($"Marshaled observer handle {handle} is not available.");
+		}
+
+		CallScopedHandle state = this.RegisterIncomingProxy(callScopedLifetime: false);
+		IObserver<T> proxy = new ObserverMarshaler.Proxy<T>(owner, this, handle, valueShape, state);
+		RemoteHandles.Add(proxy, new(this, handle, false, state));
+		return proxy;
+	}
+
 	internal bool TryGetMethodInvoker(JsonRpcRequest request, out object? target, out MethodInvoker invoker)
 	{
 		target = null;
@@ -369,7 +407,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			? WriteJson(handle, direction, callScopedLifetime)
 			: WriteMessagePack(handle, direction, callScopedLifetime);
 
-	private JsonRpcValue Marshal(object value, TargetRegistration? registration, bool callScopedLifetime, JsonRpcEncoding encoding)
+	private JsonRpcValue Marshal(object value, TargetRegistration? registration, bool callScopedLifetime, JsonRpcEncoding encoding, bool disposeTarget = true)
 	{
 		if (callScopedLifetime && this.activeScope.Value is not { AllowCallScopedLifetime: true })
 		{
@@ -403,7 +441,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 				this.localLeases.Add(value, lease);
 			}
 
-			if (!callScopedLifetime)
+			if (!callScopedLifetime && disposeTarget)
 			{
 				lease.DisposeTarget = true;
 			}
