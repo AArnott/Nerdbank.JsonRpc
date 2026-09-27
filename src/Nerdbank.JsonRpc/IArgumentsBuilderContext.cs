@@ -10,4 +10,6 @@ internal interface IArgumentsBuilderContext
 	MarshaledObjectManager MarshaledObjects { get; }
 
 	ProgressManager Progress { get; }
+
+	OutOfBandStreamManager OutOfBandStreams { get; }
 }

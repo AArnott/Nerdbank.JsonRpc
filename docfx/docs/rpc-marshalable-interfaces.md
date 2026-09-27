@@ -48,3 +48,13 @@ internal partial interface IWorkService
 ```
 
 This matches StreamJsonRpc's [`IProgress<T>` protocol](https://microsoft.github.io/vs-streamjsonrpc/exotic_types/progresssupport.html).
+
+## Out-of-band streams
+
+`Stream`, `IDuplexPipe`, `PipeReader`, and `PipeWriter` parameters and return values transfer their bytes over a separate `MultiplexingStream` channel rather than encoding them into the JSON-RPC message. Set <xref:Nerdbank.JsonRpc.JsonRpc.MultiplexingStream> on each endpoint before calling <xref:Nerdbank.JsonRpc.JsonRpc.Start>.
+
+```csharp
+using JsonRpc client = new(rpcChannel) { MultiplexingStream = multiplexingStream };
+```
+
+The sender serializes an anonymous multiplex-channel ID as the parameter or result value; the receiving endpoint accepts that channel automatically. Stream-shaped arguments may only be used in requests, never notifications. If a request fails, the channel is closed automatically; after a successful response, both peers own their pipe ends and must complete or dispose them when finished. This matches StreamJsonRpc's [out-of-band stream protocol](https://microsoft.github.io/vs-streamjsonrpc/exotic_types/oob_streams.html).
