@@ -591,6 +591,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	internal async ValueTask<TResult> AwaitTypedResponseAsync<TResult>(JsonRpcRequest request, ITypeShape<TResult> resultShape, ValueTask<JsonRpcResponse> responseTask, CancellationToken cancellationToken)
 	{
+		CallScopedLifetime? argumentLifetime = request.Arguments.MarshaledHandles is { HasCallScopedObjects: true }
+			? new(() => this.marshaledObjects.ReleaseCallScopedObjects(request.Arguments))
+			: null;
 		try
 		{
 			JsonRpcResponse response = await responseTask.ConfigureAwait(false);
@@ -602,6 +605,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 						using AsyncEnumerableManager.InboundScope asyncEnumerableScope = this.asyncEnumerables.TrackInboundRequest(hasResponse: true);
 						TResult returnValue = this.userDataSerializer.Deserialize(result.Result, resultShape, cancellationToken)!;
 						outOfBandStreamScope.Complete(successful: true);
+						asyncEnumerableScope.RetainCallScopedArguments(argumentLifetime);
 						return returnValue;
 					}
 
@@ -614,7 +618,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 		finally
 		{
-			this.marshaledObjects.ReleaseCallScopedObjects(request.Arguments);
+			argumentLifetime?.Dispose();
 		}
 	}
 
@@ -645,7 +649,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	{
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects(allowCallScopedLifetime: false);
 		using OutOfBandStreamManager.OutboundScope outOfBandStreamScope = this.outOfBandStreams.TrackOutboundRequest();
-		using AsyncEnumerableManager.OutboundScope asyncEnumerableScope = this.asyncEnumerables.TrackOutboundMessage();
+		using AsyncEnumerableManager.OutboundScope asyncEnumerableScope = this.asyncEnumerables.TrackOutboundMessage(this.marshaledObjects.InboundCallLifetime);
 		JsonRpcValue serialized = this.userDataSerializer.Serialize(value, shape, cancellationToken);
 		OutOfBandStreamManager.ChannelSet outOfBandChannels = outOfBandStreamScope.Commit();
 		this.outOfBandStreams.TrackActiveChannels(outOfBandChannels);

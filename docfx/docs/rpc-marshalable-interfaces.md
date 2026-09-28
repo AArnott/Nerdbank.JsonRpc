@@ -15,13 +15,19 @@ internal partial interface ICounter : IDisposable
 
 The interface itself does not also need <xref:Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute>; the JSON-RPC source generator creates its marshaled proxy from <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute>. A typical use is to return the interface from a normal RPC contract, call methods on the returned proxy, and dispose it when finished.
 
-Set <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute.CallScopedLifetime> to `true` for a call-scoped interface. Such an interface need not inherit `IDisposable`; its proxy is valid only while the receiving RPC method is running, and the target remains under the sender's lifetime control. Call-scoped interfaces are supported only in request arguments, not return values. No marshalable interface may be sent in a notification because there is no response to confirm acceptance. When a request returns a JSON-RPC error, its marshaled arguments are released; successful explicit-lifetime proxies remain valid until disposed or the connection closes. Optional interfaces are not yet supported.
+Set <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute.CallScopedLifetime> to `true` for a call-scoped interface. Such an interface need not inherit `IDisposable`; its proxy is valid while the receiving RPC method is running, and the target remains under the sender's lifetime control. If the successful result contains `IAsyncEnumerable<T>` values, this scope extends through their enumeration and asynchronous disposal. All returned sequences sharing that scope must finish or be disposed; this also applies to nested sequences delivered in later batches. An error response does not extend the scope.
+
+Call-scoped interfaces are supported only in request arguments, not return values. No marshalable interface may be sent in a notification because there is no response to confirm acceptance. When a request returns a JSON-RPC error, its marshaled arguments are released; successful explicit-lifetime proxies remain valid until disposed or the connection closes.
 
 ## Connection boundaries
 
 A received marshaled proxy may be sent back over the same `JsonRpc` connection. Its owner receives the original object, not a proxy to a proxy.
 
 Forwarding a received proxy over a **different** `JsonRpc` connection (for example, from A through B to C) is not supported and fails serialization with `NotSupportedException` (wrapped in `MessagePackSerializationException` when using MessagePack). This applies to `[RpcMarshalable]` interfaces, `IDisposable`, and `IObserver<T>`, including values nested in object graphs. The rejected forwarding attempt does not release the original proxy. Handles, identity, and lifetime ownership are connection-local; multi-party forwarding would require additional ownership rules. Application-written forwarding wrappers are not detected and are responsible for their own lifetime management.
+
+## Remaining general-marshaling gaps
+
+The core marshaling protocol and both lifetime models are implemented, but full parity is still tracked by [issue #69](https://github.com/AArnott/Nerdbank.JsonRpc/issues/69). Optional-interface advertisement and discovery are not yet supported ([#84](https://github.com/AArnott/Nerdbank.JsonRpc/issues/84)). Owner-initiated revocation, including proxy invalidation on `ownedBySender: true` release notifications, is also not yet supported ([#83](https://github.com/AArnott/Nerdbank.JsonRpc/issues/83)); receiver disposal and connection cleanup are supported.
 
 ## Observer callbacks
 
@@ -85,6 +91,8 @@ A proxy method should return `IAsyncEnumerable<T>` directly rather than `Task<IA
 ### Resource lifetime
 
 Each marshaled sequence holds resources on the producing endpoint until it is drained to completion or discarded, so the consumer **must** enumerate it to the end or dispose it. `await foreach` does both automatically, including when the loop is exited with `break` or an exception. A received sequence may be enumerated only once; a second attempt throws <xref:System.InvalidOperationException>.
+
+Call-scoped marshalable callbacks supplied to a sequence-producing method remain usable after its initial response, including from the iterator's `finally` block. When such callbacks are present, early disposal waits for acknowledgment of `$/enumerator/abort` before releasing the caller's handles. Disposing an enumerator before its first `MoveNextAsync` also releases the remote sequence. Closing the connection ends these lifetimes as well.
 
 Sequences passed as request arguments are released when the response arrives, so the server must finish consuming them before returning. Sequences returned as results live until the consumer stops enumerating or the connection closes. Because there is no response to confirm acceptance, `IAsyncEnumerable<T>` may not be sent in a notification.
 

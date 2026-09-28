@@ -30,6 +30,13 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 	/// <inheritdoc/>
 	public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
 	{
+		if (this.exhausted)
+		{
+			IReadOnlyList<T> values = this.prefetchedValues ?? (IReadOnlyList<T>)Array.Empty<T>();
+			this.prefetchedValues = null;
+			return values.AsAsyncEnumerable().GetAsyncEnumerator(cancellationToken);
+		}
+
 		if (this.startedEnumerator is null)
 		{
 			return this.inner.GetAsyncEnumerator(cancellationToken);
@@ -55,20 +62,39 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 	/// <returns>A task that completes when the values have been produced or the sequence has ended.</returns>
 	internal async ValueTask PrefetchAsync(int count, CancellationToken cancellationToken)
 	{
-		this.startedEnumerator ??= this.inner.GetAsyncEnumerator(cancellationToken);
-		List<T> values = this.prefetchedValues ?? new List<T>(count);
-		while (values.Count < count)
+		if (this.exhausted)
 		{
-			if (!await this.startedEnumerator.MoveNextAsync().ConfigureAwait(false))
-			{
-				this.exhausted = true;
-				break;
-			}
-
-			values.Add(this.startedEnumerator.Current);
+			return;
 		}
 
-		this.prefetchedValues = values;
+		this.startedEnumerator ??= this.inner.GetAsyncEnumerator(cancellationToken);
+		IAsyncEnumerator<T> enumerator = this.startedEnumerator;
+		bool keepEnumerator = false;
+		try
+		{
+			List<T> values = this.prefetchedValues ?? new List<T>(count);
+			while (values.Count < count)
+			{
+				if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+				{
+					this.exhausted = true;
+					break;
+				}
+
+				values.Add(enumerator.Current);
+			}
+
+			this.prefetchedValues = values;
+			keepEnumerator = !this.exhausted;
+		}
+		finally
+		{
+			if (!keepEnumerator)
+			{
+				this.startedEnumerator = null;
+				await enumerator.DisposeAsync().ConfigureAwait(false);
+			}
+		}
 	}
 
 	/// <summary>

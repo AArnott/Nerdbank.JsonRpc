@@ -58,8 +58,9 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	}
 
 	/// <summary>Begins tracking the generators created while serializing one outbound message.</summary>
+	/// <param name="argumentLifetime">The call-scoped arguments retained by returned generators.</param>
 	/// <returns>A scope to dispose when serialization completes.</returns>
-	internal OutboundScope TrackOutboundMessage() => new(this);
+	internal OutboundScope TrackOutboundMessage(CallScopedLifetime? argumentLifetime = null) => new(this, argumentLifetime);
 
 	/// <summary>Begins tracking an inbound message so that sequences in notifications can be rejected.</summary>
 	/// <param name="hasResponse">Whether the inbound message is a request that will receive a response.</param>
@@ -90,7 +91,10 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		if (!finished)
 		{
 			token = Interlocked.Increment(ref this.nextToken);
-			Generator generator = new Generator<T>(this, token.Value, enumerable, elementShape, settings);
+			Generator generator = new Generator<T>(this, token.Value, enumerable, elementShape, settings)
+			{
+				ArgumentLifetime = scope.ArgumentLifetime?.Retain(),
+			};
 			lock (this.sync)
 			{
 				this.generators.Add(token.Value, generator);
@@ -123,7 +127,13 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			prefetched.Add(owner.UserDataSerializer.Deserialize(rawValue, elementShape, owner.DisposalToken));
 		}
 
-		return new ConsumerEnumerable<T>(this, token, prefetched, elementShape);
+		ConsumerEnumerable<T> consumer = new(this, token, prefetched, elementShape);
+		if (token.HasValue)
+		{
+			this.activeInboundScope.Value?.Add(consumer.RetainCallScopedArguments);
+		}
+
+		return consumer;
 	}
 
 	/// <summary>Associates the generators serialized into a request with that request so they are released when it completes.</summary>
@@ -569,9 +579,17 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			}
 
 			JsonRpcValue result;
-			using (OutboundScope nestedScope = this.TrackOutboundMessage())
+			using (OutboundScope nestedScope = this.TrackOutboundMessage(generator.ArgumentLifetime))
 			{
-				result = await generator.GetNextValuesAsync(dispatch.CancellationToken).ConfigureAwait(false);
+				try
+				{
+					result = await generator.GetNextValuesAsync(dispatch.CancellationToken).ConfigureAwait(false);
+				}
+				catch
+				{
+					await this.DisposeGeneratorAsync(token).ConfigureAwait(false);
+					throw;
+				}
 
 				// Nested sequences discovered while serializing this batch's elements are independent generators;
 				// keep them alive (the consumer will pull or abort them on their own) instead of letting the scope
@@ -648,12 +666,20 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 
 	/// <summary>Tells the remote generator that no more values will be requested.</summary>
 	/// <param name="token">The token identifying the generator.</param>
-	/// <returns>A task that completes when the notification has been queued.</returns>
-	private async ValueTask AbortRemoteAsync(long token)
+	/// <param name="waitForCompletion">Whether disposal must finish before releasing call-scoped arguments.</param>
+	/// <returns>A task that completes when the abort is queued or acknowledged.</returns>
+	private async ValueTask AbortRemoteAsync(long token, bool waitForCompletion)
 	{
 		try
 		{
-			await owner.NotifyAsync(AbortMethod, this.CreateTokenArguments(token), CancellationToken.None).ConfigureAwait(false);
+			if (waitForCompletion)
+			{
+				await owner.RequestRawAsync(AbortMethod, this.CreateTokenArguments(token), CancellationToken.None).ConfigureAwait(false);
+			}
+			else
+			{
+				await owner.NotifyAsync(AbortMethod, this.CreateTokenArguments(token), CancellationToken.None).ConfigureAwait(false);
+			}
 		}
 		catch (Exception ex)
 		{
@@ -672,12 +698,17 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 
 		/// <summary>Initializes a new instance of the <see cref="OutboundScope"/> class.</summary>
 		/// <param name="manager">The owning manager.</param>
-		internal OutboundScope(AsyncEnumerableManager manager)
+		/// <param name="argumentLifetime">The arguments retained by generators created in this scope.</param>
+		internal OutboundScope(AsyncEnumerableManager manager, CallScopedLifetime? argumentLifetime)
 		{
 			this.manager = manager;
+			this.ArgumentLifetime = argumentLifetime;
 			this.priorScope = manager.activeOutboundScope.Value;
 			manager.activeOutboundScope.Value = this;
 		}
+
+		/// <summary>Gets the arguments retained by generators created in this scope.</summary>
+		internal CallScopedLifetime? ArgumentLifetime { get; }
 
 		/// <summary>Ends this scope, releasing any generators that were never committed.</summary>
 		public void Dispose()
@@ -710,6 +741,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	{
 		private readonly AsyncEnumerableManager manager;
 		private readonly InboundScope? priorScope;
+		private readonly List<Action<CallScopedLifetime>> consumers = [];
 
 		/// <summary>Initializes a new instance of the <see cref="InboundScope"/> class.</summary>
 		/// <param name="manager">The owning manager.</param>
@@ -727,6 +759,23 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 
 		/// <summary>Ends this scope.</summary>
 		public void Dispose() => this.manager.activeInboundScope.Value = this.priorScope;
+
+		/// <summary>Records a consumer created while decoding the message.</summary>
+		/// <param name="retain">Attaches a lease to the consumer.</param>
+		internal void Add(Action<CallScopedLifetime> retain) => this.consumers.Add(retain);
+
+		/// <summary>Transfers successful response argument ownership to its consumers.</summary>
+		/// <param name="lifetime">The call-scoped argument lifetime, if any.</param>
+		internal void RetainCallScopedArguments(CallScopedLifetime? lifetime)
+		{
+			if (lifetime is not null)
+			{
+				foreach (Action<CallScopedLifetime> retain in this.consumers)
+				{
+					retain(lifetime);
+				}
+			}
+		}
 	}
 
 	/// <summary>The generator tokens carried by one serialized message.</summary>
@@ -743,6 +792,9 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	/// <summary>Produces values for a remote consumer on demand.</summary>
 	private abstract class Generator
 	{
+		/// <summary>Gets or sets the lease keeping this generator's call-scoped arguments valid.</summary>
+		internal CallScopedLifetime? ArgumentLifetime { get; set; }
+
 		/// <summary>Produces the next batch of values.</summary>
 		/// <param name="cancellationToken">A token to cancel value production.</param>
 		/// <returns>The encoded response carrying the batch.</returns>
@@ -833,13 +885,14 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 				}
 			}
 
+			JsonRpcValue result = this.manager.WriteResultValue(results, finished, this.elementShape, this.manager.Owner.UserDataSerializer.Encoding);
 			if (finished)
 			{
 				// The consumer is told not to ask again, so it will never send an abort message for this sequence.
 				await this.manager.DisposeGeneratorAsync(this.token).ConfigureAwait(false);
 			}
 
-			return this.manager.WriteResultValue(results, finished, this.elementShape, this.manager.Owner.UserDataSerializer.Encoding);
+			return result;
 		}
 
 		/// <inheritdoc/>
@@ -851,23 +904,26 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			}
 
 			this.disposed = true;
-#pragma warning disable VSTHRD103 // CancelAsync is unavailable on all target frameworks.
-			this.cancellationSource.Cancel();
-#pragma warning restore VSTHRD103
-
-			if (this.readAheadTask is not null)
-			{
-				// Wait for read ahead to stop touching the enumerator before disposing it.
-				await this.readAheadTask.NoThrowAwaitable();
-			}
-
 			try
 			{
+#pragma warning disable VSTHRD103 // CancelAsync is unavailable on all target frameworks.
+				this.cancellationSource.Cancel();
+#pragma warning restore VSTHRD103
+				if (this.readAheadTask is not null)
+				{
+					// Wait for read ahead to stop touching the enumerator before disposing it.
+					await this.readAheadTask.NoThrowAwaitable();
+				}
+
 				await this.enumerator.DisposeAsync().ConfigureAwait(false);
 			}
 			catch (Exception ex)
 			{
 				this.manager.Owner.LogApplicationError(ex);
+			}
+			finally
+			{
+				this.ArgumentLifetime?.Dispose();
 			}
 		}
 
@@ -901,6 +957,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		private readonly ITypeShape<T> elementShape;
 		private IReadOnlyList<T>? prefetched;
 		private bool enumeratorAcquired;
+		private CallScopedLifetime? argumentLifetime;
 
 		/// <summary>Initializes a new instance of the <see cref="ConsumerEnumerable{T}"/> class.</summary>
 		/// <param name="manager">The owning manager.</param>
@@ -926,8 +983,12 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			this.enumeratorAcquired = true;
 			IReadOnlyList<T> initial = this.prefetched ?? Array.Empty<T>();
 			this.prefetched = null;
-			return new ConsumerEnumerator<T>(this.manager, this.token, initial, this.elementShape, cancellationToken);
+			return new ConsumerEnumerator<T>(this.manager, this.token, initial, this.elementShape, cancellationToken, Interlocked.Exchange(ref this.argumentLifetime, null));
 		}
+
+		/// <summary>Keeps the originating call's arguments alive until this sequence ends.</summary>
+		/// <param name="lifetime">The lifetime to retain.</param>
+		internal void RetainCallScopedArguments(CallScopedLifetime lifetime) => this.argumentLifetime = lifetime.Retain();
 	}
 
 	/// <summary>Walks a remote sequence, requesting batches of values as they are consumed.</summary>
@@ -939,6 +1000,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		private readonly ITypeShape<T> elementShape;
 		private readonly CancellationToken cancellationToken;
 		private readonly Queue<T> cached;
+		private CallScopedLifetime? argumentLifetime;
 		private bool generatorFinished;
 		private bool disposed;
 
@@ -948,12 +1010,14 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		/// <param name="prefetched">The values that arrived with the sequence.</param>
 		/// <param name="elementShape">The type shape describing <typeparamref name="T"/>.</param>
 		/// <param name="cancellationToken">A token to cancel enumeration.</param>
-		internal ConsumerEnumerator(AsyncEnumerableManager manager, long? token, IReadOnlyList<T> prefetched, ITypeShape<T> elementShape, CancellationToken cancellationToken)
+		/// <param name="argumentLifetime">The originating call's argument lease.</param>
+		internal ConsumerEnumerator(AsyncEnumerableManager manager, long? token, IReadOnlyList<T> prefetched, ITypeShape<T> elementShape, CancellationToken cancellationToken, CallScopedLifetime? argumentLifetime)
 		{
 			this.manager = manager;
 			this.token = token;
 			this.elementShape = elementShape;
 			this.cancellationToken = cancellationToken;
+			this.argumentLifetime = argumentLifetime;
 			this.cached = new Queue<T>(prefetched.Count);
 			foreach (T value in prefetched)
 			{
@@ -976,46 +1040,73 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			}
 
 			this.disposed = true;
-			if (!this.generatorFinished && this.token is long activeToken)
+			try
 			{
-				await this.manager.AbortRemoteAsync(activeToken).ConfigureAwait(false);
+				if (!this.generatorFinished && this.token is long activeToken)
+				{
+					await this.manager.AbortRemoteAsync(activeToken, waitForCompletion: this.argumentLifetime is not null).ConfigureAwait(false);
+				}
+			}
+			finally
+			{
+				Interlocked.Exchange(ref this.argumentLifetime, null)?.Dispose();
 			}
 		}
 
 		/// <inheritdoc/>
 		public async ValueTask<bool> MoveNextAsync()
 		{
-			this.cancellationToken.ThrowIfCancellationRequested();
-			while (true)
+			try
 			{
-				if (this.cached.Count > 0)
+				if (this.disposed)
 				{
-					this.Current = this.cached.Dequeue();
-					return true;
+					throw new ObjectDisposedException(nameof(ConsumerEnumerator<T>));
 				}
 
-				if (this.generatorFinished || this.token is not long activeToken)
+				this.cancellationToken.ThrowIfCancellationRequested();
+				while (true)
 				{
-					this.Current = default!;
-					return false;
-				}
-
-				JsonRpcValue response = await this.manager.RequestNextValuesAsync(activeToken, this.cancellationToken).ConfigureAwait(false);
-				(List<JsonRpcValue> values, bool finished) = ReadResultValue(response);
-				this.generatorFinished = finished;
-				using (InboundScope inboundScope = this.manager.TrackInboundRequest(hasResponse: true))
-				{
-					foreach (JsonRpcValue value in values)
+					if (this.cached.Count > 0)
 					{
-						this.cached.Enqueue(this.manager.Owner.UserDataSerializer.Deserialize(value, this.elementShape, this.cancellationToken));
+						this.Current = this.cached.Dequeue();
+						return true;
+					}
+
+					if (this.generatorFinished || this.token is not long activeToken)
+					{
+						this.Current = default!;
+						return false;
+					}
+
+					JsonRpcValue response = await this.manager.RequestNextValuesAsync(activeToken, this.cancellationToken).ConfigureAwait(false);
+					(List<JsonRpcValue> values, bool finished) = ReadResultValue(response);
+					this.generatorFinished = finished;
+					using (InboundScope inboundScope = this.manager.TrackInboundRequest(hasResponse: true))
+					{
+						foreach (JsonRpcValue value in values)
+						{
+							this.cached.Enqueue(this.manager.Owner.UserDataSerializer.Deserialize(value, this.elementShape, this.cancellationToken));
+						}
+
+						inboundScope.RetainCallScopedArguments(this.argumentLifetime);
+					}
+
+					if (finished)
+					{
+						Interlocked.Exchange(ref this.argumentLifetime, null)?.Dispose();
+					}
+
+					if (this.cached.Count == 0)
+					{
+						this.Current = default!;
+						return false;
 					}
 				}
-
-				if (this.cached.Count == 0)
-				{
-					this.Current = default!;
-					return false;
-				}
+			}
+			catch
+			{
+				await this.DisposeAsync().ConfigureAwait(false);
+				throw;
 			}
 		}
 	}
