@@ -92,10 +92,11 @@ public abstract class RpcRoundTripBenchmarksBase
 		_ => throw new ArgumentOutOfRangeException(nameof(encoding)),
 	};
 
+	// Use the same MessagePack serializer implementation and shape provider for both RPC stacks.
 	private static StreamJsonRpc.IJsonRpcMessageHandler CreateStreamJsonRpcHandler(IDuplexPipe pipe, RpcEncoding encoding) => encoding switch
 	{
 		RpcEncoding.Json => new StreamJsonRpc.NewLineDelimitedMessageHandler(pipe, new StreamJsonRpc.JsonMessageFormatter()),
-		RpcEncoding.MessagePack => new StreamJsonRpc.LengthHeaderMessageHandler(pipe, new StreamJsonRpc.MessagePackFormatter()),
+		RpcEncoding.MessagePack => new StreamJsonRpc.LengthHeaderMessageHandler(pipe, new StreamJsonRpc.NerdbankMessagePackFormatter { TypeShapeProvider = PolyType.SourceGenerator.TypeShapeProvider_Benchmarks.Default }),
 		_ => throw new ArgumentOutOfRangeException(nameof(encoding)),
 	};
 
