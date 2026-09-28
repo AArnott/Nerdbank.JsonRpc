@@ -907,6 +907,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			}
 
 			this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
+			this.asyncEnumerables.ReleaseGenerators(request.Arguments);
 			responseTcs?.TrySetException(ex);
 			throw;
 		}

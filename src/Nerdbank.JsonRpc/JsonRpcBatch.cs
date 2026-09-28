@@ -733,6 +733,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			}
 
 			this.owner.owner.MarshaledObjects.ReleaseLocalObjects(this.Request.Arguments);
+			this.owner.owner.AsyncEnumerables.ReleaseGenerators(this.Request.Arguments);
 		}
 
 		internal void Fault(Exception ex)

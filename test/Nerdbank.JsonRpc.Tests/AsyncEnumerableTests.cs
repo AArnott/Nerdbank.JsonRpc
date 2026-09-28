@@ -307,6 +307,63 @@ public partial class AsyncEnumerableTests
 		Assert.Throws<InvalidOperationException>(() => batchClient.NotifyWithSequence(Enumerable.Range(0, 3).AsAsyncEnumerable()));
 	}
 
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task ArgumentSequenceReleasedWhenRequestFailsBeforeSending(JsonRpcEncoding encoding)
+	{
+		// Attach a proxy to a JsonRpc instance that is never started, so argument marshaling succeeds
+		// but the request fails before AsyncEnumerableManager.RegisterOutboundRequest ever runs.
+		(IDuplexPipe clientPipe, _) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(encoding == JsonRpcEncoding.Json
+			? new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance)
+			: new JsonRpcMessagePackChannel(clientPipe, NullLogger.Instance));
+		IAsyncEnumerableService client = clientRpc.Attach<IAsyncEnumerableService>();
+		TrackingSequence argument = new();
+		await Assert.ThrowsAnyAsync<InvalidOperationException>(
+			() => client.SumAsync(argument, CancellationToken.None));
+
+		Assert.True(argument.EnumeratorDisposed);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task ArgumentSequenceReleasedWhenBatchEntryIsCanceledBeforeSending(JsonRpcEncoding encoding)
+	{
+		using Fixture fixture = new(encoding);
+		using JsonRpcBatch batch = fixture.ClientRpc.CreateBatch();
+		IAsyncEnumerableService batchClient = batch.Attach<IAsyncEnumerableService>();
+		TrackingSequence argument = new();
+		using CancellationTokenSource cts = new();
+
+		Task<int> sumTask = batchClient.SumAsync(argument, cts.Token);
+		cts.Cancel();
+
+		await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sumTask);
+		Assert.True(argument.EnumeratorDisposed);
+	}
+
+	private sealed class TrackingSequence : IAsyncEnumerable<int>
+	{
+		internal bool EnumeratorDisposed { get; private set; }
+
+		public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default) => new Enumerator(this);
+
+		private sealed class Enumerator(TrackingSequence owner) : IAsyncEnumerator<int>
+		{
+			public int Current => 0;
+
+			public ValueTask<bool> MoveNextAsync() => new(false);
+
+			public ValueTask DisposeAsync()
+			{
+				owner.EnumeratorDisposed = true;
+				return default;
+			}
+		}
+	}
+
 	private sealed class Fixture : IDisposable
 	{
 		private readonly JsonRpc clientRpc;
