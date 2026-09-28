@@ -76,7 +76,77 @@ public static class JsonRpcEnumerableExtensions
 		Requires.NotNull(enumerable);
 		return new SyncAsAsyncEnumerable<T>(enumerable);
 	}
+
+	/// <summary>
+	/// Issues a JSON-RPC request whose result is an <see cref="IAsyncEnumerable{T}"/> and exposes the sequence
+	/// without waiting for the response.
+	/// </summary>
+	/// <typeparam name="T">The type of value produced by the sequence.</typeparam>
+	/// <param name="client">The client to send the request over.</param>
+	/// <param name="method">The remote method name.</param>
+	/// <param name="arguments">The encoded arguments.</param>
+	/// <param name="resultShape">The shape of the <see cref="IAsyncEnumerable{T}"/> result type.</param>
+	/// <param name="cancellationToken">A token to cancel the request and the enumeration.</param>
+	/// <returns>A sequence that may be enumerated exactly once.</returns>
+	/// <remarks>
+	/// This method is intended for use by generated proxies. The request is sent immediately so that it
+	/// participates correctly in a <see cref="JsonRpcBatch"/>; only the response is awaited lazily.
+	/// </remarks>
+	public static IAsyncEnumerable<T> RequestEnumerable<T>(IJsonRpcClient client, string method, JsonRpcValue arguments, ITypeShape<IAsyncEnumerable<T>> resultShape, CancellationToken cancellationToken)
+	{
+		Requires.NotNull(client);
+		return new DeferredEnumerable<T>(client.RequestAsync(method, arguments, resultShape, cancellationToken));
+	}
 #pragma warning restore VSTHRD200
+
+	/// <summary>A sequence whose values come from an RPC response that has not necessarily arrived yet.</summary>
+	/// <typeparam name="T">The type of value produced by the sequence.</typeparam>
+	/// <param name="response">The pending response carrying the sequence.</param>
+	private sealed class DeferredEnumerable<T>(ValueTask<IAsyncEnumerable<T>> response) : IAsyncEnumerable<T>
+	{
+		private readonly Task<IAsyncEnumerable<T>> response = response.AsTask();
+		private bool enumeratorAcquired;
+
+		/// <inheritdoc/>
+		public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+		{
+			if (this.enumeratorAcquired)
+			{
+				throw new InvalidOperationException("A remoted IAsyncEnumerable<T> may only be enumerated once.");
+			}
+
+			this.enumeratorAcquired = true;
+			return new Enumerator(this.response, cancellationToken);
+		}
+
+		/// <summary>Awaits the response on the first move, then forwards to the real enumerator.</summary>
+		/// <param name="response">The pending response carrying the sequence.</param>
+		/// <param name="cancellationToken">A token to cancel the enumeration.</param>
+		private sealed class Enumerator(Task<IAsyncEnumerable<T>> response, CancellationToken cancellationToken) : IAsyncEnumerator<T>
+		{
+			private IAsyncEnumerator<T>? inner;
+
+			/// <inheritdoc/>
+			public T Current => this.inner is null ? default! : this.inner.Current;
+
+			/// <inheritdoc/>
+			public ValueTask DisposeAsync() => this.inner?.DisposeAsync() ?? default;
+
+			/// <inheritdoc/>
+			public async ValueTask<bool> MoveNextAsync()
+			{
+				if (this.inner is null)
+				{
+#pragma warning disable VSTHRD003 // The task represents the remote response to a request this object owns.
+					IAsyncEnumerable<T> sequence = await response.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+					this.inner = sequence.GetAsyncEnumerator(cancellationToken);
+				}
+
+				return await this.inner.MoveNextAsync().ConfigureAwait(false);
+			}
+		}
+	}
 
 	/// <summary>Adapts a synchronous sequence to <see cref="IAsyncEnumerable{T}"/>.</summary>
 	/// <typeparam name="T">The type of value in the sequence.</typeparam>
