@@ -17,6 +17,8 @@ internal partial interface IAsyncEnumerableService
 
 	IAsyncEnumerable<int> GetFailingSequenceAsync(int valuesBeforeFailure, CancellationToken cancellationToken);
 
+	IAsyncEnumerable<IAsyncEnumerable<int>> GetNestedSequencesAsync(CancellationToken cancellationToken);
+
 	Task<int> SumAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken);
 
 	Task<int> SumTwoAsync(IAsyncEnumerable<int> first, IAsyncEnumerable<int> second, CancellationToken cancellationToken);

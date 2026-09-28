@@ -193,6 +193,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	{
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects();
 		using ProgressManager.RegistrationScope progressScope = this.owner.Progress.TrackRegistrations();
+		using AsyncEnumerableManager.OutboundScope asyncEnumerableScope = this.owner.AsyncEnumerables.TrackOutboundMessage();
 		JsonRpcValue serializedArguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		if (marshaledObjectsScope.HasMarshaledObjects)
 		{
@@ -200,6 +201,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		}
 
 		this.owner.Progress.EnsureNoProgressRegistrations(serializedArguments.WithProgressRegistrations(progressScope.Commit()));
+		this.owner.AsyncEnumerables.EnsureNoAsyncEnumerables(serializedArguments.WithAsyncEnumerableTokens(asyncEnumerableScope.Commit()));
 
 		JsonRpcRequest request = new()
 		{
@@ -248,6 +250,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	{
 		this.owner.MarshaledObjects.EnsureNoMarshaledObjects(arguments);
 		this.owner.Progress.EnsureNoProgressRegistrations(arguments);
+		this.owner.AsyncEnumerables.EnsureNoAsyncEnumerables(arguments);
 		JsonRpcRequest request = new()
 		{
 			Id = null,

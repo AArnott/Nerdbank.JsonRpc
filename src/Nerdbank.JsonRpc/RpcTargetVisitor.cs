@@ -214,8 +214,10 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 				{
 					TResult result = await invoker(ref target, ref argState).ConfigureAwait(false);
 
-					if (result is IRpcEnumerable prefetchable)
+					if (result is IRpcEnumerable prefetchable && dispatch.Request.Id is not null)
 					{
+						// Prefetching only matters if the result will actually be serialized and sent back; a
+						// notification has no response to carry it, and an unbounded sequence could block forever.
 						await prefetchable.PrefetchAsync(dispatch.CancellationToken).ConfigureAwait(false);
 					}
 

@@ -27,6 +27,9 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 	public IAsyncEnumerable<int> GetFailingSequenceAsync(int valuesBeforeFailure, CancellationToken cancellationToken)
 		=> FailAsync(valuesBeforeFailure, cancellationToken);
 
+	public IAsyncEnumerable<IAsyncEnumerable<int>> GetNestedSequencesAsync(CancellationToken cancellationToken)
+		=> ProduceNestedAsync(cancellationToken);
+
 	public async Task<int> SumAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken)
 	{
 		int sum = 0;
@@ -58,6 +61,15 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 		}
 
 		throw new InvalidOperationException("The sequence failed as requested.");
+	}
+
+	private static async IAsyncEnumerable<IAsyncEnumerable<int>> ProduceNestedAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+	{
+		for (int i = 0; i < 2; i++)
+		{
+			await Task.Yield();
+			yield return Enumerable.Range(i * 10, 3).AsAsyncEnumerable();
+		}
 	}
 
 	private async IAsyncEnumerable<int> ProduceAsync(int count, [EnumeratorCancellation] CancellationToken cancellationToken = default)

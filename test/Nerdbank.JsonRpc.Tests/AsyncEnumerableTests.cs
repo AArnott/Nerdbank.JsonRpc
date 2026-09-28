@@ -273,6 +273,40 @@ public partial class AsyncEnumerableTests
 		});
 	}
 
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task NestedSequencesRoundTripThroughGeneratorResponses(JsonRpcEncoding encoding)
+	{
+		using Fixture fixture = new(encoding);
+		List<List<int>> received = [];
+		await foreach (IAsyncEnumerable<int> inner in fixture.Client.GetNestedSequencesAsync(CancellationToken.None))
+		{
+			List<int> innerValues = [];
+			await foreach (int value in inner)
+			{
+				innerValues.Add(value);
+			}
+
+			received.Add(innerValues);
+		}
+
+		Assert.Equal(2, received.Count);
+		Assert.Equal(new[] { 0, 1, 2 }, received[0]);
+		Assert.Equal(new[] { 10, 11, 12 }, received[1]);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task SequenceRejectedInBatchNotifications(JsonRpcEncoding encoding)
+	{
+		using Fixture fixture = new(encoding);
+		using JsonRpcBatch batch = fixture.ClientRpc.CreateBatch();
+		IAsyncEnumerableService batchClient = batch.Attach<IAsyncEnumerableService>();
+		Assert.Throws<InvalidOperationException>(() => batchClient.NotifyWithSequence(Enumerable.Range(0, 3).AsAsyncEnumerable()));
+	}
+
 	private sealed class Fixture : IDisposable
 	{
 		private readonly JsonRpc clientRpc;
@@ -289,6 +323,8 @@ public partial class AsyncEnumerableTests
 			this.clientRpc.Start();
 			this.Client = this.clientRpc.Attach<IAsyncEnumerableService>();
 		}
+
+		internal JsonRpc ClientRpc => this.clientRpc;
 
 		internal IAsyncEnumerableService Client { get; }
 

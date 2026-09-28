@@ -568,7 +568,17 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 				};
 			}
 
-			JsonRpcValue result = await generator.GetNextValuesAsync(dispatch.CancellationToken).ConfigureAwait(false);
+			JsonRpcValue result;
+			using (OutboundScope nestedScope = this.TrackOutboundMessage())
+			{
+				result = await generator.GetNextValuesAsync(dispatch.CancellationToken).ConfigureAwait(false);
+
+				// Nested sequences discovered while serializing this batch's elements are independent generators;
+				// keep them alive (the consumer will pull or abort them on their own) instead of letting the scope
+				// dispose them now that serialization has completed successfully.
+				nestedScope.Commit();
+			}
+
 			return new DispatchResponse { Response = id is RequestId resultId ? new JsonRpcResult { Id = resultId, Result = result } : null };
 		}
 		catch (OperationCanceledException ex) when (dispatch.CancellationToken.IsCancellationRequested)
