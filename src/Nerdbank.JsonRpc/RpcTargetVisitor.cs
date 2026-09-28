@@ -214,6 +214,11 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 				{
 					TResult result = await invoker(ref target, ref argState).ConfigureAwait(false);
 
+					if (result is IRpcEnumerable prefetchable)
+					{
+						await prefetchable.PrefetchAsync(dispatch.CancellationToken).ConfigureAwait(false);
+					}
+
 					if (dispatch.Request.Id is RequestId id)
 					{
 						response = new JsonRpcResult

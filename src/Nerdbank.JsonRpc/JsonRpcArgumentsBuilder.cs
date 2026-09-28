@@ -14,6 +14,7 @@ public ref struct JsonRpcArgumentsBuilder
 	private readonly MarshaledObjectManager.HandleScope marshaledObjectsScope;
 	private readonly ProgressManager.RegistrationScope progressScope;
 	private readonly OutOfBandStreamManager.OutboundScope outOfBandStreamScope;
+	private readonly AsyncEnumerableManager.OutboundScope asyncEnumerableScope;
 	private readonly bool named;
 	private readonly int count;
 	private readonly CancellationToken cancellationToken;
@@ -43,6 +44,7 @@ public ref struct JsonRpcArgumentsBuilder
 		this.marshaledObjectsScope = context.MarshaledObjects.TrackMarshaledObjects();
 		this.progressScope = context.Progress.TrackRegistrations();
 		this.outOfBandStreamScope = context.OutOfBandStreams.TrackOutboundRequest();
+		this.asyncEnumerableScope = context.AsyncEnumerables.TrackOutboundMessage();
 
 		this.named = named;
 		this.count = count;
@@ -122,7 +124,7 @@ public ref struct JsonRpcArgumentsBuilder
 		}
 
 		this.built = true;
-		return JsonRpcValue.FromOwnedBytes(this.buffer.AsReadOnlySequence.ToArray(), this.serializer.Encoding, this.marshaledObjectsScope.Commit()).WithProgressRegistrations(this.progressScope.Commit()).WithOutOfBandChannels(this.outOfBandStreamScope.Commit());
+		return JsonRpcValue.FromOwnedBytes(this.buffer.AsReadOnlySequence.ToArray(), this.serializer.Encoding, this.marshaledObjectsScope.Commit()).WithProgressRegistrations(this.progressScope.Commit()).WithOutOfBandChannels(this.outOfBandStreamScope.Commit()).WithAsyncEnumerableTokens(this.asyncEnumerableScope.Commit());
 	}
 
 	/// <summary>Releases buffers owned by this builder.</summary>
@@ -134,6 +136,7 @@ public ref struct JsonRpcArgumentsBuilder
 		}
 
 		this.outOfBandStreamScope?.Dispose();
+		this.asyncEnumerableScope?.Dispose();
 		this.progressScope?.Dispose();
 		this.marshaledObjectsScope?.Dispose();
 		this.buffer?.Dispose();
