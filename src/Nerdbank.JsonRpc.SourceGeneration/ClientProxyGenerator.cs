@@ -485,9 +485,26 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		for (int mask = 1; mask < variantCount; mask++)
 		{
 			ImmutableArray<OptionalInterfaceInfo> implemented = optionalInterfaces.Where((_, index) => (mask & (1 << index)) != 0).ToImmutableArray();
-			ImmutableArray<MethodInfo> methods = info.Methods.AddRange(implemented.SelectMany(static optional => optional.Methods));
+			ImmutableArray<MethodInfo>.Builder methods = ImmutableArray.CreateBuilder<MethodInfo>();
+			HashSet<string> baseMethodSignatures = new(StringComparer.Ordinal);
+			foreach (MethodInfo method in info.Methods)
+			{
+				baseMethodSignatures.Add(GetMethodSignatureKey(method.Symbol));
+				methods.Add(method);
+			}
+
+			foreach (MethodInfo method in implemented.SelectMany(static optional => optional.Methods))
+			{
+				// A base method can implement an overlapping optional interface member. Keep distinct optional
+				// interface methods because they use explicit implementations and distinct wire prefixes.
+				if (!baseMethodSignatures.Contains(GetMethodSignatureKey(method.Symbol)))
+				{
+					methods.Add(method);
+				}
+			}
+
 			builder.AppendLine();
-			RenderProxyClass(builder, info, GetVariantProxyName(info, mask), methods, implemented);
+			RenderProxyClass(builder, info, GetVariantProxyName(info, mask), methods.ToImmutable(), implemented);
 		}
 
 		return builder.ToString();

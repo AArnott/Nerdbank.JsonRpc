@@ -133,6 +133,32 @@ public class ClientProxyGeneratorTests
 	}
 
 	[Test]
+	public async Task OverlappingOptionalInterfaceMembersAreDeduplicated()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System;
+			using System.Threading;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			[RpcMarshalableOptionalInterface(1, typeof(IOptional))]
+			internal interface IOptional : IDisposable
+			{
+				Task InvokeAsync(CancellationToken cancellationToken);
+			}
+
+			[RpcMarshalable]
+			[RpcMarshalableOptionalInterface(1, typeof(IOptional))]
+			internal partial interface IMarshalable : IDisposable
+			{
+				Task InvokeAsync(CancellationToken cancellationToken);
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source);
+	}
+
+	[Test]
 	public async Task NonPartialInterfaceProducesDiagnosticAndNoProxy()
 	{
 		const string Source = /* lang=c#-test */ """
