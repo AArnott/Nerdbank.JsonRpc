@@ -233,7 +233,7 @@ public class GeneratedProxyTests
 	[Test]
 	[Arguments(JsonRpcEncoding.MessagePack)]
 	[Arguments(JsonRpcEncoding.Json)]
-	public async Task InvokeProxyAfterHandleReleaseReturnsMethodNotFound(JsonRpcEncoding encoding)
+	public async Task InvokeProxyAfterHandleReleaseReturnsNoMarshaledObjectFound(JsonRpcEncoding encoding)
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
@@ -252,7 +252,7 @@ public class GeneratedProxyTests
 		await target.Counter.Disposed.Task;
 
 		JsonRpcException exception = await Assert.ThrowsAsync<JsonRpcException>(() => clientRpc.RequestAsync(incrementMethod, CreateEmptyArguments(clientRpc), ShapeProvider.Default.Int32, CancellationToken.None).AsTask());
-		Assert.Equal(JsonRpcErrorCode.MethodNotFound, exception.ErrorDetails.Code);
+		Assert.Equal(JsonRpcErrorCode.NoMarshaledObjectFound, exception.ErrorDetails.Code);
 	}
 
 	[Test]

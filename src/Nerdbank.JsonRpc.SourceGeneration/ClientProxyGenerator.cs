@@ -638,6 +638,14 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		builder.Append(EscapeIdentifier(method.Symbol.Name)).Append('(').Append(parameters).AppendLine(")");
 		builder.OpenBlock("\t");
 
+		if (isMarshalable && IsDisposeMethod(method))
+		{
+			builder.AppendLine("\t\tthis.jsonRpc.NotifyAsync(\"dispose\", default, global::System.Threading.CancellationToken.None).Preserve();");
+			builder.AppendLine("\t\treturn;");
+			builder.CloseBlock("\t");
+			return builder.ToString();
+		}
+
 		if (method.Kind is not ProxyMethodKind.Unsupported)
 		{
 			builder.Append("\t\tusing global::Nerdbank.JsonRpc.JsonRpcArgumentsBuilder argumentsBuilder = this.jsonRpc.CreateArguments(").Append("this.useNamedArguments, ").Append(method.PayloadParameters.Length).Append(", ").Append(cancellationToken).AppendLine(");");

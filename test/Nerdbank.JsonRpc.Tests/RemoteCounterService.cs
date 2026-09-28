@@ -13,7 +13,11 @@ internal sealed class RemoteCounterService : IRemoteCounterService
 
 	public Task<IRemoteCounter> GetCounterAsync(CancellationToken cancellationToken) => Task.FromResult<IRemoteCounter>(this.Counter);
 
-	public Task<bool> IsSameCounterAsync(IRemoteCounter counter, CancellationToken cancellationToken) => Task.FromResult(ReferenceEquals(this.Counter, counter));
+	public Task<bool> IsSameCounterAsync(IRemoteCounter counter, CancellationToken cancellationToken)
+	{
+		this.LastExplicitProxy = counter;
+		return Task.FromResult(ReferenceEquals(this.Counter, counter));
+	}
 
 	public Task FailAfterReceivingAsync(IRemoteCounter counter, CancellationToken cancellationToken)
 	{

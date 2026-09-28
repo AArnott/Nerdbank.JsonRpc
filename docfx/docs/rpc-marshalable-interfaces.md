@@ -47,9 +47,13 @@ A received marshaled proxy may be sent back over the same `JsonRpc` connection. 
 
 Forwarding a received proxy over a **different** `JsonRpc` connection (for example, from A through B to C) is not supported and fails serialization with `NotSupportedException` (wrapped in `MessagePackSerializationException` when using MessagePack). This applies to `[RpcMarshalable]` interfaces, `IDisposable`, and `IObserver<T>`, including values nested in object graphs. The rejected forwarding attempt does not release the original proxy. Handles, identity, and lifetime ownership are connection-local; multi-party forwarding would require additional ownership rules. Application-written forwarding wrappers are not detected and are responsible for their own lifetime management.
 
-## Remaining general-marshaling gaps
+## Owner revocation
 
-The core marshaling protocol and both lifetime models are implemented, but full parity is still tracked by [issue #69](https://github.com/AArnott/Nerdbank.JsonRpc/issues/69). Optional-interface advertisement and discovery are supported. Owner-initiated revocation, including proxy invalidation on `ownedBySender: true` release notifications, is also not yet supported ([#83](https://github.com/AArnott/Nerdbank.JsonRpc/issues/83)); receiver disposal and connection cleanup are supported.
+The owner may terminate every active marshaled relationship for one target by calling <xref:Nerdbank.JsonRpc.JsonRpc.RevokeMarshaledObject(System.Object)>. This object-wide operation returns the number of handles revoked, sends an `ownedBySender: true` release notification for each handle, and leaves handles for other objects untouched. It does not dispose the target; after revocation, its owner is solely responsible for disposal. To revoke relationships independently, marshal distinct wrapper objects instead of the same target instance.
+
+After the peer processes the notification, generated proxies reject new calls with `ObjectDisposedException`; a raw invocation that races after the owning endpoint has removed the handle receives JSON-RPC error -32001. Calls already dispatched before revocation may complete. Repeated revocation, proxy disposal racing revocation, and later scope cleanup are idempotent. Call-scoped targets normally expire with their request (including any async-enumerable extension), but their owner may explicitly revoke them early through the same API.
+
+Together with optional interfaces, receiver disposal, call-scoped and explicit lifetimes, same-connection round trips, and connection cleanup, this completes the general marshalable-object work tracked by [issue #69](https://github.com/AArnott/Nerdbank.JsonRpc/issues/69). Third-party forwarding remains deliberately unsupported as described below.
 
 ## Observer callbacks
 

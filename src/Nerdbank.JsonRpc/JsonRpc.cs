@@ -440,6 +440,20 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		this.asyncEnumerables.Dispose();
 	}
 
+	/// <summary>Revokes every active marshaled relationship for an object owned by this connection.</summary>
+	/// <param name="target">The previously marshaled target object.</param>
+	/// <returns>The number of handles revoked.</returns>
+	/// <remarks>
+	/// This operation is object-wide: every handle issued for <paramref name="target"/> is revoked, while handles
+	/// for other objects are unaffected. Revocation does not dispose <paramref name="target"/>; its owner remains
+	/// responsible for its lifetime. Calls already dispatched remotely may complete.
+	/// </remarks>
+	public int RevokeMarshaledObject(object target)
+	{
+		Requires.NotNull(target);
+		return this.marshaledObjects.Revoke(target);
+	}
+
 	internal static object AttachCore(
 		IJsonRpcClient client,
 		Type interfaceType,
@@ -484,7 +498,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	internal void PostMarshaledNotification(string method, JsonRpcValue arguments) => this.PostMessage(new JsonRpcRequest { Method = method, Arguments = arguments });
 
-	internal JsonRpcValue MarshalReleaseArguments(long handle)
+	internal JsonRpcValue MarshalReleaseArguments(long handle, bool ownedBySender = false)
 	{
 		if (this.channel.Encoding == JsonRpcEncoding.Json)
 		{
@@ -492,7 +506,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			using Utf8JsonWriter writer = new(buffer);
 			writer.WriteStartArray();
 			writer.WriteNumberValue(handle);
-			writer.WriteBooleanValue(false);
+			writer.WriteBooleanValue(ownedBySender);
 			writer.WriteEndArray();
 			writer.Flush();
 			return JsonRpcValue.FromJson(buffer.AsReadOnlySequence);
@@ -502,7 +516,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		MessagePackWriter msgpackWriter = new(msgpackBuffer);
 		msgpackWriter.WriteArrayHeader(2);
 		msgpackWriter.Write(handle);
-		msgpackWriter.Write(false);
+		msgpackWriter.Write(ownedBySender);
 		msgpackWriter.Flush();
 		return JsonRpcValue.FromMessagePack((RawMessagePack)msgpackBuffer.AsReadOnlySequence);
 	}
@@ -682,8 +696,17 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 		else if (!this.handlers.TryGetValue(request.Method, out handler))
 		{
+			bool missingMarshaledObject = this.marshaledObjects.IsMissingHandleInvocation(request, out long missingHandle);
 			return Task.FromResult<JsonRpcResponse?>(request.Id is RequestId missingId
-				? new JsonRpcError { Id = missingId, Error = new() { Code = JsonRpcErrorCode.MethodNotFound, Message = $"The method {request.Method} is not supported." } }
+				? new JsonRpcError
+				{
+					Id = missingId,
+					Error = new()
+					{
+						Code = missingMarshaledObject ? JsonRpcErrorCode.NoMarshaledObjectFound : JsonRpcErrorCode.MethodNotFound,
+						Message = missingMarshaledObject ? $"No marshaled object with handle {missingHandle} exists." : $"The method {request.Method} is not supported.",
+					},
+				}
 				: null);
 		}
 
