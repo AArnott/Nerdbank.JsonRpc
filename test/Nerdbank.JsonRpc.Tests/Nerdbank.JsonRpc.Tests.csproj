@@ -1,7 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="..\AOT.props" Condition="'$(TargetFramework)' == 'net10.0' and '$(NativeAOT)' == 'true'" />
+
+  <PropertyGroup Condition="'$(NativeAOT)' == 'true'">
+    <IntermediateOutputPath>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\nativeaot\</IntermediateOutputPath>
+    <OutputPath>$(BaseOutputPath)$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\nativeaot\</OutputPath>
+    <PublishDir>$(BaseOutputPath)$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\publish\</PublishDir>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <AotMsCodeCoverageInstrumentation>true</AotMsCodeCoverageInstrumentation>
+  </PropertyGroup>
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <TargetFrameworks Condition="'$(OS)' == 'Windows_NT'">$(TargetFrameworks);net472</TargetFrameworks>
     <OutputType>Exe</OutputType>
     <IsTestProject>true</IsTestProject>
@@ -16,8 +26,10 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging" />
     <PackageReference Include="Nerdbank.Streams" />
+    <PackageReference Include="Microsoft.CodeCoverage.MSBuild" Condition="'$(NativeAOT)' == 'true'" />
     <PackageReference Include="TUnit.Engine" />
-    <PackageReference Include="xunit.v3.assert" />
+    <PackageReference Include="xunit.v3.assert.aot" Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)','net9.0'))" />
+    <PackageReference Include="xunit.v3.assert" Condition="!$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)','net9.0'))" />
   </ItemGroup>
 
 </Project>
