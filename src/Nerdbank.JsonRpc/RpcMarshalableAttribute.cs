@@ -13,6 +13,9 @@ namespace Nerdbank.JsonRpc;
 public sealed class RpcMarshalableAttribute : Attribute
 {
 	/// <summary>Gets or sets a value indicating whether the marshaled proxy is limited to the receiving RPC call.</summary>
-	/// <remarks>Call-scoped interfaces may be sent only as request arguments, not as results or notification arguments.</remarks>
+	/// <remarks>
+	/// Call-scoped interfaces may be sent only as request arguments, not as results or notification arguments.
+	/// When the successful result contains async enumerables, the scope extends until those enumerations finish or are disposed.
+	/// </remarks>
 	public bool CallScopedLifetime { get; set; }
 }

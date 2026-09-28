@@ -125,16 +125,39 @@ public static class JsonRpcEnumerableExtensions
 		private sealed class Enumerator(Task<IAsyncEnumerable<T>> response, CancellationToken cancellationToken) : IAsyncEnumerator<T>
 		{
 			private IAsyncEnumerator<T>? inner;
+			private bool disposed;
 
 			/// <inheritdoc/>
 			public T Current => this.inner is null ? default! : this.inner.Current;
 
 			/// <inheritdoc/>
-			public ValueTask DisposeAsync() => this.inner?.DisposeAsync() ?? default;
+			public async ValueTask DisposeAsync()
+			{
+				if (this.disposed)
+				{
+					return;
+				}
+
+				this.disposed = true;
+				if (this.inner is null)
+				{
+#pragma warning disable VSTHRD003 // The task represents the remote response to a request this object owns.
+					IAsyncEnumerable<T> sequence = await response.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+					this.inner = sequence.GetAsyncEnumerator(cancellationToken);
+				}
+
+				await this.inner.DisposeAsync().ConfigureAwait(false);
+			}
 
 			/// <inheritdoc/>
 			public async ValueTask<bool> MoveNextAsync()
 			{
+				if (this.disposed)
+				{
+					throw new ObjectDisposedException(nameof(Enumerator));
+				}
+
 				if (this.inner is null)
 				{
 #pragma warning disable VSTHRD003 // The task represents the remote response to a request this object owns.

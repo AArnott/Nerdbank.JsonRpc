@@ -24,6 +24,9 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	private readonly AsyncLocal<InboundCallScope?> activeInboundCall = new();
 	private long nextHandle;
 
+	/// <summary>Gets the lifetime of call-scoped proxies received by the active call.</summary>
+	internal CallScopedLifetime? InboundCallLifetime => this.activeInboundCall.Value?.Lifetime;
+
 	internal JsonRpcValue Marshal(IDisposable value, JsonRpcEncoding encoding)
 	{
 		if (value is null)
@@ -414,14 +417,24 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new InvalidOperationException("Call-scoped marshalable objects may only be sent in RPC request arguments, not in return values.");
 		}
 
-		if (value is RemoteDisposable { Owner: var remoteOwner, Handle: long remoteHandle } && ReferenceEquals(remoteOwner, this))
+		if (value is RemoteDisposable { Owner: var remoteOwner, Handle: long remoteHandle })
 		{
+			if (!ReferenceEquals(remoteOwner, this))
+			{
+				throw new NotSupportedException("Marshaled proxies cannot be forwarded over a different JSON-RPC connection.");
+			}
+
 			this.activeScope.Value?.MarkMarshaledObject();
 			return WriteMarker(remoteHandle, direction: 0, callScopedLifetime: callScopedLifetime, encoding: encoding);
 		}
 
-		if (RemoteHandles.TryGetValue(value, out RemoteObjectHandle? remoteObject) && ReferenceEquals(remoteObject.Manager, this))
+		if (RemoteHandles.TryGetValue(value, out RemoteObjectHandle? remoteObject))
 		{
+			if (!ReferenceEquals(remoteObject.Manager, this))
+			{
+				throw new NotSupportedException("Marshaled proxies cannot be forwarded over a different JSON-RPC connection.");
+			}
+
 			remoteObject.CallScopedHandle.ThrowIfExpired();
 			if (remoteObject.CallScopedLifetime != callScopedLifetime)
 			{
@@ -557,6 +570,9 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 		internal bool HasMarshaledObjects => hasMarshaledObjects;
 
+		/// <summary>Gets a value indicating whether this value owns any call-scoped handles.</summary>
+		internal bool HasCallScopedObjects => handles.Any(static handle => handle.CallScopedLifetime);
+
 		internal void ReleaseCallScoped()
 		{
 			while (true)
@@ -625,19 +641,40 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 		internal bool HasResponse { get; }
 
+		/// <summary>Gets the shared lifetime of the call-scoped proxies.</summary>
+		internal CallScopedLifetime? Lifetime { get; private set; }
+
 		public void Dispose()
 		{
 			this.manager.activeInboundCall.Value = this.priorScope;
 			foreach ((CallScopedHandle handle, bool callScopedLifetime) in this.proxies)
 			{
-				if (callScopedLifetime || !this.succeeded)
+				if (!this.succeeded)
 				{
 					handle.Invalidate();
 				}
 			}
+
+			this.Lifetime?.Dispose();
 		}
 
-		internal void Add(CallScopedHandle proxy, bool callScopedLifetime) => this.proxies.Add((proxy, callScopedLifetime));
+		internal void Add(CallScopedHandle proxy, bool callScopedLifetime)
+		{
+			this.proxies.Add((proxy, callScopedLifetime));
+			if (callScopedLifetime)
+			{
+				this.Lifetime ??= new(() =>
+				{
+					foreach ((CallScopedHandle handle, bool scoped) in this.proxies)
+					{
+						if (scoped)
+						{
+							handle.Invalidate();
+						}
+					}
+				});
+			}
+		}
 
 		internal void Complete(bool succeeded) => this.succeeded = succeeded;
 	}

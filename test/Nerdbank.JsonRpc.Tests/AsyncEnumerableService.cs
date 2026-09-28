@@ -8,6 +8,9 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 	private int generatedValues;
 	private bool generatorDisposed;
 
+	/// <summary>Gets the callback retained by the last sequence-producing call.</summary>
+	internal ICallScopedCounter? LastCounter { get; private set; }
+
 	public IAsyncEnumerable<int> GetNumbersAsync(int count, CancellationToken cancellationToken) => this.ProduceAsync(count, cancellationToken);
 
 	public Task<IAsyncEnumerable<int>> GetNumbersWrappedAsync(int count, CancellationToken cancellationToken)
@@ -30,6 +33,47 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 	public IAsyncEnumerable<IAsyncEnumerable<int>> GetNestedSequencesAsync(CancellationToken cancellationToken)
 		=> ProduceNestedAsync(cancellationToken);
 
+	/// <inheritdoc/>
+	public IAsyncEnumerable<int> UseCounterAsync(ICallScopedCounter counter, int count, int prefetch, int readAhead, bool fail, CancellationToken cancellationToken)
+	{
+		this.LastCounter = counter;
+		if (count < 0)
+		{
+			throw new ArgumentOutOfRangeException(nameof(count));
+		}
+
+		return ProduceUsingCounterAsync(counter, count, fail, cancellationToken).WithJsonRpcSettings(new()
+		{
+			Prefetch = prefetch,
+			MaxReadAhead = readAhead,
+		});
+	}
+
+	/// <inheritdoc/>
+	public Task<IAsyncEnumerable<int>> UseCounterWrappedAsync(ICallScopedCounter counter, CancellationToken cancellationToken)
+		=> Task.FromResult(this.UseCounterAsync(counter, 3, 0, 0, false, cancellationToken));
+
+	/// <inheritdoc/>
+	public Task<IAsyncEnumerable<int>[]> UseCounterInArrayAsync(ICallScopedCounter counter, CancellationToken cancellationToken)
+	{
+		this.LastCounter = counter;
+		return Task.FromResult<IAsyncEnumerable<int>[]>([ProduceUsingCounterAsync(counter, 1, false, cancellationToken), ProduceUsingCounterAsync(counter, 1, false, cancellationToken)]);
+	}
+
+	/// <inheritdoc/>
+	public IAsyncEnumerable<IAsyncEnumerable<int>> UseCounterInNestedSequencesAsync(ICallScopedCounter counter, CancellationToken cancellationToken)
+	{
+		this.LastCounter = counter;
+		return new[] { ProduceUsingCounterAsync(counter, 1, false, cancellationToken), ProduceUsingCounterAsync(counter, 1, false, cancellationToken) }.AsAsyncEnumerable();
+	}
+
+	/// <inheritdoc/>
+	public IAsyncEnumerable<int> UseCounterDuringDisposalAsync(ICallScopedCounter counter, int prefetch, CancellationToken cancellationToken)
+	{
+		this.LastCounter = counter;
+		return new DisposalCallbackSequence(counter).WithJsonRpcSettings(new() { Prefetch = prefetch });
+	}
+
 	public async Task<int> SumAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken)
 	{
 		int sum = 0;
@@ -50,6 +94,26 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 
 	public void NotifyWithSequence(IAsyncEnumerable<int> values)
 	{
+	}
+
+	private static async IAsyncEnumerable<int> ProduceUsingCounterAsync(ICallScopedCounter counter, int count, bool fail, [EnumeratorCancellation] CancellationToken cancellationToken)
+	{
+		try
+		{
+			for (int i = 0; i < count; i++)
+			{
+				if (fail && i == 1)
+				{
+					throw new InvalidOperationException("Enumeration failed.");
+				}
+
+				yield return await counter.IncrementAsync(cancellationToken);
+			}
+		}
+		finally
+		{
+			await counter.IncrementAsync(CancellationToken.None);
+		}
 	}
 
 	private static async IAsyncEnumerable<int> FailAsync(int valuesBeforeFailure, [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -86,6 +150,39 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 		finally
 		{
 			Volatile.Write(ref this.generatorDisposed, true);
+		}
+	}
+
+	private sealed class DisposalCallbackSequence(ICallScopedCounter counter) : IAsyncEnumerable<int>
+	{
+		/// <inheritdoc/>
+		public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default) => new Enumerator(counter);
+
+		private sealed class Enumerator(ICallScopedCounter counter) : IAsyncEnumerator<int>
+		{
+			private bool yielded;
+			private bool disposed;
+
+			/// <inheritdoc/>
+			public int Current => 42;
+
+			/// <inheritdoc/>
+			public ValueTask<bool> MoveNextAsync()
+			{
+				bool result = !this.yielded;
+				this.yielded = true;
+				return new(result);
+			}
+
+			/// <inheritdoc/>
+			public async ValueTask DisposeAsync()
+			{
+				if (!this.disposed)
+				{
+					this.disposed = true;
+					await counter.IncrementAsync(CancellationToken.None);
+				}
+			}
 		}
 	}
 }
