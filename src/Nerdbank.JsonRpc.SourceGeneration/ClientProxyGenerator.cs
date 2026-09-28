@@ -17,6 +17,7 @@ namespace Nerdbank.JsonRpc.SourceGeneration;
 public sealed class ClientProxyGenerator : IIncrementalGenerator
 {
 	private const string DiagnosticHelpLink = "https://aarnott.github.io/Nerdbank.JsonRpc/analyzers/NBJSONRPC001.html";
+	private const int MaxOptionalInterfaces = 8;
 
 	private static readonly DiagnosticDescriptor UnsupportedMethodSignature = new(
 		"NBJSONRPC001",
@@ -169,11 +170,23 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		if (isMarshalable && optionalInterfaceAttribute is not null)
 		{
+			ImmutableArray<AttributeData> optionalInterfaceAttributes = interfaceSymbol.GetAttributes().Where(attribute => SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, optionalInterfaceAttribute)).ToImmutableArray();
+			if (optionalInterfaceAttributes.Length > MaxOptionalInterfaces)
+			{
+				diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceSymbol.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), $"at most {MaxOptionalInterfaces} optional interfaces are supported"));
+			}
+
 			HashSet<int> interfaceIds = [];
-			foreach (AttributeData attribute in interfaceSymbol.GetAttributes().Where(attribute => SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, optionalInterfaceAttribute)))
+			foreach (AttributeData attribute in optionalInterfaceAttributes.Take(MaxOptionalInterfaces))
 			{
 				if (attribute.ConstructorArguments is not [{ Value: int interfaceId }, { Value: INamedTypeSymbol optionalInterface }])
 				{
+					continue;
+				}
+
+				if (optionalInterface is not { TypeKind: TypeKind.Interface })
+				{
+					diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceSymbol.Locations.FirstOrDefault(), optionalInterface.ToDisplayString(), "optional marshalable types must be interfaces"));
 					continue;
 				}
 

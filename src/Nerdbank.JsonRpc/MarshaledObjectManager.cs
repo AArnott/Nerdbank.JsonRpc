@@ -22,6 +22,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	private readonly Dictionary<long, MarshaledLocalObject> localObjects = [];
 	private readonly Dictionary<object, LocalObjectLease> localLeases = new(ReferenceEqualityComparer<object>.Instance);
 	private readonly Dictionary<long, List<WeakReference<CallScopedHandle>>> remoteProxies = [];
+	private readonly HashSet<long> revokedRemoteHandles = [];
 	private readonly AsyncLocal<HandleScope?> activeScope = new();
 	private readonly AsyncLocal<InboundCallScope?> activeInboundCall = new();
 	private long nextHandle;
@@ -322,6 +323,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			this.localObjects.Clear();
 			this.localLeases.Clear();
 			this.remoteProxies.Clear();
+			this.revokedRemoteHandles.Clear();
 		}
 
 		foreach (CallScopedHandle state in remoteProxyStates)
@@ -548,13 +550,14 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new InvalidOperationException("Call-scoped marshalable objects may only be sent in RPC request arguments, not in return values.");
 		}
 
-		if (value is RemoteDisposable { Owner: var remoteOwner, Handle: long remoteHandle })
+		if (value is RemoteDisposable { Owner: var remoteOwner, Handle: long remoteHandle, CallScopedHandle: var remoteState })
 		{
 			if (!ReferenceEquals(remoteOwner, this))
 			{
 				throw new NotSupportedException("Marshaled proxies cannot be forwarded over a different JSON-RPC connection.");
 			}
 
+			remoteState.ThrowIfExpired();
 			this.activeScope.Value?.MarkMarshaledObject();
 			return WriteMarker(remoteHandle, direction: 0, callScopedLifetime: callScopedLifetime, encoding: encoding);
 		}
@@ -618,13 +621,21 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		CallScopedHandle handle = new() { IsCallScoped = callScopedLifetime };
 		lock (this.sync)
 		{
-			if (!this.remoteProxies.TryGetValue(remoteHandle, out List<WeakReference<CallScopedHandle>>? proxies))
+			if (this.revokedRemoteHandles.Contains(remoteHandle))
 			{
-				proxies = [];
-				this.remoteProxies.Add(remoteHandle, proxies);
+				handle.Invalidate("The owner revoked this marshaled proxy.");
 			}
+			else
+			{
+				if (!this.remoteProxies.TryGetValue(remoteHandle, out List<WeakReference<CallScopedHandle>>? proxies))
+				{
+					proxies = [];
+					this.remoteProxies.Add(remoteHandle, proxies);
+				}
 
-			proxies.Add(new(handle));
+				proxies.RemoveAll(static reference => !reference.TryGetTarget(out _));
+				proxies.Add(new(handle));
+			}
 		}
 
 		if (this.activeInboundCall.Value is InboundCallScope scope)
@@ -649,6 +660,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		List<WeakReference<CallScopedHandle>>? proxies;
 		lock (this.sync)
 		{
+			this.revokedRemoteHandles.Add(handle);
 			if (!this.remoteProxies.TryGetValue(handle, out proxies))
 			{
 				return;
@@ -929,6 +941,8 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		internal MarshaledObjectManager Owner => manager;
 
 		internal long Handle => handle;
+
+		internal CallScopedHandle CallScopedHandle => callScopedHandle;
 
 		public void Dispose()
 		{
