@@ -5,10 +5,13 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" />
+    <PackageReference Include="MessagePack" />
     <PackageReference Include="Microsoft.VisualStudio.DiagnosticsHub.BenchmarkDotNetDiagnosers" />
     <PackageReference Include="Nerdbank.Streams" />
+    <PackageReference Include="StreamJsonRpc" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Nerdbank.JsonRpc\Nerdbank.JsonRpc.csproj" />
+    <ProjectReference Include="..\..\src\Nerdbank.JsonRpc.SourceGeneration\Nerdbank.JsonRpc.SourceGeneration.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>
