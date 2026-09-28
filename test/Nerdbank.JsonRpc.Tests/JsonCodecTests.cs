@@ -194,7 +194,7 @@ public class JsonCodecTests : TestBase
 	public async Task MessagePackErrorDataWirePresence()
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
-		await using JsonRpcMessagePackChannel channel = new(local, LoggerFactory.CreateLogger("local"));
+		await using JsonRpcMessagePackChannel channel = new(local, LoggerFactory.CreateLogger("local"), JsonRpcMessagePackChannel.DefaultSerializer, JsonRpcMessagePackFraming.SelfDelimiting);
 		MessagePackSerializer serializer = new();
 		JsonRpcErrorDetails error = new() { Code = -32603, Message = "oops" };
 		await channel.Writer.WriteAsync(new JsonRpcError { Id = 1, Error = error }, this.TimeoutToken);

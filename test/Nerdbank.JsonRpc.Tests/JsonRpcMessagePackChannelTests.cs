@@ -81,19 +81,71 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 	}
 
 	[Test]
-	public async Task HandlesFragmentedAndCoalescedMessages()
+	public async Task DefaultFramingIsBigEndianLengthHeader()
 	{
+		Assert.Equal(JsonRpcMessagePackFraming.BigEndianInt32LengthHeader, JsonRpcMessagePackChannel.DefaultFraming);
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
 		await using JsonRpcMessagePackChannel channel = new(local, LoggerFactory.CreateLogger<JsonRpcPipeChannel>());
-		byte[] first = EncodeRequest("one", 1);
-		byte[] second = EncodeRequest("two", 2);
+		await channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = "one" }, this.TimeoutToken);
 
-		peer.Output.Write(first.AsSpan(0, 8));
+		byte[] header = await ReadExactlyAsync(peer.Input, 4, this.TimeoutToken);
+		int length = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(header);
+		byte[] body = await ReadExactlyAsync(peer.Input, length, this.TimeoutToken);
+		Nerdbank.MessagePack.MessagePackReader reader = new(body);
+		reader.Skip(default);
+		Assert.True(reader.End);
+	}
+
+	[Test]
+	public async Task SelfDelimitingFramingWritesNoHeader()
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcMessagePackChannel channel = CreateChannel(local, JsonRpcMessagePackFraming.SelfDelimiting);
+		await channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = "one" }, this.TimeoutToken);
+
+		byte[] first = await ReadExactlyAsync(peer.Input, 1, this.TimeoutToken);
+		Assert.Equal(Nerdbank.MessagePack.MessagePackType.Map, Nerdbank.MessagePack.MessagePackCode.ToMessagePackType(first[0]));
+	}
+
+	[Test]
+	public void UndefinedFramingIsRejected()
+	{
+		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
+		Assert.Throws<ArgumentOutOfRangeException>(() => CreateChannel(local, (JsonRpcMessagePackFraming)99));
+	}
+
+	[Test]
+	[Arguments(JsonRpcMessagePackFraming.SelfDelimiting)]
+	[Arguments(JsonRpcMessagePackFraming.BigEndianInt32LengthHeader)]
+	public async Task LargeMessagesRoundTrip(JsonRpcMessagePackFraming framing)
+	{
+		(IDuplexPipe alice, IDuplexPipe bob) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcMessagePackChannel aliceChannel = CreateChannel(alice, framing);
+		await using JsonRpcMessagePackChannel bobChannel = CreateChannel(bob, framing);
+		string method = new('m', 200_000);
+		await aliceChannel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = method }, this.TimeoutToken);
+		await aliceChannel.Writer.WriteAsync(new JsonRpcRequest { Id = 2, Method = "small" }, this.TimeoutToken);
+		Assert.Equal(method, Assert.IsType<JsonRpcRequest>(await bobChannel.Reader.ReadAsync(this.TimeoutToken)).Method);
+		Assert.Equal("small", Assert.IsType<JsonRpcRequest>(await bobChannel.Reader.ReadAsync(this.TimeoutToken)).Method);
+	}
+
+	[Test]
+	[Arguments(JsonRpcMessagePackFraming.SelfDelimiting, 8)]
+	[Arguments(JsonRpcMessagePackFraming.BigEndianInt32LengthHeader, 2)]
+	[Arguments(JsonRpcMessagePackFraming.BigEndianInt32LengthHeader, 8)]
+	public async Task HandlesFragmentedAndCoalescedMessages(JsonRpcMessagePackFraming framing, int firstFragmentLength)
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcMessagePackChannel channel = CreateChannel(local, framing);
+		byte[] first = Frame(EncodeRequest("one", 1), framing);
+		byte[] second = Frame(EncodeRequest("two", 2), framing);
+
+		peer.Output.Write(first.AsSpan(0, firstFragmentLength));
 		await peer.Output.FlushAsync(this.TimeoutToken);
 		Task<JsonRpcMessage> pending = channel.Reader.ReadAsync(this.TimeoutToken).AsTask();
 		Assert.False(pending.IsCompleted);
 
-		peer.Output.Write(first.AsSpan(8));
+		peer.Output.Write(first.AsSpan(firstFragmentLength));
 		peer.Output.Write(second);
 		await peer.Output.FlushAsync(this.TimeoutToken);
 		Assert.Equal("one", Assert.IsType<JsonRpcRequest>(await pending.WithCancellation(this.TimeoutToken)).Method);
@@ -101,15 +153,17 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 	}
 
 	[Test]
-	public async Task RetainedArgumentsSurviveLaterMessagesReusingThePipeBuffer()
+	[Arguments(JsonRpcMessagePackFraming.SelfDelimiting)]
+	[Arguments(JsonRpcMessagePackFraming.BigEndianInt32LengthHeader)]
+	public async Task RetainedArgumentsSurviveLaterMessagesReusingThePipeBuffer(JsonRpcMessagePackFraming framing)
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
-		await using JsonRpcMessagePackChannel channel = new(local, LoggerFactory.CreateLogger<JsonRpcPipeChannel>());
-		peer.Output.Write(EncodeRequest("one", 1));
+		await using JsonRpcMessagePackChannel channel = CreateChannel(local, framing);
+		peer.Output.Write(Frame(EncodeRequest("one", 1), framing));
 		await peer.Output.FlushAsync(this.TimeoutToken);
 		JsonRpcRequest first = Assert.IsType<JsonRpcRequest>(await channel.Reader.ReadAsync(this.TimeoutToken));
 
-		peer.Output.Write(EncodeRequest("two", 2));
+		peer.Output.Write(Frame(EncodeRequest("two", 2), framing));
 		await peer.Output.FlushAsync(this.TimeoutToken);
 		Assert.IsType<JsonRpcRequest>(await channel.Reader.ReadAsync(this.TimeoutToken));
 
@@ -119,14 +173,66 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 	}
 
 	[Test]
-	public async Task TruncatedMessageAtEndOfStreamFaultsTransport()
+	[Arguments(JsonRpcMessagePackFraming.SelfDelimiting, 1)]
+	[Arguments(JsonRpcMessagePackFraming.BigEndianInt32LengthHeader, 1)]
+	[Arguments(JsonRpcMessagePackFraming.BigEndianInt32LengthHeader, -2)]
+	public async Task TruncatedMessageAtEndOfStreamFaultsTransport(JsonRpcMessagePackFraming framing, int bytesToWrite)
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
-		await using JsonRpcMessagePackChannel channel = new(local, LoggerFactory.CreateLogger<JsonRpcPipeChannel>());
-		byte[] message = EncodeRequest("one", 1);
-		peer.Output.Write(message.AsSpan(0, message.Length - 1));
+		await using JsonRpcMessagePackChannel channel = CreateChannel(local, framing);
+		byte[] message = Frame(EncodeRequest("one", 1), framing);
+
+		// A positive value truncates that many bytes from the end; a negative value writes only that many leading bytes.
+		peer.Output.Write(bytesToWrite > 0 ? message.AsSpan(0, message.Length - bytesToWrite) : message.AsSpan(0, -bytesToWrite));
 		await peer.Output.CompleteAsync();
 		await Assert.ThrowsAsync<EndOfStreamException>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
+	}
+
+	[Test]
+	[Arguments(0u)]
+	[Arguments(0x80000000u)]
+	public async Task InvalidLengthHeaderFaultsTransport(uint length)
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcMessagePackChannel channel = CreateChannel(local, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader);
+		byte[] header = new byte[4];
+		System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(header, length);
+		peer.Output.Write(header);
+		await peer.Output.FlushAsync(this.TimeoutToken);
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
+	}
+
+	private static JsonRpcMessagePackChannel CreateChannel(IDuplexPipe pipe, JsonRpcMessagePackFraming framing)
+		=> new(pipe, LoggerFactory.CreateLogger<JsonRpcPipeChannel>(), JsonRpcMessagePackChannel.DefaultSerializer, framing);
+
+	private static byte[] Frame(byte[] message, JsonRpcMessagePackFraming framing)
+	{
+		if (framing == JsonRpcMessagePackFraming.SelfDelimiting)
+		{
+			return message;
+		}
+
+		byte[] framed = new byte[4 + message.Length];
+		System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(framed, message.Length);
+		message.CopyTo(framed, 4);
+		return framed;
+	}
+
+	private static async Task<byte[]> ReadExactlyAsync(PipeReader reader, int length, CancellationToken cancellationToken)
+	{
+		while (true)
+		{
+			ReadResult read = await reader.ReadAsync(cancellationToken);
+			if (read.Buffer.Length >= length)
+			{
+				byte[] result = read.Buffer.Slice(0, length).ToArray();
+				reader.AdvanceTo(read.Buffer.GetPosition(length));
+				return result;
+			}
+
+			Assert.False(read.IsCompleted);
+			reader.AdvanceTo(read.Buffer.Start, read.Buffer.End);
+		}
 	}
 
 	private static byte[] EncodeRequest(string method, int argument)

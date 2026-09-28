@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Diagnostics.CodeAnalysis;
 using System.IO.Pipelines;
 using System.Net;
@@ -10,16 +11,29 @@ using System.Runtime.ExceptionServices;
 using Microsoft;
 using Microsoft.Extensions.Logging;
 using Nerdbank.MessagePack;
+using Nerdbank.Streams;
 
 namespace Nerdbank.JsonRpc;
 
 /// <summary>
-/// Encodes JSON-RPC messages as a stream of self-delimiting MessagePack values over a duplex pipe,
-/// without any additional headers or framing.
+/// Encodes JSON-RPC messages as MessagePack over a duplex pipe, framed as described by <see cref="JsonRpcMessagePackFraming"/>.
 /// </summary>
 public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 {
+	/// <summary>The framing used when none is specified.</summary>
+	public const JsonRpcMessagePackFraming DefaultFraming = JsonRpcMessagePackFraming.BigEndianInt32LengthHeader;
+
+	private const int LengthHeaderSize = 4;
+
 	private readonly MessagePackSerializer messagePackSerializer;
+
+	private readonly JsonRpcMessagePackFraming framing;
+
+	/// <summary>The reusable writer that reserves and backfills each message's length header.</summary>
+	private PrefixingBufferWriter<byte>? prefixingWriter;
+
+	/// <summary>The pipe writer that <see cref="prefixingWriter"/> wraps.</summary>
+	private PipeWriter? prefixingWriterTarget;
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcMessagePackChannel"/> class with the default serializer.</summary>
 	/// <param name="pipe">The connected duplex pipe.</param>
@@ -38,9 +52,22 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 	/// <param name="inboundCapacity">The inbound queue limit, or null for an unbounded queue.</param>
 	/// <param name="outboundCapacity">The outbound queue limit, or null for an unbounded queue.</param>
 	public JsonRpcMessagePackChannel(IDuplexPipe pipe, ILogger logger, MessagePackSerializer serializer, int? inboundCapacity = 100, int? outboundCapacity = null)
-		: base(pipe, CreateValidatedInboundChannel(inboundCapacity, serializer), CreateOutboundChannel(outboundCapacity), logger)
+		: this(pipe, logger, serializer, DefaultFraming, inboundCapacity, outboundCapacity)
+	{
+	}
+
+	/// <summary>Initializes a new instance of the <see cref="JsonRpcMessagePackChannel"/> class with a configured serializer and framing.</summary>
+	/// <param name="pipe">The connected duplex pipe.</param>
+	/// <param name="logger">The transport logger.</param>
+	/// <param name="serializer">The serializer for MessagePack application values and envelopes.</param>
+	/// <param name="framing">The wire framing convention, which both parties must agree on.</param>
+	/// <param name="inboundCapacity">The inbound queue limit, or null for an unbounded queue.</param>
+	/// <param name="outboundCapacity">The outbound queue limit, or null for an unbounded queue.</param>
+	public JsonRpcMessagePackChannel(IDuplexPipe pipe, ILogger logger, MessagePackSerializer serializer, JsonRpcMessagePackFraming framing, int? inboundCapacity = 100, int? outboundCapacity = null)
+		: base(pipe, CreateValidatedInboundChannel(inboundCapacity, serializer, framing), CreateOutboundChannel(outboundCapacity), logger)
 	{
 		this.messagePackSerializer = serializer;
+		this.framing = framing;
 		this.Serializer = new MessagePackSerializerPlugin(this.messagePackSerializer);
 		this.StartTransport();
 	}
@@ -75,7 +102,7 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 				reader.AdvanceTo(buffer.End);
 				if (!buffer.IsEmpty)
 				{
-					throw new EndOfStreamException("The stream ended in the middle of a MessagePack structure.");
+					throw new EndOfStreamException("The stream ended in the middle of a MessagePack message.");
 				}
 
 				yield break;
@@ -88,20 +115,101 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 	/// <inheritdoc/>
 	protected override ValueTask SendMessageAsync(PipeWriter writer, JsonRpcMessage message, CancellationToken cancellationToken)
 	{
+		Requires.NotNull(writer);
 		this.Serializer.ValidateMessage(message);
-		this.messagePackSerializer.Serialize(writer, new JsonRpcMessagePackEnvelope(message), cancellationToken);
+		JsonRpcMessagePackEnvelope envelope = new(message);
+		if (this.framing == JsonRpcMessagePackFraming.BigEndianInt32LengthHeader)
+		{
+			if (!ReferenceEquals(this.prefixingWriterTarget, writer))
+			{
+				this.prefixingWriter = new PrefixingBufferWriter<byte>(writer, LengthHeaderSize);
+				this.prefixingWriterTarget = writer;
+			}
+
+			PrefixingBufferWriter<byte> prefixingWriter = this.prefixingWriter!;
+			this.messagePackSerializer.Serialize(prefixingWriter, envelope, cancellationToken);
+			BinaryPrimitives.WriteUInt32BigEndian(prefixingWriter.Prefix.Span, checked((uint)prefixingWriter.Length));
+			prefixingWriter.Commit();
+		}
+		else
+		{
+			this.messagePackSerializer.Serialize(writer, envelope, cancellationToken);
+		}
+
 		ReleaseSingleUsePayload(message);
 		return default;
 	}
 
-	private static System.Threading.Channels.Channel<JsonRpcMessage> CreateValidatedInboundChannel(int? capacity, MessagePackSerializer serializer)
+	private static System.Threading.Channels.Channel<JsonRpcMessage> CreateValidatedInboundChannel(int? capacity, MessagePackSerializer serializer, JsonRpcMessagePackFraming framing)
 	{
 		if (serializer is null)
 		{
 			throw new ArgumentNullException(nameof(serializer));
 		}
 
+		if (framing is not (JsonRpcMessagePackFraming.SelfDelimiting or JsonRpcMessagePackFraming.BigEndianInt32LengthHeader))
+		{
+			throw new ArgumentOutOfRangeException(nameof(framing));
+		}
+
 		return CreateInboundChannel(capacity);
+	}
+
+	/// <summary>Finds the bytes of the first message if the buffer contains all of it.</summary>
+	/// <param name="buffer">The buffered bytes.</param>
+	/// <param name="message">Receives the message's MessagePack structure, excluding any header.</param>
+	/// <returns><see langword="true"/> if a complete message is buffered.</returns>
+	private bool TryFindMessage(ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> message)
+	{
+		if (this.framing == JsonRpcMessagePackFraming.BigEndianInt32LengthHeader)
+		{
+			if (buffer.Length < LengthHeaderSize)
+			{
+				message = default;
+				return false;
+			}
+
+			uint length;
+			if (buffer.First.Span.Length >= LengthHeaderSize)
+			{
+				length = BinaryPrimitives.ReadUInt32BigEndian(buffer.First.Span);
+			}
+			else
+			{
+				Span<byte> header = stackalloc byte[LengthHeaderSize];
+				buffer.Slice(0, LengthHeaderSize).CopyTo(header);
+				length = BinaryPrimitives.ReadUInt32BigEndian(header);
+			}
+
+			if (length is 0 or > int.MaxValue)
+			{
+				throw new ProtocolViolationException($"Invalid MessagePack message length: {length}.");
+			}
+
+			if (buffer.Length - LengthHeaderSize < length)
+			{
+				message = default;
+				return false;
+			}
+
+			message = buffer.Slice(LengthHeaderSize, length);
+			return true;
+		}
+
+		// A null refresh delegate makes an incomplete buffer report InsufficientBuffer rather than end-of-stream.
+		MessagePackStreamingReader scanner = new(buffer, null, null);
+		SerializationContext context = this.messagePackSerializer.StartingContext;
+		switch (scanner.TrySkip(ref context))
+		{
+			case MessagePackPrimitives.DecodeResult.Success:
+				message = buffer.Slice(0, scanner.Position);
+				return true;
+			case MessagePackPrimitives.DecodeResult.EmptyBuffer or MessagePackPrimitives.DecodeResult.InsufficientBuffer:
+				message = default;
+				return false;
+			default:
+				throw new ProtocolViolationException("Invalid MessagePack-encoded JSON-RPC message.");
+		}
 	}
 
 	/// <summary>Synchronously deserializes the first message if the buffer contains all of it.</summary>
@@ -111,21 +219,12 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 	/// <returns><see langword="true"/> if a complete message was read.</returns>
 	private bool TryReadMessage(ref ReadOnlySequence<byte> buffer, CancellationToken cancellationToken, [NotNullWhen(true)] out JsonRpcMessage? message)
 	{
-		// A null refresh delegate makes an incomplete buffer report InsufficientBuffer rather than end-of-stream.
-		MessagePackStreamingReader scanner = new(buffer, null, null);
-		SerializationContext context = this.messagePackSerializer.StartingContext;
-		switch (scanner.TrySkip(ref context))
+		if (!this.TryFindMessage(buffer, out ReadOnlySequence<byte> messageBytes))
 		{
-			case MessagePackPrimitives.DecodeResult.Success:
-				break;
-			case MessagePackPrimitives.DecodeResult.EmptyBuffer or MessagePackPrimitives.DecodeResult.InsufficientBuffer:
-				message = null;
-				return false;
-			default:
-				throw new ProtocolViolationException("Invalid MessagePack-encoded JSON-RPC message.");
+			message = null;
+			return false;
 		}
 
-		ReadOnlySequence<byte> messageBytes = buffer.Slice(0, scanner.Position);
 		try
 		{
 			message = this.messagePackSerializer.Deserialize<JsonRpcMessagePackEnvelope>(messageBytes, cancellationToken).Message;
@@ -136,7 +235,7 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 			throw;
 		}
 
-		buffer = buffer.Slice(scanner.Position);
+		buffer = buffer.Slice(messageBytes.End);
 		return true;
 	}
 }

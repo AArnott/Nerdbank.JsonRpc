@@ -124,6 +124,7 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 		JsonRpcMessagePackChannel bob = new(bobPipe, NullLogger.Instance);
 
 		MessagePackWriter writer = new(alicePipe.Output);
+		writer.WriteRaw(new byte[] { 0, 0, 0, 1 }); // Big-endian length header
 		writer.Write(42);
 		writer.Flush();
 		await alicePipe.Output.FlushAsync(this.TimeoutToken);

@@ -503,7 +503,7 @@ public partial class JoinableTaskTokenTests : TestBase
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, WireEncoding encoding) => encoding switch
 	{
 		WireEncoding.Json => new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("test")),
-		_ => new JsonRpcMessagePackChannel(pipe, LoggerFactory.CreateLogger("test")),
+		_ => new JsonRpcMessagePackChannel(pipe, LoggerFactory.CreateLogger("test"), JsonRpcMessagePackChannel.DefaultSerializer, JsonRpcMessagePackFraming.SelfDelimiting),
 	};
 
 	private static JsonRpcValue EmptyParams(WireEncoding encoding) => encoding == WireEncoding.Json ? JsonRpcValue.FromJson("[]"u8.ToArray()) : JsonRpcValue.FromMessagePack(EmptyParamsMsgPack);
