@@ -81,6 +81,46 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+	/// <summary>Gets or sets the options used for proxies implicitly created for RPC-marshalable objects.</summary>
+	/// <value>Defaults to <see cref="JsonRpcProxyOptions.Default"/>, the same naming convention used for ordinary RPC proxies.</value>
+	/// <remarks>
+	/// To communicate with StreamJsonRpc's default RPC-marshalable objects, set this property to
+	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> before <see cref="Start"/>.
+	/// This does not change options for proxies attached through <see cref="Attach{T}(JsonRpcProxyOptions?)"/>.
+	/// </remarks>
+	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
+	/// <exception cref="InvalidOperationException">Thrown when set after <see cref="Start"/>.</exception>
+	public JsonRpcProxyOptions MarshaledProxyOptions
+	{
+		get => field ??= JsonRpcProxyOptions.Default;
+		set
+		{
+			Requires.NotNull(value);
+			this.ThrowIfStarted();
+			field = value;
+		}
+	}
+
+	/// <summary>Gets or sets the options used when implicitly registering RPC-marshalable targets.</summary>
+	/// <value>Defaults to <see cref="JsonRpcTargetOptions.Default"/>, the same naming convention used for ordinary RPC targets.</value>
+	/// <remarks>
+	/// To communicate with StreamJsonRpc's default RPC-marshalable objects, set this property to
+	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> before <see cref="Start"/>.
+	/// This does not change options for targets registered through <see cref="AddRpcTarget{T}(T, ITypeShape{T}, JsonRpcTargetOptions?)"/>.
+	/// </remarks>
+	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
+	/// <exception cref="InvalidOperationException">Thrown when set after <see cref="Start"/>.</exception>
+	public JsonRpcTargetOptions MarshaledTargetOptions
+	{
+		get => field ??= JsonRpcTargetOptions.Default;
+		set
+		{
+			Requires.NotNull(value);
+			this.ThrowIfStarted();
+			field = value;
+		}
+	}
+
 	/// <summary>Gets the logger for request and connection failures. Defaults to <see cref="NullLogger.Instance"/>.</summary>
 	public ILogger Logger
 	{
@@ -203,7 +243,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	{
 		Requires.NotNull(shape);
 
-		var registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, options ?? new JsonRpcTargetOptions())!;
+		var registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, options ?? JsonRpcTargetOptions.Default)!;
 		lock (this.targetRegistrationSync)
 		{
 			if (this.disposed)
@@ -251,7 +291,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <param name="interfaceType">The RPC contract interface to proxy.</param>
 	/// <param name="options">Options controlling argument encoding for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <paramref name="interfaceType"/>.</returns>
-	public object Attach(Type interfaceType, JsonRpcProxyOptions? options = null) => AttachCore(this, interfaceType, options);
+	public object Attach(Type interfaceType, JsonRpcProxyOptions? options = null) => AttachCore(this, interfaceType, options ?? JsonRpcProxyOptions.Default);
 
 #if NET
 	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, CancellationToken cancellationToken)
@@ -482,7 +522,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not have a constructor that accepts an IJsonRpcClient and JsonRpcProxyOptions instance.");
 		}
 
-		return constructor.Invoke([client, options ?? new JsonRpcProxyOptions()]);
+		return constructor.Invoke([client, options ?? JsonRpcProxyOptions.Default]);
 	}
 
 	internal RequestId GetNextRequestId()
@@ -504,18 +544,20 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		{
 			using Sequence<byte> buffer = new();
 			using Utf8JsonWriter writer = new(buffer);
-			writer.WriteStartArray();
-			writer.WriteNumberValue(handle);
-			writer.WriteBooleanValue(ownedBySender);
-			writer.WriteEndArray();
+			writer.WriteStartObject();
+			writer.WriteNumber("handle", handle);
+			writer.WriteBoolean("ownedBySender", ownedBySender);
+			writer.WriteEndObject();
 			writer.Flush();
 			return JsonRpcValue.FromJson(buffer.AsReadOnlySequence);
 		}
 
 		using Sequence<byte> msgpackBuffer = new();
 		MessagePackWriter msgpackWriter = new(msgpackBuffer);
-		msgpackWriter.WriteArrayHeader(2);
+		msgpackWriter.WriteMapHeader(2);
+		msgpackWriter.Write("handle");
 		msgpackWriter.Write(handle);
+		msgpackWriter.Write("ownedBySender");
 		msgpackWriter.Write(ownedBySender);
 		msgpackWriter.Flush();
 		return JsonRpcValue.FromMessagePack((RawMessagePack)msgpackBuffer.AsReadOnlySequence);

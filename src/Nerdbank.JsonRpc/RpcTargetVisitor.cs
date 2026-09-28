@@ -21,7 +21,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 
 	public override object? VisitObject<T>(IObjectTypeShape<T> objectShape, object? state = null)
 	{
-		JsonRpcTargetOptions options = state as JsonRpcTargetOptions ?? new JsonRpcTargetOptions();
+		JsonRpcTargetOptions options = state as JsonRpcTargetOptions ?? JsonRpcTargetOptions.Default;
 		Dictionary<string, MethodInvoker> methodInvokers = new(StringComparer.Ordinal);
 		foreach (IMethodShape method in objectShape.Methods)
 		{

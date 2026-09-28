@@ -19,6 +19,12 @@ Set <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute.CallScopedLifetime> to `true`
 
 Call-scoped interfaces are supported only in request arguments, not return values. No marshalable interface may be sent in a notification because there is no response to confirm acceptance. When a request returns a JSON-RPC error, its marshaled arguments are released; successful explicit-lifetime proxies remain valid until disposed or the connection closes.
 
+### Method naming on marshaled objects
+
+Methods on RPC-marshalable interfaces use the same default transform as ordinary RPC methods: `AddAsync`, for example, is invoked as `$/invokeProxy/0/add`. The options for these implicitly registered targets and proxies are exposed separately via <xref:Nerdbank.JsonRpc.JsonRpc.MarshaledTargetOptions> and <xref:Nerdbank.JsonRpc.JsonRpc.MarshaledProxyOptions>. Explicit options passed to `AddRpcTarget` or `Attach` do not affect them. The target options also carry event settings, although marshalable interfaces currently do not support events.
+
+StreamJsonRpc uses verbatim CLR names instead (such as `$/invokeProxy/0/AddAsync`). To [interoperate with StreamJsonRpc](method-naming.md#marshaled-objects), set both marshaled options' `MethodNameTransform` to <xref:Nerdbank.JsonRpc.CommonMethodNameTransforms.Identity> before `Start`. This does not change the naming of ordinary RPC methods. Individual methods can override their wire names with `[MethodShape(Name = "...")]`.
+
 ## Optional interfaces
 
 Apply <xref:Nerdbank.JsonRpc.RpcMarshalableOptionalInterfaceAttribute> to a marshalable base interface when implementations may expose additional RPC capabilities. Each optional interface has a stable signed 32-bit ID that must never be reused for a different interface. The optional interface must have a generated PolyType method shape, just like the base interface.

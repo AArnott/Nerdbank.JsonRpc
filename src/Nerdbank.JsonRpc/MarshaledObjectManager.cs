@@ -18,6 +18,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	private const string OptionalInterfaces = "optionalInterfaces";
 	private const string ReleaseMethod = "$/releaseMarshaledObject";
 	private static readonly ConditionalWeakTable<object, RemoteObjectHandle> RemoteHandles = new();
+
 	private readonly object sync = new();
 	private readonly Dictionary<long, MarshaledLocalObject> localObjects = [];
 	private readonly Dictionary<object, LocalObjectLease> localLeases = new(ReferenceEqualityComparer<object>.Instance);
@@ -55,7 +56,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new InvalidOperationException($"Explicit-lifetime marshalable values of '{shape.Type}' must implement IDisposable.");
 		}
 
-		TargetRegistration registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, new JsonRpcTargetOptions())!;
+		TargetRegistration registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, owner.MarshaledTargetOptions)!;
 		List<(int InterfaceId, TargetRegistration Registration)> optionalRegistrations = [];
 		HashSet<int> interfaceIds = [];
 		foreach (RpcMarshalableOptionalInterfaceAttribute optionalInterface in shape.Type.GetCustomAttributes<RpcMarshalableOptionalInterfaceAttribute>())
@@ -69,7 +70,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			{
 				ITypeShape optionalShape = shape.Provider.GetTypeShape(optionalInterface.OptionalInterface)
 					?? throw new NotSupportedException($"A PolyType shape is required for optional interface '{optionalInterface.OptionalInterface}'.");
-				TargetRegistration optionalRegistration = (TargetRegistration)optionalShape.Accept(RpcTargetVisitor.Instance, new JsonRpcTargetOptions())!;
+				TargetRegistration optionalRegistration = (TargetRegistration)optionalShape.Accept(RpcTargetVisitor.Instance, owner.MarshaledTargetOptions)!;
 				optionalRegistrations.Add((optionalInterface.InterfaceId, optionalRegistration));
 			}
 		}
@@ -147,7 +148,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new NotSupportedException($"No generated proxy supports the advertised optional interfaces on '{shape.Type}'.");
 		}
 
-		object proxy = JsonRpc.AttachCore(new MarshaledObjectProxyClient(owner, handle, callScopedHandle), typeof(T), implementationType: proxyType);
+		object proxy = JsonRpc.AttachCore(new MarshaledObjectProxyClient(owner, handle, callScopedHandle), typeof(T), owner.MarshaledProxyOptions, proxyType);
 		RemoteHandles.Add(proxy, new(this, handle, callScopedLifetime, callScopedHandle));
 		return (T)proxy;
 	}
@@ -357,7 +358,11 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		writer.WriteStartObject();
 		writer.WriteNumber(Marker, direction);
 		writer.WriteNumber(Handle, handle);
-		writer.WriteString(Lifetime, callScopedLifetime ? "call" : "explicit");
+		if (callScopedLifetime)
+		{
+			writer.WriteString(Lifetime, "call");
+		}
+
 		if (optionalInterfaceIds is { Count: > 0 })
 		{
 			writer.WriteStartArray(OptionalInterfaces);
@@ -378,13 +383,17 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	{
 		using Sequence<byte> buffer = new();
 		MessagePackWriter writer = new(buffer);
-		writer.WriteMapHeader(optionalInterfaceIds is { Count: > 0 } ? 4 : 3);
+		writer.WriteMapHeader(2 + (callScopedLifetime ? 1 : 0) + (optionalInterfaceIds is { Count: > 0 } ? 1 : 0));
 		writer.Write(Marker);
 		writer.Write(direction);
 		writer.Write(Handle);
 		writer.Write(handle);
-		writer.Write(Lifetime);
-		writer.Write(callScopedLifetime ? "call" : "explicit");
+		if (callScopedLifetime)
+		{
+			writer.Write(Lifetime);
+			writer.Write("call");
+		}
+
 		if (optionalInterfaceIds is { Count: > 0 })
 		{
 			writer.Write(OptionalInterfaces);
