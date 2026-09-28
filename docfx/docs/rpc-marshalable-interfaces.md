@@ -58,3 +58,58 @@ using JsonRpc client = new(rpcChannel) { MultiplexingStream = multiplexingStream
 ```
 
 The sender serializes an anonymous multiplex-channel ID as the parameter or result value; the receiving endpoint accepts that channel automatically. Stream-shaped arguments may only be used in requests, never notifications. If a request fails, the channel is closed automatically; after a successful response, both peers own their pipe ends and must complete or dispose them when finished. This matches StreamJsonRpc's [out-of-band stream protocol](https://microsoft.github.io/vs-streamjsonrpc/exotic_types/oob_streams.html).
+
+## Async enumerables
+
+`IAsyncEnumerable<T>` parameters and return values are marshaled by reference so the receiver pulls items on demand instead of waiting for the whole sequence to be produced and encoded. Use it for long, expensive, or unbounded sequences where the consumer may stop early. Provide a PolyType shape for the element type through the containing RPC contract's shape provider.
+
+```csharp
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IFileService
+{
+    IAsyncEnumerable<string> ReadLinesAsync(string path, CancellationToken cancellationToken);
+
+    Task<int> CountAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken);
+}
+```
+
+A proxy method may return `IAsyncEnumerable<T>` directly or wrap it in `Task<IAsyncEnumerable<T>>`/`ValueTask<IAsyncEnumerable<T>>`. Returning it directly is usually more convenient; the request is sent immediately and the response is awaited when enumeration begins.
+
+### Resource lifetime
+
+Each marshaled sequence holds resources on the producing endpoint until it is drained to completion or discarded, so the consumer **must** enumerate it to the end or dispose it. `await foreach` does both automatically, including when the loop is exited with `break` or an exception. A received sequence may be enumerated only once; a second attempt throws <xref:System.InvalidOperationException>.
+
+Sequences passed as request arguments are released when the response arrives, so the server must finish consuming them before returning. Sequences returned as results live until the consumer stops enumerating or the connection closes. Because there is no response to confirm acceptance, `IAsyncEnumerable<T>` may not be sent in a notification.
+
+### Tuning
+
+By default each `MoveNextAsync` that is not already satisfied costs one round trip. <xref:Nerdbank.JsonRpc.JsonRpcEnumerableSettings> tunes that for a sequence you send, and `WithJsonRpcSettings` applies it:
+
+```csharp
+IAsyncEnumerable<int> ProduceAsync(CancellationToken cancellationToken)
+    => this.GenerateAsync(cancellationToken).WithJsonRpcSettings(new()
+    {
+        MinBatchSize = 10,
+        MaxReadAhead = 50,
+        Prefetch = 10,
+    });
+```
+
+- `MinBatchSize` (default 1) makes the producer wait until it has at least this many values before answering a request, amortizing round trips over many small items.
+- `MaxReadAhead` (default 0) lets the producer generate up to this many values ahead of what the consumer has asked for, so values are usually ready the moment they are requested. Combine it with `MinBatchSize` to keep a filled buffer that is handed over in chunks.
+- `Prefetch` (default 0) includes that many values inline in the message that carries the sequence, so the consumer's first items cost no extra round trip. If the whole sequence fits within `Prefetch`, no token is sent at all and the exchange costs exactly one message.
+
+Prefetching must run before the sequence is serialized. Setting `Prefetch` does this automatically for sequences returned from an RPC method. For a sequence passed as an *argument*, await `WithPrefetchAsync` first:
+
+```csharp
+int count = await client.CountAsync(
+    await source.WithPrefetchAsync(10, cancellationToken),
+    cancellationToken);
+```
+
+`AsAsyncEnumerable` adapts an existing synchronous sequence so it can be marshaled.
+
+### Wire protocol
+
+The sequence is serialized as an object with an optional `token` and an optional inline `values` array. The consumer then sends `$/enumerator/next` with that token and receives `{ "values": [...], "finished": bool }`, and sends an `$/enumerator/abort` notification if it stops early. An unrecognized token fails with error code -32001. This matches StreamJsonRpc's [async enumerable protocol](https://microsoft.github.io/vs-streamjsonrpc/exotic_types/asyncenumerable.html).

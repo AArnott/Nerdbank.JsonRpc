@@ -8,5 +8,6 @@ Nerdbank.JsonRpc provides strongly typed JSON-RPC requests, notifications, and s
 - **Method name transforms:** CLR method names map to camelCase wire names by default, with explicit names and StreamJsonRpc interop supported. [Configure method naming](method-naming.md).
 - **Events as notifications:** Raising a CLR event on a registered target sends a JSON-RPC notification to the remote party. [Send events as notifications](events.md).
 - **Batching:** Send several independent requests or notifications in one JSON-RPC payload. [Send a batch](batching.md).
+- **Exotic types:** Marshal interfaces, `IObserver<T>`, `IProgress<T>`, streams and pipes, and `IAsyncEnumerable<T>` by reference instead of by value. [Marshal objects by reference](rpc-marshalable-interfaces.md).
 - **Cancellation and failure handling:** Propagate cancellation and distinguish malformed protocol envelopes from application-value conversion failures. [Understand protocol behavior](protocol-behavior.md).
 - **Main-thread deadlock mitigation:** Set a `JoinableTaskFactory` to propagate `JoinableTask` context across processes, compatible with StreamJsonRpc. [Learn more](protocol-behavior.md#deadlock-mitigation-with-joinabletaskfactory).

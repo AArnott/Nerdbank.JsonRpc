@@ -25,7 +25,7 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 		=> Task.FromResult(new[] { "alpha", "beta", "gamma" }.AsAsyncEnumerable());
 
 	public Task<IAsyncEnumerable<int>> GetFailingSequenceAsync(int valuesBeforeFailure, CancellationToken cancellationToken)
-		=> Task.FromResult(FailAsync(valuesBeforeFailure));
+		=> Task.FromResult(FailAsync(valuesBeforeFailure, cancellationToken));
 
 	public async Task<int> SumAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken)
 	{

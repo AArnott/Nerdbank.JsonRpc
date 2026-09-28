@@ -222,10 +222,9 @@ public partial class AsyncEnumerableTests
 	public async Task MultipleSequenceArgumentsAreIndependent(JsonRpcEncoding encoding)
 	{
 		using Fixture fixture = new(encoding);
-		Assert.Equal(10 + 26, await fixture.Client.SumTwoAsync(
-			Enumerable.Range(0, 5).AsAsyncEnumerable(),
-			Enumerable.Range(5, 4).AsAsyncEnumerable(),
-			CancellationToken.None));
+		IAsyncEnumerable<int> first = Enumerable.Range(0, 5).AsAsyncEnumerable();
+		IAsyncEnumerable<int> second = Enumerable.Range(5, 4).AsAsyncEnumerable();
+		Assert.Equal(10 + 26, await fixture.Client.SumTwoAsync(first, second, CancellationToken.None));
 	}
 
 	[Test]
