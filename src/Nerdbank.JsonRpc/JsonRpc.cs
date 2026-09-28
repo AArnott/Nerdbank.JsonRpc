@@ -81,6 +81,58 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+	/// <summary>
+	/// Gets or sets the options applied to proxies created by <see cref="Attach{T}(JsonRpcProxyOptions?)"/> when no options are given,
+	/// and to proxies created for marshaled objects received from the remote party.
+	/// </summary>
+	/// <value>Defaults to a <see cref="JsonRpcProxyOptions"/> with default settings.</value>
+	/// <remarks>
+	/// <para>
+	/// Proxies for marshaled objects are created implicitly, so this is the only way to control the JSON-RPC method names they send.
+	/// Set <see cref="JsonRpcProxyOptions.MethodNameTransform"/> to <see cref="CommonMethodNameTransforms.Identity"/> to interoperate
+	/// with a StreamJsonRpc peer that uses its default (untransformed) method naming.
+	/// </para>
+	/// <para>This property must be set before <see cref="Start"/>.</para>
+	/// </remarks>
+	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
+	/// <exception cref="InvalidOperationException">Thrown when setting this property after <see cref="Start"/> has been called.</exception>
+	public JsonRpcProxyOptions DefaultProxyOptions
+	{
+		get => field ??= new JsonRpcProxyOptions();
+		set
+		{
+			Requires.NotNull(value);
+			this.ThrowIfStarted();
+			field = value;
+		}
+	}
+
+	/// <summary>
+	/// Gets or sets the options applied by <see cref="AddRpcTarget{T}(T, ITypeShape{T}, JsonRpcTargetOptions?)"/> when no options are given,
+	/// and to marshaled objects sent to the remote party.
+	/// </summary>
+	/// <value>Defaults to a <see cref="JsonRpcTargetOptions"/> with default settings.</value>
+	/// <remarks>
+	/// <para>
+	/// Marshaled objects are registered as RPC targets implicitly, so this is the only way to control the JSON-RPC method names they accept.
+	/// Set <see cref="JsonRpcTargetOptions.MethodNameTransform"/> to <see cref="CommonMethodNameTransforms.Identity"/> to interoperate
+	/// with a StreamJsonRpc peer that uses its default (untransformed) method naming.
+	/// </para>
+	/// <para>This property must be set before <see cref="Start"/>.</para>
+	/// </remarks>
+	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
+	/// <exception cref="InvalidOperationException">Thrown when setting this property after <see cref="Start"/> has been called.</exception>
+	public JsonRpcTargetOptions DefaultTargetOptions
+	{
+		get => field ??= new JsonRpcTargetOptions();
+		set
+		{
+			Requires.NotNull(value);
+			this.ThrowIfStarted();
+			field = value;
+		}
+	}
+
 	/// <summary>Gets the logger for request and connection failures. Defaults to <see cref="NullLogger.Instance"/>.</summary>
 	public ILogger Logger
 	{
@@ -203,7 +255,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	{
 		Requires.NotNull(shape);
 
-		var registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, options ?? new JsonRpcTargetOptions())!;
+		var registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, options ?? this.DefaultTargetOptions)!;
 		lock (this.targetRegistrationSync)
 		{
 			if (this.disposed)
@@ -251,7 +303,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <param name="interfaceType">The RPC contract interface to proxy.</param>
 	/// <param name="options">Options controlling argument encoding for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <paramref name="interfaceType"/>.</returns>
-	public object Attach(Type interfaceType, JsonRpcProxyOptions? options = null) => AttachCore(this, interfaceType, options);
+	public object Attach(Type interfaceType, JsonRpcProxyOptions? options = null) => AttachCore(this, interfaceType, options ?? this.DefaultProxyOptions);
 
 #if NET
 	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, CancellationToken cancellationToken)
@@ -504,18 +556,20 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		{
 			using Sequence<byte> buffer = new();
 			using Utf8JsonWriter writer = new(buffer);
-			writer.WriteStartArray();
-			writer.WriteNumberValue(handle);
-			writer.WriteBooleanValue(ownedBySender);
-			writer.WriteEndArray();
+			writer.WriteStartObject();
+			writer.WriteNumber("handle", handle);
+			writer.WriteBoolean("ownedBySender", ownedBySender);
+			writer.WriteEndObject();
 			writer.Flush();
 			return JsonRpcValue.FromJson(buffer.AsReadOnlySequence);
 		}
 
 		using Sequence<byte> msgpackBuffer = new();
 		MessagePackWriter msgpackWriter = new(msgpackBuffer);
-		msgpackWriter.WriteArrayHeader(2);
+		msgpackWriter.WriteMapHeader(2);
+		msgpackWriter.Write("handle");
 		msgpackWriter.Write(handle);
+		msgpackWriter.Write("ownedBySender");
 		msgpackWriter.Write(ownedBySender);
 		msgpackWriter.Flush();
 		return JsonRpcValue.FromMessagePack((RawMessagePack)msgpackBuffer.AsReadOnlySequence);

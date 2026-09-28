@@ -100,26 +100,34 @@ internal sealed class ProgressManager(JsonRpc owner)
 		try
 		{
 			(bool named, List<(string? Name, JsonRpcValue Value)> values) = owner.UserDataSerializer.ReadArguments(request.Arguments);
-			if (!named || values.Count != 2)
+			if (values.Count != 2)
 			{
-				throw new FormatException("Progress notifications must include named token and value parameters.");
+				throw new FormatException("Progress notifications must include a token and a value parameter.");
 			}
 
 			JsonRpcValue? token = null;
 			JsonRpcValue? value = null;
-			foreach ((string? name, JsonRpcValue parameter) in values)
+			if (named)
 			{
-				switch (name)
+				foreach ((string? name, JsonRpcValue parameter) in values)
 				{
-					case "token" when token is null:
-						token = parameter;
-						break;
-					case "value" when value is null:
-						value = parameter;
-						break;
-					default:
-						throw new FormatException("Progress notifications must include one token and one value parameter.");
+					switch (name)
+					{
+						case "token" when token is null:
+							token = parameter;
+							break;
+						case "value" when value is null:
+							value = parameter;
+							break;
+						default:
+							throw new FormatException("Progress notifications must include one token and one value parameter.");
+					}
 				}
+			}
+			else
+			{
+				token = values[0].Value;
+				value = values[1].Value;
 			}
 
 			if (token is null || value is null)
@@ -296,20 +304,18 @@ internal sealed class ProgressManager(JsonRpc owner)
 			if (token.Encoding == JsonRpcEncoding.Json)
 			{
 				using Sequence<byte> buffer = new();
-				Write(buffer, "{\"token\":");
+				Write(buffer, "[");
 				Write(buffer, token.OwnedBytes.Span);
-				Write(buffer, ",\"value\":");
+				Write(buffer, ",");
 				Write(buffer, value.OwnedBytes.Span);
-				Write(buffer, "}");
+				Write(buffer, "]");
 				return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
 			}
 
 			using Sequence<byte> messagePackBuffer = new();
 			MessagePackWriter writer = new(messagePackBuffer);
-			writer.WriteMapHeader(2);
-			writer.Write("token");
+			writer.WriteArrayHeader(2);
 			writer.Write(token.AsMessagePack());
-			writer.Write("value");
 			writer.Write(value.AsMessagePack());
 			writer.Flush();
 			return JsonRpcValue.FromMessagePack((RawMessagePack)messagePackBuffer.AsReadOnlySequence.ToArray());

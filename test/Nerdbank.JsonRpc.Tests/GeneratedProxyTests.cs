@@ -69,7 +69,9 @@ public class GeneratedProxyTests
 
 		Assert.Equal(1, properties["__jsonrpc_marshaled"]);
 		Assert.IsType<long>(properties["handle"]);
-		Assert.Equal("explicit", properties["lifetime"]);
+
+		// Explicit lifetime is the default, so the property is omitted for wire compatibility with StreamJsonRpc.
+		Assert.False(properties.ContainsKey("lifetime"));
 	}
 
 	[Test]

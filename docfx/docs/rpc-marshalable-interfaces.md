@@ -19,6 +19,10 @@ Set <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute.CallScopedLifetime> to `true`
 
 Call-scoped interfaces are supported only in request arguments, not return values. No marshalable interface may be sent in a notification because there is no response to confirm acceptance. When a request returns a JSON-RPC error, its marshaled arguments are released; successful explicit-lifetime proxies remain valid until disposed or the connection closes.
 
+### Method naming on marshaled objects
+
+Marshaled objects are registered as RPC targets and attached as proxies implicitly, so their method names come from <xref:Nerdbank.JsonRpc.JsonRpc.DefaultTargetOptions> and <xref:Nerdbank.JsonRpc.JsonRpc.DefaultProxyOptions> rather than from options passed to an individual `AddRpcTarget` or `Attach` call. Set those properties before `Start` to control naming for marshaled objects, including when [interoperating with StreamJsonRpc](method-naming.md#interoperating-with-streamjsonrpc).
+
 ## Optional interfaces
 
 Apply <xref:Nerdbank.JsonRpc.RpcMarshalableOptionalInterfaceAttribute> to a marshalable base interface when implementations may expose additional RPC capabilities. Each optional interface has a stable signed 32-bit ID that must never be reused for a different interface. The optional interface must have a generated PolyType method shape, just like the base interface.
