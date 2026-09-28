@@ -42,7 +42,7 @@ internal sealed class MarshaledInterfaceMessagePackConverterFactory(MarshaledObj
 			}
 
 			JsonRpcValue marker = this.typeIsObserver ? ObserverMarshaler.Marshal(manager, value, shape, JsonRpcEncoding.MessagePack) : this.typeIsProgress ? ProgressMarshaler.Marshal(progress, value, shape, JsonRpcEncoding.MessagePack) : manager.MarshalMarshalable(value, shape, JsonRpcEncoding.MessagePack);
-			writer.Write(marker.AsMessagePack());
+			writer.Write(marker.AsOwnedMessagePack());
 		}
 	}
 }

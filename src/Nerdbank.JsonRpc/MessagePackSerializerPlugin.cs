@@ -23,7 +23,7 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	public override JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => JsonRpcValue.FromMessagePack((RawMessagePack)this.Serializer.Serialize(value, shape, cancellationToken));
 
 	/// <inheritdoc/>
-	public override T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => this.Serializer.Deserialize(value.AsMessagePack(), shape, cancellationToken)!;
+	public override T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => this.Serializer.Deserialize(value.AsOwnedMessagePack(), shape, cancellationToken)!;
 
 	/// <inheritdoc/>
 	internal override JsonRpcSerializer WithMarshaledObjectManager(MarshaledObjectManager manager, ProgressManager progress, OutOfBandStreamManager outOfBandStreams, AsyncEnumerableManager asyncEnumerables)
@@ -48,14 +48,14 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	/// <inheritdoc/>
 	internal override bool IsParameterCollection(JsonRpcValue value)
 	{
-		MessagePackType type = new MessagePackReader(value.AsMessagePack()).NextMessagePackType;
+		MessagePackType type = new MessagePackReader(value.AsOwnedMessagePack()).NextMessagePackType;
 		return type is MessagePackType.Map or MessagePackType.Array;
 	}
 
 	/// <inheritdoc/>
 	internal override (bool Named, List<(string? Name, JsonRpcValue Value)> Values) ReadArguments(JsonRpcValue arguments)
 	{
-		MessagePackReader reader = new(arguments.AsMessagePack());
+		MessagePackReader reader = new(arguments.AsOwnedMessagePack());
 		SerializationContext context = new();
 		bool named = reader.NextMessagePackType switch
 		{
@@ -68,7 +68,7 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 		for (int i = 0; i < count; i++)
 		{
 			string? name = named ? reader.ReadString() : null;
-			values.Add((name, JsonRpcValue.FromMessagePack(reader.ReadRaw(context))));
+			values.Add((name, JsonRpcValue.FromOwnedMessagePack(reader.ReadRaw(context))));
 		}
 
 		if (!reader.End)
@@ -82,5 +82,5 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	internal override JsonRpcValue SerializeCancellation(RequestId id, CancellationToken cancellationToken)
 		=> this.Serialize(new JsonRpc.CancelRequestParams(id), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc.Default.CancelRequestParams, cancellationToken);
 
-	internal override object? DeserializeObject(JsonRpcValue value, ITypeShape shape, CancellationToken cancellationToken) => this.Serializer.DeserializeObject(value.AsMessagePack().MsgPack.ToArray(), shape, cancellationToken);
+	internal override object? DeserializeObject(JsonRpcValue value, ITypeShape shape, CancellationToken cancellationToken) => this.Serializer.DeserializeObject(value.OwnedBytes, shape, cancellationToken);
 }

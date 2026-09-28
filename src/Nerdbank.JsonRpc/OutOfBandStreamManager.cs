@@ -142,7 +142,7 @@ internal sealed class OutOfBandStreamManager : IDisposable
 				: throw new FormatException("Out-of-band stream token must be an unsigned integer.");
 		}
 
-		MessagePackReader reader = new(token.AsMessagePack());
+		MessagePackReader reader = new(token.AsOwnedMessagePack());
 		ulong tokenValue = reader.ReadUInt64();
 		return reader.End ? tokenValue : throw new FormatException("Out-of-band stream token must be an unsigned integer.");
 	}

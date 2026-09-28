@@ -239,7 +239,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 				: throw new FormatException("An enumerator token must be an integer.");
 		}
 
-		MessagePackReader reader = new(value.AsMessagePack());
+		MessagePackReader reader = new(value.AsOwnedMessagePack());
 		return reader.ReadInt64();
 	}
 
@@ -278,7 +278,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			return (token, values);
 		}
 
-		MessagePackReader reader = new(value.AsMessagePack());
+		MessagePackReader reader = new(value.AsOwnedMessagePack());
 		SerializationContext context = new();
 		int count = reader.ReadMapHeader();
 		for (int i = 0; i < count; i++)
@@ -341,7 +341,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			return (values, finished);
 		}
 
-		MessagePackReader reader = new(value.AsMessagePack());
+		MessagePackReader reader = new(value.AsOwnedMessagePack());
 		SerializationContext context = new();
 		int count = reader.ReadMapHeader();
 		for (int i = 0; i < count; i++)
@@ -439,7 +439,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			writer.WriteArrayHeader(values.Count);
 			foreach (T value in values)
 			{
-				writer.Write(owner.UserDataSerializer.Serialize(value, elementShape, owner.DisposalToken).AsMessagePack());
+				writer.Write(owner.UserDataSerializer.Serialize(value, elementShape, owner.DisposalToken).AsOwnedMessagePack());
 			}
 		}
 
@@ -481,7 +481,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		writer.WriteArrayHeader(values.Count);
 		foreach (T value in values)
 		{
-			writer.Write(owner.UserDataSerializer.Serialize(value, elementShape, owner.DisposalToken).AsMessagePack());
+			writer.Write(owner.UserDataSerializer.Serialize(value, elementShape, owner.DisposalToken).AsOwnedMessagePack());
 		}
 
 		writer.Write(FinishedPropertyName);

@@ -206,7 +206,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 				if (request.Arguments.HasValue)
 				{
 					writer.Write("params");
-					writer.WriteRaw(request.Arguments.AsMessagePack().MsgPack);
+					writer.WriteRaw(request.Arguments.AsOwnedMessagePack().MsgPack);
 				}
 
 				if (request.HasId)
@@ -221,7 +221,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 				writer.Write("jsonrpc");
 				writer.Write(result.Version);
 				writer.Write("result");
-				writer.WriteRaw(result.Result.AsMessagePack().MsgPack);
+				writer.WriteRaw(result.Result.AsOwnedMessagePack().MsgPack);
 				WriteId(ref writer, result.Id, context);
 				WriteExtensions(ref writer, message);
 				break;

@@ -18,6 +18,6 @@ internal sealed class MarshaledDisposableMessagePackConverter(MarshaledObjectMan
 			return;
 		}
 
-		writer.Write(manager.Marshal(value, JsonRpcEncoding.MessagePack).AsMessagePack());
+		writer.Write(manager.Marshal(value, JsonRpcEncoding.MessagePack).AsOwnedMessagePack());
 	}
 }

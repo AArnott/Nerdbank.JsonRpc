@@ -438,7 +438,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			return (jsonHandle, jsonDirection, jsonLifetime == "call", jsonOptionalInterfaceIds);
 		}
 
-		MessagePackReader reader = new(value.AsMessagePack());
+		MessagePackReader reader = new(value.AsOwnedMessagePack());
 		SerializationContext context = new();
 		int count = reader.ReadMapHeader();
 		long handle = 0;
@@ -502,7 +502,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 				: (root[0].GetInt64(), root.GetArrayLength() > 1 && root[1].GetBoolean());
 		}
 
-		MessagePackReader reader = new(value.AsMessagePack());
+		MessagePackReader reader = new(value.AsOwnedMessagePack());
 		SerializationContext context = new();
 		if (reader.NextMessagePackType == MessagePackType.Map)
 		{

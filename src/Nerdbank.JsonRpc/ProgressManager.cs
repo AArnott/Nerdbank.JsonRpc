@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -316,9 +316,9 @@ internal sealed class ProgressManager(JsonRpc owner)
 			MessagePackWriter writer = new(messagePackBuffer);
 			writer.WriteMapHeader(2);
 			writer.Write("token");
-			writer.Write(token.AsMessagePack());
+			writer.Write(token.AsOwnedMessagePack());
 			writer.Write("value");
-			writer.Write(value.AsMessagePack());
+			writer.Write(value.AsOwnedMessagePack());
 			writer.Flush();
 			return JsonRpcValue.FromMessagePack((RawMessagePack)messagePackBuffer.AsReadOnlySequence.ToArray());
 		}

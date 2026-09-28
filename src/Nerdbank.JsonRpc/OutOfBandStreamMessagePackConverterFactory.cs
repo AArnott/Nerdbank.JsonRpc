@@ -26,7 +26,7 @@ internal sealed class OutOfBandStreamMessagePackConverterFactory(OutOfBandStream
 				return;
 			}
 
-			writer.Write(manager.Marshal(this.ToPipe(value), JsonRpcEncoding.MessagePack).AsMessagePack());
+			writer.Write(manager.Marshal(this.ToPipe(value), JsonRpcEncoding.MessagePack).AsOwnedMessagePack());
 		}
 
 		protected abstract IDuplexPipe ToPipe(T value);

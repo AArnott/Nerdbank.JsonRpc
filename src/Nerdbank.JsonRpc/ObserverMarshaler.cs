@@ -82,7 +82,7 @@ internal static class ObserverMarshaler
 			throw new FormatException("Observer error message is missing.");
 		}
 
-		MessagePackReader reader = new(value.AsMessagePack());
+		MessagePackReader reader = new(value.AsOwnedMessagePack());
 		SerializationContext context = new();
 		int count = reader.ReadMapHeader();
 		for (int i = 0; i < count; i++)

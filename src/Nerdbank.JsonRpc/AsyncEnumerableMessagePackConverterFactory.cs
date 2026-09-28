@@ -40,7 +40,7 @@ internal sealed class AsyncEnumerableMessagePackConverterFactory(AsyncEnumerable
 				return;
 			}
 
-			writer.Write(AsyncEnumerableMarshaler.Marshal(manager, value, shape, JsonRpcEncoding.MessagePack).AsMessagePack());
+			writer.Write(AsyncEnumerableMarshaler.Marshal(manager, value, shape, JsonRpcEncoding.MessagePack).AsOwnedMessagePack());
 		}
 	}
 }

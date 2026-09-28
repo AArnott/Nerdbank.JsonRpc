@@ -49,7 +49,7 @@ public ref struct JsonRpcArgumentsBuilder
 		this.named = named;
 		this.count = count;
 		this.cancellationToken = cancellationToken;
-		this.buffer = new();
+		this.buffer = new(ArrayPool<byte>.Shared);
 		if (this.serializer.Encoding == JsonRpcEncoding.Json)
 		{
 			this.WriteByte(named ? (byte)'{' : (byte)'[');
@@ -139,7 +139,7 @@ public ref struct JsonRpcArgumentsBuilder
 		this.asyncEnumerableScope?.Dispose();
 		this.progressScope?.Dispose();
 		this.marshaledObjectsScope?.Dispose();
-		this.buffer?.Dispose();
+		this.buffer.Dispose();
 	}
 
 	private void ThrowIfUnavailable()
