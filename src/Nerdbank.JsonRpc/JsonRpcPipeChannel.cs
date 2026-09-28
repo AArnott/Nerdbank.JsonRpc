@@ -70,6 +70,21 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 #pragma warning restore VSTHRD003 // Avoid awaiting foreign Tasks
 	}
 
+	/// <summary>Returns single-use pooled buffers to the pool once the message that carries them has been serialized.</summary>
+	/// <param name="message">The serialized message, whose single-use payloads must not be used again.</param>
+	internal static void ReleaseSingleUsePayload(JsonRpcMessage message)
+	{
+		switch (message)
+		{
+			case JsonRpcRequest request:
+				request.Arguments.ReleaseIfSingleUse();
+				break;
+			case JsonRpcResult result:
+				result.Result.ReleaseIfSingleUse();
+				break;
+		}
+	}
+
 	protected static Channel<JsonRpcMessage> CreateInboundChannel(int? capacity) => capacity is null
 		? Channel.CreateUnbounded<JsonRpcMessage>(new UnboundedChannelOptions { SingleWriter = true })
 		: Channel.CreateBounded<JsonRpcMessage>(new BoundedChannelOptions(capacity.Value) { SingleWriter = true });

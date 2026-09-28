@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
+using System.Runtime.InteropServices;
 using Nerdbank.MessagePack;
 
 namespace Nerdbank.JsonRpc;
@@ -41,13 +42,7 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	public ReadOnlyMemory<byte> Bytes => this.storage is null ? default : this.OwnedBytes.ToArray();
 
 	/// <summary>Gets the internally owned bytes without copying.</summary>
-	internal ReadOnlyMemory<byte> OwnedBytes => this.storage switch
-	{
-		byte[] bytes => bytes,
-		PooledByteBuffer pooled => pooled.Memory,
-		OwnedSlice slice => slice.Memory,
-		_ => ReadOnlyMemory<byte>.Empty,
-	};
+	internal ReadOnlyMemory<byte> OwnedBytes => this.storage is null ? ReadOnlyMemory<byte>.Empty : GetMemory(this.storage);
 
 	internal MarshaledObjectManager.HandleSet? MarshaledHandles { get; }
 
@@ -114,16 +109,24 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	/// <param name="encoding">The wire encoding.</param>
 	/// <param name="marshaledHandles">The marshaled local handles owned by this encoded value.</param>
 	/// <returns>The pooled value.</returns>
-	internal static JsonRpcValue FromPooledBytes(ReadOnlySequence<byte> bytes, JsonRpcEncoding encoding, MarshaledObjectManager.HandleSet? marshaledHandles = null)
+	internal static JsonRpcValue FromPooledBytes(ReadOnlySequence<byte> bytes, JsonRpcEncoding encoding, MarshaledObjectManager.HandleSet? marshaledHandles = null) => FromPooledBytes(bytes, encoding, singleUse: false, marshaledHandles);
+
+	/// <summary>Copies an encoded value into a pooled buffer.</summary>
+	/// <param name="bytes">The encoded bytes.</param>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="singleUse">A value indicating whether the transport may return the buffer to the pool once it has been transmitted.</param>
+	/// <param name="marshaledHandles">The marshaled local handles owned by this encoded value.</param>
+	/// <returns>The pooled value.</returns>
+	internal static JsonRpcValue FromPooledBytes(ReadOnlySequence<byte> bytes, JsonRpcEncoding encoding, bool singleUse, MarshaledObjectManager.HandleSet? marshaledHandles = null)
 	{
-		PooledByteBuffer buffer = new(checked((int)bytes.Length));
+		PooledByteBuffer buffer = new(checked((int)bytes.Length), singleUse);
 		bytes.CopyTo(buffer.Memory.Span);
 		return new(buffer, encoding, marshaledHandles);
 	}
 
 	/// <summary>Copies a raw MessagePack value into a pooled buffer.</summary>
 	/// <param name="value">The raw MessagePack value.</param>
-	/// <returns>The pooled value.</returns>
+	/// <returns>The pooled value, which its consumer may <see cref="Release">release</see> once it is no longer needed.</returns>
 	internal static JsonRpcValue FromPooledMessagePack(RawMessagePack value) => FromPooledBytes(value.MsgPack, JsonRpcEncoding.MessagePack);
 
 	/// <summary>Retains a slice of an internally owned MessagePack buffer without copying.</summary>
@@ -133,9 +136,16 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	internal static JsonRpcValue FromOwnedMessagePack(JsonRpcValue owner, RawMessagePack value)
 	{
 		ReadOnlySequence<byte> sequence = value.MsgPack;
-		return sequence.IsSingleSegment
-			? new(new OwnedSlice(owner.storage!, sequence.First), JsonRpcEncoding.MessagePack)
-			: new(sequence.ToArray(), JsonRpcEncoding.MessagePack);
+		object root = owner.storage is OwnedSlice parent ? parent.Owner : owner.storage!;
+		if (sequence.IsSingleSegment
+			&& MemoryMarshal.TryGetArray(sequence.First, out ArraySegment<byte> slice)
+			&& MemoryMarshal.TryGetArray(GetMemory(root), out ArraySegment<byte> whole)
+			&& ReferenceEquals(slice.Array, whole.Array))
+		{
+			return new(new OwnedSlice(root, slice.Offset - whole.Offset, slice.Count), JsonRpcEncoding.MessagePack);
+		}
+
+		return new(sequence.ToArray(), JsonRpcEncoding.MessagePack);
 	}
 
 	/// <summary>Returns the internally owned MessagePack bytes without copying.</summary>
@@ -156,10 +166,39 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	/// <returns>The copied value.</returns>
 	internal JsonRpcValue WithAsyncEnumerableTokens(AsyncEnumerableManager.TokenSet asyncEnumerableTokens) => new(this.storage!, this.Encoding, this.MarshaledHandles, this.ProgressRegistrations, this.OutOfBandChannels, asyncEnumerableTokens);
 
-	private sealed class OwnedSlice(object owner, ReadOnlyMemory<byte> memory)
+	/// <summary>Returns a pooled buffer that backs this value to the pool.</summary>
+	/// <remarks>
+	/// Only the exclusive owner of a value may call this, and only after every use of the value (and any slice of it) is complete.
+	/// Values that are not backed by a pooled buffer are unaffected.
+	/// </remarks>
+	internal void Release() => (this.storage as PooledByteBuffer)?.Release();
+
+	/// <summary>Returns the pooled buffer that backs this value to the pool if it was created for a single transmission.</summary>
+	internal void ReleaseIfSingleUse()
+	{
+		if (this.storage is PooledByteBuffer { IsSingleUse: true } pooled)
+		{
+			pooled.Release();
+		}
+	}
+
+	private static ReadOnlyMemory<byte> GetMemory(object storage) => storage switch
+	{
+		byte[] bytes => bytes,
+		PooledByteBuffer pooled => pooled.Memory,
+		OwnedSlice slice => slice.Memory,
+		_ => ReadOnlyMemory<byte>.Empty,
+	};
+
+	/// <summary>A slice of a buffer owned by another value.</summary>
+	/// <param name="owner">The <see cref="byte"/> array or <see cref="PooledByteBuffer"/> that owns the bytes.</param>
+	/// <param name="offset">The offset of the slice within the owner's memory.</param>
+	/// <param name="length">The length of the slice.</param>
+	/// <remarks>The memory is resolved from the owner on each access so that use after the owner is released fails rather than reading recycled data.</remarks>
+	private sealed class OwnedSlice(object owner, int offset, int length)
 	{
 		internal object Owner { get; } = owner;
 
-		internal ReadOnlyMemory<byte> Memory { get; } = memory;
+		internal ReadOnlyMemory<byte> Memory => GetMemory(this.Owner).Slice(offset, length);
 	}
 }

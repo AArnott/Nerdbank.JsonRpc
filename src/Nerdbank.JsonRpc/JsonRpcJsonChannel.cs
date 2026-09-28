@@ -98,6 +98,7 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 		cancellationToken.ThrowIfCancellationRequested();
 		this.Serializer.ValidateMessage(message);
 		byte[] payload = JsonRpcJsonCodec.Write(message);
+		ReleaseSingleUsePayload(message);
 		if (payload.Length > MaximumFrameSize)
 		{
 			throw new ProtocolViolationException("JSON-RPC frame exceeds the size limit.");

@@ -89,7 +89,9 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 	protected override ValueTask SendMessageAsync(PipeWriter writer, JsonRpcMessage message, CancellationToken cancellationToken)
 	{
 		this.Serializer.ValidateMessage(message);
-		return this.messagePackSerializer.SerializeAsync(writer, new JsonRpcMessagePackEnvelope(message), cancellationToken);
+		this.messagePackSerializer.Serialize(writer, new JsonRpcMessagePackEnvelope(message), cancellationToken);
+		ReleaseSingleUsePayload(message);
+		return default;
 	}
 
 	private static System.Threading.Channels.Channel<JsonRpcMessage> CreateValidatedInboundChannel(int? capacity, MessagePackSerializer serializer)

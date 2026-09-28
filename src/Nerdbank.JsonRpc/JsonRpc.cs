@@ -667,7 +667,17 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 					{
 						using OutOfBandStreamManager.InboundScope outOfBandStreamScope = this.outOfBandStreams.TrackInboundRequest(hasResponse: true);
 						using AsyncEnumerableManager.InboundScope asyncEnumerableScope = this.asyncEnumerables.TrackInboundRequest(hasResponse: true);
-						TResult returnValue = this.userDataSerializer.Deserialize(result.Result, resultShape, cancellationToken)!;
+						TResult returnValue;
+						try
+						{
+							returnValue = this.userDataSerializer.Deserialize(result.Result, resultShape, cancellationToken)!;
+						}
+						finally
+						{
+							// The result has been fully materialized (or failed to be), and this is its only consumer.
+							result.Result.Release();
+						}
+
 						outOfBandStreamScope.Complete(successful: true);
 						asyncEnumerableScope.RetainCallScopedArguments(argumentLifetime);
 						return returnValue;

@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
+using System.ComponentModel;
 using Nerdbank.MessagePack;
 using Nerdbank.Streams;
 
@@ -109,23 +110,18 @@ public ref struct JsonRpcArgumentsBuilder
 	}
 
 	/// <summary>Builds an owned JSON-RPC params value after every declared parameter has been added.</summary>
+	/// <returns>An encoded array or object, which may be sent any number of times.</returns>
+	public JsonRpcValue Build() => this.Build(singleUse: false);
+
+	/// <summary>Builds a JSON-RPC params value that will be sent exactly once, allowing its buffer to be recycled after transmission.</summary>
 	/// <returns>An encoded array or object.</returns>
-	public JsonRpcValue Build()
-	{
-		this.ThrowIfUnavailable();
-		if (this.written != this.count)
-		{
-			throw new InvalidOperationException("The declared number of parameters has not been written.");
-		}
-
-		if (this.serializer.Encoding == JsonRpcEncoding.Json)
-		{
-			this.WriteByte(this.named ? (byte)'}' : (byte)']');
-		}
-
-		this.built = true;
-		return JsonRpcValue.FromPooledBytes(this.buffer.AsReadOnlySequence, this.serializer.Encoding, this.marshaledObjectsScope.Commit()).WithProgressRegistrations(this.progressScope.Commit()).WithOutOfBandChannels(this.outOfBandStreamScope.Commit()).WithAsyncEnumerableTokens(this.asyncEnumerableScope.Commit());
-	}
+	/// <remarks>
+	/// This method is intended for generated proxies.
+	/// The returned value must be passed to exactly one request or notification and must not be otherwise retained,
+	/// since its storage is returned to a shared pool once the transport has written it.
+	/// </remarks>
+	[EditorBrowsable(EditorBrowsableState.Never)]
+	public JsonRpcValue BuildForSingleUse() => this.Build(singleUse: true);
 
 	/// <summary>Releases buffers owned by this builder.</summary>
 	public void Dispose()
@@ -140,6 +136,26 @@ public ref struct JsonRpcArgumentsBuilder
 		this.progressScope?.Dispose();
 		this.marshaledObjectsScope?.Dispose();
 		this.buffer.Dispose();
+	}
+
+	private JsonRpcValue Build(bool singleUse)
+	{
+		this.ThrowIfUnavailable();
+		if (this.written != this.count)
+		{
+			throw new InvalidOperationException("The declared number of parameters has not been written.");
+		}
+
+		if (this.serializer.Encoding == JsonRpcEncoding.Json)
+		{
+			this.WriteByte(this.named ? (byte)'}' : (byte)']');
+		}
+
+		this.built = true;
+		JsonRpcValue value = singleUse
+			? JsonRpcValue.FromPooledBytes(this.buffer.AsReadOnlySequence, this.serializer.Encoding, singleUse: true, this.marshaledObjectsScope.Commit())
+			: JsonRpcValue.FromOwnedBytes(this.buffer.AsReadOnlySequence.ToArray(), this.serializer.Encoding, this.marshaledObjectsScope.Commit());
+		return value.WithProgressRegistrations(this.progressScope.Commit()).WithOutOfBandChannels(this.outOfBandStreamScope.Commit()).WithAsyncEnumerableTokens(this.asyncEnumerableScope.Commit());
 	}
 
 	private void ThrowIfUnavailable()

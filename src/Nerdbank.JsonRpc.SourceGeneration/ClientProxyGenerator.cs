@@ -694,7 +694,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 					.AppendLine(");");
 			}
 
-			builder.AppendLine("\t\tglobal::Nerdbank.JsonRpc.JsonRpcValue arguments = argumentsBuilder.Build();");
+			builder.AppendLine("\t\tglobal::Nerdbank.JsonRpc.JsonRpcValue arguments = argumentsBuilder.BuildForSingleUse();");
 
 			switch (method.Kind)
 			{
