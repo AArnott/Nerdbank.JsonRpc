@@ -24,7 +24,7 @@ StreamJsonRpc instead uses verbatim CLR names for RPC-marshalable interfaces. Fo
 
 [!code-csharp[](../../samples/cs/method-naming.cs#marshaled-interop-naming)]
 
-These properties affect only RPC-marshalable objects, not ordinary RPC targets or proxies. Set the options for your ordinary contract separately if it also needs to use StreamJsonRpc's naming convention. <xref:Nerdbank.JsonRpc.MethodShapeAttribute.Name> still takes precedence over any transform.
+These properties affect only RPC-marshalable objects, not ordinary RPC targets or proxies. Set the options for your ordinary contract separately if it also needs to use StreamJsonRpc's naming convention. `[MethodShape(Name = "...")]` still takes precedence over any transform.
 
 ## Custom transforms
 
