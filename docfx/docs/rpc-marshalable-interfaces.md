@@ -74,7 +74,7 @@ internal partial interface IFileService
 }
 ```
 
-A proxy method may return `IAsyncEnumerable<T>` directly or wrap it in `Task<IAsyncEnumerable<T>>`/`ValueTask<IAsyncEnumerable<T>>`. Returning it directly is usually more convenient; the request is sent immediately and the response is awaited when enumeration begins.
+A proxy method should return `IAsyncEnumerable<T>` directly rather than `Task<IAsyncEnumerable<T>>`/`ValueTask<IAsyncEnumerable<T>>`. The request is sent immediately and the response is awaited lazily on first enumeration, so a bare return type loses nothing and is more idiomatic. Wrapping in `Task<T>`/`ValueTask<T>` still works and remains useful when the RPC contract needs to compose with other Task-returning APIs.
 
 ### Resource lifetime
 

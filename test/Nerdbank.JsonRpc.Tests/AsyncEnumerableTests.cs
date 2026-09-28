@@ -14,7 +14,7 @@ public partial class AsyncEnumerableTests
 	{
 		using Fixture fixture = new(encoding);
 		List<int> received = [];
-		await foreach (int value in await fixture.Client.GetNumbersAsync(5, CancellationToken.None))
+		await foreach (int value in fixture.Client.GetNumbersAsync(5, CancellationToken.None))
 		{
 			received.Add(value);
 		}
@@ -25,11 +25,11 @@ public partial class AsyncEnumerableTests
 	[Test]
 	[Arguments(JsonRpcEncoding.Json)]
 	[Arguments(JsonRpcEncoding.MessagePack)]
-	public async Task DirectlyReturnedSequenceStreamsAllValues(JsonRpcEncoding encoding)
+	public async Task TaskWrappedReturnedSequenceStreamsAllValues(JsonRpcEncoding encoding)
 	{
 		using Fixture fixture = new(encoding);
 		List<int> received = [];
-		await foreach (int value in fixture.Client.GetNumbersDirect(5, CancellationToken.None))
+		await foreach (int value in await fixture.Client.GetNumbersWrappedAsync(5, CancellationToken.None))
 		{
 			received.Add(value);
 		}
@@ -44,7 +44,7 @@ public partial class AsyncEnumerableTests
 	{
 		using Fixture fixture = new(encoding);
 		List<int> received = [];
-		await foreach (int value in await fixture.Client.GetNumbersAsync(0, CancellationToken.None))
+		await foreach (int value in fixture.Client.GetNumbersAsync(0, CancellationToken.None))
 		{
 			received.Add(value);
 		}
@@ -59,7 +59,7 @@ public partial class AsyncEnumerableTests
 	{
 		using Fixture fixture = new(encoding);
 		List<string> received = [];
-		await foreach (string value in await fixture.Client.GetWordsAsync(CancellationToken.None))
+		await foreach (string value in fixture.Client.GetWordsAsync(CancellationToken.None))
 		{
 			received.Add(value);
 		}
@@ -73,7 +73,7 @@ public partial class AsyncEnumerableTests
 	public async Task PrefetchDeliversValuesWithTheOriginatingMessage(JsonRpcEncoding encoding)
 	{
 		using Fixture fixture = new(encoding);
-		IAsyncEnumerable<int> sequence = await fixture.Client.GetNumbersWithSettingsAsync(5, minBatchSize: 1, maxReadAhead: 0, prefetch: 3, CancellationToken.None);
+		IAsyncEnumerable<int> sequence = fixture.Client.GetNumbersWithSettingsAsync(5, minBatchSize: 1, maxReadAhead: 0, prefetch: 3, CancellationToken.None);
 
 		// The server must have produced the prefetched values before it answered the original request.
 		Assert.True(await fixture.Client.CountGeneratedValuesAsync(CancellationToken.None) >= 3);
@@ -93,7 +93,7 @@ public partial class AsyncEnumerableTests
 	public async Task PrefetchOfEntireSequenceRequiresNoToken(JsonRpcEncoding encoding)
 	{
 		using Fixture fixture = new(encoding);
-		IAsyncEnumerable<int> sequence = await fixture.Client.GetNumbersWithSettingsAsync(3, minBatchSize: 1, maxReadAhead: 0, prefetch: 10, CancellationToken.None);
+		IAsyncEnumerable<int> sequence = fixture.Client.GetNumbersWithSettingsAsync(3, minBatchSize: 1, maxReadAhead: 0, prefetch: 10, CancellationToken.None);
 
 		List<int> received = [];
 		await foreach (int value in sequence)
@@ -110,7 +110,7 @@ public partial class AsyncEnumerableTests
 	public async Task MinBatchSizeStreamsValuesInBatches(JsonRpcEncoding encoding)
 	{
 		using Fixture fixture = new(encoding);
-		IAsyncEnumerable<int> sequence = await fixture.Client.GetNumbersWithSettingsAsync(10, minBatchSize: 4, maxReadAhead: 0, prefetch: 0, CancellationToken.None);
+		IAsyncEnumerable<int> sequence = fixture.Client.GetNumbersWithSettingsAsync(10, minBatchSize: 4, maxReadAhead: 0, prefetch: 0, CancellationToken.None);
 
 		await using IAsyncEnumerator<int> enumerator = sequence.GetAsyncEnumerator(CancellationToken.None);
 		Assert.True(await enumerator.MoveNextAsync());
@@ -134,7 +134,7 @@ public partial class AsyncEnumerableTests
 	public async Task MaxReadAheadProducesValuesBeforeTheyAreRequested(JsonRpcEncoding encoding)
 	{
 		using Fixture fixture = new(encoding);
-		IAsyncEnumerable<int> sequence = await fixture.Client.GetNumbersWithSettingsAsync(20, minBatchSize: 1, maxReadAhead: 5, prefetch: 0, CancellationToken.None);
+		IAsyncEnumerable<int> sequence = fixture.Client.GetNumbersWithSettingsAsync(20, minBatchSize: 1, maxReadAhead: 5, prefetch: 0, CancellationToken.None);
 
 		await using IAsyncEnumerator<int> enumerator = sequence.GetAsyncEnumerator(CancellationToken.None);
 		Assert.True(await enumerator.MoveNextAsync());
@@ -155,7 +155,7 @@ public partial class AsyncEnumerableTests
 	public async Task EarlyDisposalReleasesTheGenerator(JsonRpcEncoding encoding)
 	{
 		using Fixture fixture = new(encoding);
-		IAsyncEnumerable<int> sequence = await fixture.Client.GetNumbersAsync(1000, CancellationToken.None);
+		IAsyncEnumerable<int> sequence = fixture.Client.GetNumbersAsync(1000, CancellationToken.None);
 
 		await foreach (int value in sequence)
 		{
@@ -178,7 +178,7 @@ public partial class AsyncEnumerableTests
 	public async Task SequenceMayOnlyBeEnumeratedOnce(JsonRpcEncoding encoding)
 	{
 		using Fixture fixture = new(encoding);
-		IAsyncEnumerable<int> sequence = await fixture.Client.GetNumbersAsync(3, CancellationToken.None);
+		IAsyncEnumerable<int> sequence = fixture.Client.GetNumbersAsync(3, CancellationToken.None);
 
 		await foreach (int value in sequence)
 		{
@@ -193,7 +193,7 @@ public partial class AsyncEnumerableTests
 	public async Task GeneratorFailurePropagatesToTheConsumer(JsonRpcEncoding encoding)
 	{
 		using Fixture fixture = new(encoding);
-		IAsyncEnumerable<int> sequence = await fixture.Client.GetFailingSequenceAsync(2, CancellationToken.None);
+		IAsyncEnumerable<int> sequence = fixture.Client.GetFailingSequenceAsync(2, CancellationToken.None);
 
 		List<int> received = [];
 		await Assert.ThrowsAsync<JsonRpcException>(async () =>
@@ -252,7 +252,7 @@ public partial class AsyncEnumerableTests
 	public async Task ConnectionLossEndsEnumeration(JsonRpcEncoding encoding)
 	{
 		Fixture fixture = new(encoding);
-		IAsyncEnumerable<int> sequence = await fixture.Client.GetNumbersAsync(1000, CancellationToken.None);
+		IAsyncEnumerable<int> sequence = fixture.Client.GetNumbersAsync(1000, CancellationToken.None);
 		await using IAsyncEnumerator<int> enumerator = sequence.GetAsyncEnumerator(CancellationToken.None);
 		Assert.True(await enumerator.MoveNextAsync());
 

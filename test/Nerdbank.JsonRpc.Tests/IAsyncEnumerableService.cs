@@ -7,15 +7,15 @@ using PolyType;
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IAsyncEnumerableService
 {
-	Task<IAsyncEnumerable<int>> GetNumbersAsync(int count, CancellationToken cancellationToken);
+	IAsyncEnumerable<int> GetNumbersAsync(int count, CancellationToken cancellationToken);
 
-	IAsyncEnumerable<int> GetNumbersDirect(int count, CancellationToken cancellationToken);
+	Task<IAsyncEnumerable<int>> GetNumbersWrappedAsync(int count, CancellationToken cancellationToken);
 
-	Task<IAsyncEnumerable<int>> GetNumbersWithSettingsAsync(int count, int minBatchSize, int maxReadAhead, int prefetch, CancellationToken cancellationToken);
+	IAsyncEnumerable<int> GetNumbersWithSettingsAsync(int count, int minBatchSize, int maxReadAhead, int prefetch, CancellationToken cancellationToken);
 
-	Task<IAsyncEnumerable<string>> GetWordsAsync(CancellationToken cancellationToken);
+	IAsyncEnumerable<string> GetWordsAsync(CancellationToken cancellationToken);
 
-	Task<IAsyncEnumerable<int>> GetFailingSequenceAsync(int valuesBeforeFailure, CancellationToken cancellationToken);
+	IAsyncEnumerable<int> GetFailingSequenceAsync(int valuesBeforeFailure, CancellationToken cancellationToken);
 
 	Task<int> SumAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken);
 

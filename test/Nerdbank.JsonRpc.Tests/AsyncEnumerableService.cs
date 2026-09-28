@@ -8,24 +8,24 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 	private int generatedValues;
 	private bool generatorDisposed;
 
-	public Task<IAsyncEnumerable<int>> GetNumbersAsync(int count, CancellationToken cancellationToken)
+	public IAsyncEnumerable<int> GetNumbersAsync(int count, CancellationToken cancellationToken) => this.ProduceAsync(count, cancellationToken);
+
+	public Task<IAsyncEnumerable<int>> GetNumbersWrappedAsync(int count, CancellationToken cancellationToken)
 		=> Task.FromResult(this.ProduceAsync(count, cancellationToken));
 
-	public IAsyncEnumerable<int> GetNumbersDirect(int count, CancellationToken cancellationToken) => this.ProduceAsync(count, cancellationToken);
-
-	public Task<IAsyncEnumerable<int>> GetNumbersWithSettingsAsync(int count, int minBatchSize, int maxReadAhead, int prefetch, CancellationToken cancellationToken)
-		=> Task.FromResult(this.ProduceAsync(count, cancellationToken).WithJsonRpcSettings(new JsonRpcEnumerableSettings
+	public IAsyncEnumerable<int> GetNumbersWithSettingsAsync(int count, int minBatchSize, int maxReadAhead, int prefetch, CancellationToken cancellationToken)
+		=> this.ProduceAsync(count, cancellationToken).WithJsonRpcSettings(new JsonRpcEnumerableSettings
 		{
 			MinBatchSize = minBatchSize,
 			MaxReadAhead = maxReadAhead,
 			Prefetch = prefetch,
-		}));
+		});
 
-	public Task<IAsyncEnumerable<string>> GetWordsAsync(CancellationToken cancellationToken)
-		=> Task.FromResult(new[] { "alpha", "beta", "gamma" }.AsAsyncEnumerable());
+	public IAsyncEnumerable<string> GetWordsAsync(CancellationToken cancellationToken)
+		=> new[] { "alpha", "beta", "gamma" }.AsAsyncEnumerable();
 
-	public Task<IAsyncEnumerable<int>> GetFailingSequenceAsync(int valuesBeforeFailure, CancellationToken cancellationToken)
-		=> Task.FromResult(FailAsync(valuesBeforeFailure, cancellationToken));
+	public IAsyncEnumerable<int> GetFailingSequenceAsync(int valuesBeforeFailure, CancellationToken cancellationToken)
+		=> FailAsync(valuesBeforeFailure, cancellationToken);
 
 	public async Task<int> SumAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken)
 	{
