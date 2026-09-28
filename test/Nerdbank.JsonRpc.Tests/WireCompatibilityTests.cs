@@ -128,7 +128,7 @@ public class WireCompatibilityTests : TestBase
 		await peer.SendAsync($$"""{"jsonrpc":"2.0","id":1,"method":"useCounter","params":[{{marker}}]}""");
 
 		JsonElement call = await peer.ReceiveAsync(this.TimeoutToken);
-		Assert.Equal("$/invokeProxy/7/Add", call.GetProperty("method").GetString());
+		Assert.Equal("$/invokeProxy/7/add", call.GetProperty("method").GetString());
 		await peer.SendAsync($$"""{"jsonrpc":"2.0","id":{{call.GetProperty("id").GetInt32()}},"result":11}""");
 
 		JsonElement response = await peer.ReceiveAsync(this.TimeoutToken);
@@ -169,24 +169,27 @@ public class WireCompatibilityTests : TestBase
 	}
 
 	[Test]
-	public async Task MarshaledObjectAcceptsVerbatimMethodNames()
+	[Arguments(false, "add")]
+	[Arguments(true, "Add")]
+	public async Task MarshaledObjectUsesConfiguredTargetName(bool streamJsonRpcNaming, string methodName)
 	{
-		using WirePeer peer = WirePeer.ConnectToNerdbankServer(new WireService());
+		using WirePeer peer = WirePeer.ConnectToNerdbankServer(new WireService(), streamJsonRpcNaming);
 		await peer.SendAsync("""{"jsonrpc":"2.0","id":1,"method":"getCounter","params":[]}""");
 		JsonElement marker = (await peer.ReceiveAsync(this.TimeoutToken)).GetProperty("result");
 		int handle = marker.GetProperty("handle").GetInt32();
 
-		// The connection's own target is camelCased, but the marshaled object's method names are fixed by the protocol.
-		await peer.SendAsync($$"""{"jsonrpc":"2.0","id":2,"method":"$/invokeProxy/{{handle}}/Add","params":[4]}""");
+		await peer.SendAsync($$"""{"jsonrpc":"2.0","id":2,"method":"$/invokeProxy/{{handle}}/{{methodName}}","params":[4]}""");
 
 		JsonElement response = await peer.ReceiveAsync(this.TimeoutToken);
 		Assert.Equal(4, response.GetProperty("result").GetInt32());
 	}
 
 	[Test]
-	public async Task MarshaledProxySendsVerbatimMethodNames()
+	[Arguments(false, "add")]
+	[Arguments(true, "Add")]
+	public async Task MarshaledProxyUsesConfiguredMethodName(bool streamJsonRpcNaming, string methodName)
 	{
-		using WirePeer peer = WirePeer.ConnectToNerdbankClient();
+		using WirePeer peer = WirePeer.ConnectToNerdbankClient(streamJsonRpcNaming);
 		Task<IWireCounter> request = peer.NerdbankClient.GetCounter(this.TimeoutToken);
 		JsonElement call = await peer.ReceiveAsync(this.TimeoutToken);
 		Assert.Equal("getCounter", call.GetProperty("method").GetString());
@@ -196,7 +199,7 @@ public class WireCompatibilityTests : TestBase
 		Task<int> add = counter.Add(2, this.TimeoutToken);
 
 		JsonElement invocation = await peer.ReceiveAsync(this.TimeoutToken);
-		Assert.Equal("$/invokeProxy/3/Add", invocation.GetProperty("method").GetString());
+		Assert.Equal($"$/invokeProxy/3/{methodName}", invocation.GetProperty("method").GetString());
 		await peer.SendAsync($$"""{"jsonrpc":"2.0","id":{{invocation.GetProperty("id").GetInt32()}},"result":2}""");
 		Assert.Equal(2, await add.WithCancellation(this.TimeoutToken));
 	}
@@ -290,19 +293,29 @@ public class WireCompatibilityTests : TestBase
 			this.rpc.Dispose();
 		}
 
-		internal static WirePeer ConnectToNerdbankServer(IWireService target)
+		internal static WirePeer ConnectToNerdbankServer(IWireService target, bool streamJsonRpcNaming = false)
 		{
 			(IDuplexPipe peerPipe, IDuplexPipe rpcPipe) = FullDuplexStream.CreatePipePair();
 			JsonRpc rpc = Create(rpcPipe);
+			if (streamJsonRpcNaming)
+			{
+				rpc.MarshaledTargetOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity };
+			}
+
 			rpc.AddRpcTarget<IWireService>(target);
 			rpc.Start();
 			return new(rpc, peerPipe, null);
 		}
 
-		internal static WirePeer ConnectToNerdbankClient()
+		internal static WirePeer ConnectToNerdbankClient(bool streamJsonRpcNaming = false)
 		{
 			(IDuplexPipe peerPipe, IDuplexPipe rpcPipe) = FullDuplexStream.CreatePipePair();
 			JsonRpc rpc = Create(rpcPipe);
+			if (streamJsonRpcNaming)
+			{
+				rpc.MarshaledProxyOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity };
+			}
+
 			rpc.Start();
 			return new(rpc, peerPipe, rpc.Attach<IWireService>());
 		}

@@ -21,7 +21,9 @@ Call-scoped interfaces are supported only in request arguments, not return value
 
 ### Method naming on marshaled objects
 
-Methods on marshaled objects are invoked on the wire by their verbatim CLR names (for example `$/invokeProxy/0/AddAsync`), regardless of the <xref:Nerdbank.JsonRpc.JsonRpcTargetOptions.MethodNameTransform> or <xref:Nerdbank.JsonRpc.JsonRpcProxyOptions.MethodNameTransform> used elsewhere on the connection. Because these objects are marshaled implicitly, their naming is fixed by the protocol rather than by user configuration, and it matches StreamJsonRpc so the two interoperate without any setup. Use <xref:Nerdbank.JsonRpc.MethodShapeAttribute.Name> to give an individual method a different name.
+Methods on RPC-marshalable interfaces use the same default transform as ordinary RPC methods: `AddAsync`, for example, is invoked as `$/invokeProxy/0/add`. The options for these implicitly registered targets and proxies are exposed separately via <xref:Nerdbank.JsonRpc.JsonRpc.MarshaledTargetOptions> and <xref:Nerdbank.JsonRpc.JsonRpc.MarshaledProxyOptions>. Explicit options passed to `AddRpcTarget` or `Attach` do not affect them. The target options also carry event settings, although marshalable interfaces currently do not support events.
+
+StreamJsonRpc uses verbatim CLR names instead (such as `$/invokeProxy/0/AddAsync`). To [interoperate with StreamJsonRpc](method-naming.md#marshaled-objects), set both marshaled options' `MethodNameTransform` to <xref:Nerdbank.JsonRpc.CommonMethodNameTransforms.Identity> before `Start`. This does not change the naming of ordinary RPC methods. Individual methods can override their wire names with <xref:Nerdbank.JsonRpc.MethodShapeAttribute.Name>.
 
 ## Optional interfaces
 

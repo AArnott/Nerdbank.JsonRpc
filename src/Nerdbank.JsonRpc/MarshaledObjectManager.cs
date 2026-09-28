@@ -19,21 +19,6 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	private const string ReleaseMethod = "$/releaseMarshaledObject";
 	private static readonly ConditionalWeakTable<object, RemoteObjectHandle> RemoteHandles = new();
 
-	/// <summary>
-	/// The target options for <see cref="RpcMarshalableAttribute"/> objects.
-	/// </summary>
-	/// <remarks>
-	/// The method names of marshaled objects are part of the marshaling protocol rather than a user choice,
-	/// because these objects are registered implicitly. They use CLR method names verbatim, as StreamJsonRpc does.
-	/// </remarks>
-	private static readonly JsonRpcTargetOptions MarshalableTargetOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity };
-
-	/// <summary>
-	/// The proxy options for <see cref="RpcMarshalableAttribute"/> objects.
-	/// </summary>
-	/// <remarks><inheritdoc cref="MarshalableTargetOptions" path="/remarks"/></remarks>
-	private static readonly JsonRpcProxyOptions MarshalableProxyOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity };
-
 	private readonly object sync = new();
 	private readonly Dictionary<long, MarshaledLocalObject> localObjects = [];
 	private readonly Dictionary<object, LocalObjectLease> localLeases = new(ReferenceEqualityComparer<object>.Instance);
@@ -71,7 +56,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new InvalidOperationException($"Explicit-lifetime marshalable values of '{shape.Type}' must implement IDisposable.");
 		}
 
-		TargetRegistration registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, MarshalableTargetOptions)!;
+		TargetRegistration registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, owner.MarshaledTargetOptions)!;
 		List<(int InterfaceId, TargetRegistration Registration)> optionalRegistrations = [];
 		HashSet<int> interfaceIds = [];
 		foreach (RpcMarshalableOptionalInterfaceAttribute optionalInterface in shape.Type.GetCustomAttributes<RpcMarshalableOptionalInterfaceAttribute>())
@@ -85,7 +70,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			{
 				ITypeShape optionalShape = shape.Provider.GetTypeShape(optionalInterface.OptionalInterface)
 					?? throw new NotSupportedException($"A PolyType shape is required for optional interface '{optionalInterface.OptionalInterface}'.");
-				TargetRegistration optionalRegistration = (TargetRegistration)optionalShape.Accept(RpcTargetVisitor.Instance, MarshalableTargetOptions)!;
+				TargetRegistration optionalRegistration = (TargetRegistration)optionalShape.Accept(RpcTargetVisitor.Instance, owner.MarshaledTargetOptions)!;
 				optionalRegistrations.Add((optionalInterface.InterfaceId, optionalRegistration));
 			}
 		}
@@ -163,7 +148,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new NotSupportedException($"No generated proxy supports the advertised optional interfaces on '{shape.Type}'.");
 		}
 
-		object proxy = JsonRpc.AttachCore(new MarshaledObjectProxyClient(owner, handle, callScopedHandle), typeof(T), MarshalableProxyOptions, proxyType);
+		object proxy = JsonRpc.AttachCore(new MarshaledObjectProxyClient(owner, handle, callScopedHandle), typeof(T), owner.MarshaledProxyOptions, proxyType);
 		RemoteHandles.Add(proxy, new(this, handle, callScopedLifetime, callScopedHandle));
 		return (T)proxy;
 	}

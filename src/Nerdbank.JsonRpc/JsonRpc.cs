@@ -81,6 +81,46 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+	/// <summary>Gets or sets the options used for proxies implicitly created for RPC-marshalable objects.</summary>
+	/// <value>Defaults to <see cref="JsonRpcProxyOptions.Default"/>, the same naming convention used for ordinary RPC proxies.</value>
+	/// <remarks>
+	/// To communicate with StreamJsonRpc's default RPC-marshalable objects, set this property to
+	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> before <see cref="Start"/>.
+	/// This does not change options for proxies attached through <see cref="Attach{T}(JsonRpcProxyOptions?)"/>.
+	/// </remarks>
+	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
+	/// <exception cref="InvalidOperationException">Thrown when set after <see cref="Start"/>.</exception>
+	public JsonRpcProxyOptions MarshaledProxyOptions
+	{
+		get => field ??= JsonRpcProxyOptions.Default;
+		set
+		{
+			Requires.NotNull(value);
+			this.ThrowIfStarted();
+			field = value;
+		}
+	}
+
+	/// <summary>Gets or sets the options used when implicitly registering RPC-marshalable targets.</summary>
+	/// <value>Defaults to <see cref="JsonRpcTargetOptions.Default"/>, the same naming convention used for ordinary RPC targets.</value>
+	/// <remarks>
+	/// To communicate with StreamJsonRpc's default RPC-marshalable objects, set this property to
+	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> before <see cref="Start"/>.
+	/// This does not change options for targets registered through <see cref="AddRpcTarget{T}(T, ITypeShape{T}, JsonRpcTargetOptions?)"/>.
+	/// </remarks>
+	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
+	/// <exception cref="InvalidOperationException">Thrown when set after <see cref="Start"/>.</exception>
+	public JsonRpcTargetOptions MarshaledTargetOptions
+	{
+		get => field ??= JsonRpcTargetOptions.Default;
+		set
+		{
+			Requires.NotNull(value);
+			this.ThrowIfStarted();
+			field = value;
+		}
+	}
+
 	/// <summary>Gets the logger for request and connection failures. Defaults to <see cref="NullLogger.Instance"/>.</summary>
 	public ILogger Logger
 	{
