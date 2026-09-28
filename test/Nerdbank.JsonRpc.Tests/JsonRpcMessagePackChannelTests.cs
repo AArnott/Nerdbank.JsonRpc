@@ -80,6 +80,73 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 		local.Input.AdvanceTo(read.Buffer.End);
 	}
 
+	[Test]
+	public async Task HandlesFragmentedAndCoalescedMessages()
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcMessagePackChannel channel = new(local, LoggerFactory.CreateLogger<JsonRpcPipeChannel>());
+		byte[] first = EncodeRequest("one", 1);
+		byte[] second = EncodeRequest("two", 2);
+
+		peer.Output.Write(first.AsSpan(0, 8));
+		await peer.Output.FlushAsync(this.TimeoutToken);
+		Task<JsonRpcMessage> pending = channel.Reader.ReadAsync(this.TimeoutToken).AsTask();
+		Assert.False(pending.IsCompleted);
+
+		peer.Output.Write(first.AsSpan(8));
+		peer.Output.Write(second);
+		await peer.Output.FlushAsync(this.TimeoutToken);
+		Assert.Equal("one", Assert.IsType<JsonRpcRequest>(await pending.WithCancellation(this.TimeoutToken)).Method);
+		Assert.Equal("two", Assert.IsType<JsonRpcRequest>(await channel.Reader.ReadAsync(this.TimeoutToken)).Method);
+	}
+
+	[Test]
+	public async Task RetainedArgumentsSurviveLaterMessagesReusingThePipeBuffer()
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcMessagePackChannel channel = new(local, LoggerFactory.CreateLogger<JsonRpcPipeChannel>());
+		peer.Output.Write(EncodeRequest("one", 1));
+		await peer.Output.FlushAsync(this.TimeoutToken);
+		JsonRpcRequest first = Assert.IsType<JsonRpcRequest>(await channel.Reader.ReadAsync(this.TimeoutToken));
+
+		peer.Output.Write(EncodeRequest("two", 2));
+		await peer.Output.FlushAsync(this.TimeoutToken);
+		Assert.IsType<JsonRpcRequest>(await channel.Reader.ReadAsync(this.TimeoutToken));
+
+		Nerdbank.MessagePack.MessagePackReader reader = new(first.Arguments.AsMessagePack());
+		Assert.Equal(1, reader.ReadArrayHeader());
+		Assert.Equal(1, reader.ReadInt32());
+	}
+
+	[Test]
+	public async Task TruncatedMessageAtEndOfStreamFaultsTransport()
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcMessagePackChannel channel = new(local, LoggerFactory.CreateLogger<JsonRpcPipeChannel>());
+		byte[] message = EncodeRequest("one", 1);
+		peer.Output.Write(message.AsSpan(0, message.Length - 1));
+		await peer.Output.CompleteAsync();
+		await Assert.ThrowsAsync<EndOfStreamException>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
+	}
+
+	private static byte[] EncodeRequest(string method, int argument)
+	{
+		Nerdbank.Streams.Sequence<byte> buffer = new();
+		Nerdbank.MessagePack.MessagePackWriter writer = new(buffer);
+		writer.WriteMapHeader(4);
+		writer.Write("jsonrpc");
+		writer.Write("2.0");
+		writer.Write("method");
+		writer.Write(method);
+		writer.Write("id");
+		writer.Write(argument);
+		writer.Write("params");
+		writer.WriteArrayHeader(1);
+		writer.Write(argument);
+		writer.Flush();
+		return buffer.AsReadOnlySequence.ToArray();
+	}
+
 	private static (JsonRpcPipeChannel Alice, JsonRpcPipeChannel Bob) CreateTransports()
 	{
 		(IDuplexPipe alice, IDuplexPipe bob) = FullDuplexStream.CreatePipePair();

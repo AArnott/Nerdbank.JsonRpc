@@ -1,9 +1,12 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.Buffers;
+using System.Diagnostics.CodeAnalysis;
 using System.IO.Pipelines;
 using System.Net;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using Microsoft;
 using Microsoft.Extensions.Logging;
 using Nerdbank.MessagePack;
@@ -55,9 +58,30 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 	protected override async IAsyncEnumerable<JsonRpcMessage> ReceiveMessagesAsync(PipeReader reader, [EnumeratorCancellation] CancellationToken cancellationToken)
 	{
 		Requires.NotNull(reader);
-		await foreach (JsonRpcMessagePackEnvelope envelope in this.messagePackSerializer.DeserializeEnumerableAsync<JsonRpcMessagePackEnvelope>(reader, cancellationToken))
+		while (true)
 		{
-			yield return envelope.Message;
+			ReadResult read = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+			ReadOnlySequence<byte> buffer = read.Buffer;
+			if (this.TryReadMessage(ref buffer, cancellationToken, out JsonRpcMessage? message))
+			{
+				// The envelope converter copies every retained payload, so the pipe's buffer may be released immediately.
+				reader.AdvanceTo(buffer.Start);
+				yield return message;
+				continue;
+			}
+
+			if (read.IsCompleted)
+			{
+				reader.AdvanceTo(buffer.End);
+				if (!buffer.IsEmpty)
+				{
+					throw new EndOfStreamException("The stream ended in the middle of a MessagePack structure.");
+				}
+
+				yield break;
+			}
+
+			reader.AdvanceTo(buffer.Start, buffer.End);
 		}
 	}
 
@@ -76,5 +100,41 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 		}
 
 		return CreateInboundChannel(capacity);
+	}
+
+	/// <summary>Synchronously deserializes the first message if the buffer contains all of it.</summary>
+	/// <param name="buffer">The buffered bytes; advanced past the message when one is read.</param>
+	/// <param name="cancellationToken">A cancellation token.</param>
+	/// <param name="message">Receives the message.</param>
+	/// <returns><see langword="true"/> if a complete message was read.</returns>
+	private bool TryReadMessage(ref ReadOnlySequence<byte> buffer, CancellationToken cancellationToken, [NotNullWhen(true)] out JsonRpcMessage? message)
+	{
+		// A null refresh delegate makes an incomplete buffer report InsufficientBuffer rather than end-of-stream.
+		MessagePackStreamingReader scanner = new(buffer, null, null);
+		SerializationContext context = this.messagePackSerializer.StartingContext;
+		switch (scanner.TrySkip(ref context))
+		{
+			case MessagePackPrimitives.DecodeResult.Success:
+				break;
+			case MessagePackPrimitives.DecodeResult.EmptyBuffer or MessagePackPrimitives.DecodeResult.InsufficientBuffer:
+				message = null;
+				return false;
+			default:
+				throw new ProtocolViolationException("Invalid MessagePack-encoded JSON-RPC message.");
+		}
+
+		ReadOnlySequence<byte> messageBytes = buffer.Slice(0, scanner.Position);
+		try
+		{
+			message = this.messagePackSerializer.Deserialize<JsonRpcMessagePackEnvelope>(messageBytes, cancellationToken).Message;
+		}
+		catch (MessagePackSerializationException ex) when (ex.InnerException is ProtocolViolationException inner)
+		{
+			ExceptionDispatchInfo.Capture(inner).Throw();
+			throw;
+		}
+
+		buffer = buffer.Slice(scanner.Position);
+		return true;
 	}
 }
