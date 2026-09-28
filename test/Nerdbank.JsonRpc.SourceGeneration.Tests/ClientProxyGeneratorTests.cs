@@ -99,6 +99,40 @@ public class ClientProxyGeneratorTests
 	}
 
 	[Test]
+	public async Task DuplicateOptionalInterfaceIdsProduceDiagnostic()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System;
+			using System.Threading;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			internal interface IFirstOptional
+			{
+				Task FirstAsync(CancellationToken cancellationToken);
+			}
+
+			internal interface ISecondOptional
+			{
+				Task SecondAsync(CancellationToken cancellationToken);
+			}
+
+			[RpcMarshalable]
+			[RpcMarshalableOptionalInterface(1, typeof(IFirstOptional))]
+			[RpcMarshalableOptionalInterface(1, typeof(ISecondOptional))]
+			internal partial interface {|#0:IMarshalable|} : IDisposable
+			{
+				Task InvokeAsync(CancellationToken cancellationToken);
+			}
+			""";
+
+		DiagnosticResult duplicateId = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(0)
+			.WithArguments("IMarshalable", "optional interface ID 1 is declared more than once");
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, duplicateId);
+	}
+
+	[Test]
 	public async Task NonPartialInterfaceProducesDiagnosticAndNoProxy()
 	{
 		const string Source = /* lang=c#-test */ """

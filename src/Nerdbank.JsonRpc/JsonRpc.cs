@@ -1,6 +1,10 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+#if NET
+using System.Diagnostics.CodeAnalysis;
+#endif
+
 using System.Collections.Concurrent;
 using System.Net;
 using System.Reflection;
@@ -436,19 +440,23 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		this.asyncEnumerables.Dispose();
 	}
 
-	internal static object AttachCore(IJsonRpcClient client, Type interfaceType, JsonRpcProxyOptions? options = null)
+	internal static object AttachCore(
+		IJsonRpcClient client,
+		Type interfaceType,
+		JsonRpcProxyOptions? options = null,
+#if NET
+		[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] Type? implementationType = null)
+#else
+		Type? implementationType = null)
+#endif
 	{
 		Requires.NotNull(client);
 		Requires.NotNull(interfaceType);
 		Requires.Argument(interfaceType.IsInterface, nameof(interfaceType), "The requested proxy type must be an interface.");
 
 		JsonRpcProxyImplementationAttribute? implementation = interfaceType.GetCustomAttribute<JsonRpcProxyImplementationAttribute>();
-		if (implementation is null)
-		{
-			throw new NotSupportedException($"No generated JSON-RPC proxy was found for interface '{interfaceType.FullName}'. Add GenerateJsonRpcProxyAttribute to the interface or request an annotated composite interface.");
-		}
-
-		Type proxyType = implementation.ProxyType;
+		Type proxyType = implementationType ?? implementation?.ProxyType
+			?? throw new NotSupportedException($"No generated JSON-RPC proxy was found for interface '{interfaceType.FullName}'. Add GenerateJsonRpcProxyAttribute to the interface or request an annotated composite interface.");
 		if (!interfaceType.IsAssignableFrom(proxyType))
 		{
 			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not implement requested interface '{interfaceType.FullName}'.");
