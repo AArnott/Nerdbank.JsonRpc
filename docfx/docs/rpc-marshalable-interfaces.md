@@ -17,6 +17,12 @@ The interface itself does not also need <xref:Nerdbank.JsonRpc.GenerateJsonRpcPr
 
 Set <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute.CallScopedLifetime> to `true` for a call-scoped interface. Such an interface need not inherit `IDisposable`; its proxy is valid only while the receiving RPC method is running, and the target remains under the sender's lifetime control. Call-scoped interfaces are supported only in request arguments, not return values. No marshalable interface may be sent in a notification because there is no response to confirm acceptance. When a request returns a JSON-RPC error, its marshaled arguments are released; successful explicit-lifetime proxies remain valid until disposed or the connection closes. Optional interfaces are not yet supported.
 
+## Connection boundaries
+
+A received marshaled proxy may be sent back over the same `JsonRpc` connection. Its owner receives the original object, not a proxy to a proxy.
+
+Forwarding a received proxy over a **different** `JsonRpc` connection (for example, from A through B to C) is not supported and fails serialization with `NotSupportedException` (wrapped in `MessagePackSerializationException` when using MessagePack). This applies to `[RpcMarshalable]` interfaces, `IDisposable`, and `IObserver<T>`, including values nested in object graphs. The rejected forwarding attempt does not release the original proxy. Handles, identity, and lifetime ownership are connection-local; multi-party forwarding would require additional ownership rules. Application-written forwarding wrappers are not detected and are responsible for their own lifetime management.
+
 ## Observer callbacks
 
 `IObserver<T>` parameters and return values are marshaled by reference without `[RpcMarshalable]` or a generated observer proxy. Provide a PolyType shape for `T` through the containing RPC contract's shape provider. The endpoint receiving the observer can call `OnNext(T)` repeatedly, then `OnCompleted()` or `OnError(Exception)` once. Terminal callbacks release the remote handle; subsequent callbacks fail with `ObjectDisposedException`. Releasing an observer handle does not dispose the observer instance. Observers may not be passed in notifications.

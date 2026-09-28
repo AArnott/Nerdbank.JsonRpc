@@ -414,14 +414,24 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new InvalidOperationException("Call-scoped marshalable objects may only be sent in RPC request arguments, not in return values.");
 		}
 
-		if (value is RemoteDisposable { Owner: var remoteOwner, Handle: long remoteHandle } && ReferenceEquals(remoteOwner, this))
+		if (value is RemoteDisposable { Owner: var remoteOwner, Handle: long remoteHandle })
 		{
+			if (!ReferenceEquals(remoteOwner, this))
+			{
+				throw new NotSupportedException("Marshaled proxies cannot be forwarded over a different JSON-RPC connection.");
+			}
+
 			this.activeScope.Value?.MarkMarshaledObject();
 			return WriteMarker(remoteHandle, direction: 0, callScopedLifetime: callScopedLifetime, encoding: encoding);
 		}
 
-		if (RemoteHandles.TryGetValue(value, out RemoteObjectHandle? remoteObject) && ReferenceEquals(remoteObject.Manager, this))
+		if (RemoteHandles.TryGetValue(value, out RemoteObjectHandle? remoteObject))
 		{
+			if (!ReferenceEquals(remoteObject.Manager, this))
+			{
+				throw new NotSupportedException("Marshaled proxies cannot be forwarded over a different JSON-RPC connection.");
+			}
+
 			remoteObject.CallScopedHandle.ThrowIfExpired();
 			if (remoteObject.CallScopedLifetime != callScopedLifetime)
 			{
