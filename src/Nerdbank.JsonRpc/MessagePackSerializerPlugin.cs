@@ -68,7 +68,7 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 		for (int i = 0; i < count; i++)
 		{
 			string? name = named ? reader.ReadString() : null;
-			values.Add((name, JsonRpcValue.FromOwnedMessagePack(reader.ReadRaw(context))));
+			values.Add((name, JsonRpcValue.FromOwnedMessagePack(arguments, reader.ReadRaw(context))));
 		}
 
 		if (!reader.End)

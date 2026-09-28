@@ -180,7 +180,7 @@ internal sealed class ProgressManager(JsonRpc owner)
 	{
 		private readonly ProgressManager manager;
 		private readonly RegistrationScope? priorScope;
-		private readonly List<(JsonRpcValue Token, Registration Registration)> registrations = [];
+		private List<(JsonRpcValue Token, Registration Registration)>? registrations;
 		private bool committed;
 
 		internal RegistrationScope(ProgressManager manager)
@@ -193,7 +193,7 @@ internal sealed class ProgressManager(JsonRpc owner)
 		public RegistrationSet Commit()
 		{
 			this.committed = true;
-			return new([.. this.registrations]);
+			return this.registrations is { Count: > 0 } registrations ? new([.. registrations]) : RegistrationSet.Empty;
 		}
 
 		public void Dispose()
@@ -201,15 +201,17 @@ internal sealed class ProgressManager(JsonRpc owner)
 			this.manager.activeRegistrationScope.Value = this.priorScope;
 			if (!this.committed)
 			{
-				this.registrations.Clear();
+				this.registrations?.Clear();
 			}
 		}
 
-		internal void Add(JsonRpcValue token, Registration registration) => this.registrations.Add((token, registration));
+		internal void Add(JsonRpcValue token, Registration registration) => (this.registrations ??= []).Add((token, registration));
 	}
 
 	internal sealed class RegistrationSet
 	{
+		internal static readonly RegistrationSet Empty = new([]);
+
 		private readonly (JsonRpcValue Token, Registration Registration)[] registrations;
 
 		internal RegistrationSet((JsonRpcValue Token, Registration Registration)[] registrations) => this.registrations = registrations;

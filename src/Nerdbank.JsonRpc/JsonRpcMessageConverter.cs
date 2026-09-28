@@ -110,7 +110,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 				}
 
 				parameters = true;
-				arguments = JsonRpcValue.FromMessagePack(reader.ReadRaw(context));
+				arguments = JsonRpcValue.FromPooledMessagePack(reader.ReadRaw(context));
 			}
 			else if (name.SequenceEqual("result"u8))
 			{
@@ -120,7 +120,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 				}
 
 				result = true;
-				resultValue = JsonRpcValue.FromMessagePack(reader.ReadRaw(context));
+				resultValue = JsonRpcValue.FromPooledMessagePack(reader.ReadRaw(context));
 			}
 			else if (name.SequenceEqual("error"u8))
 			{

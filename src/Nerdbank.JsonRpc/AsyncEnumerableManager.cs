@@ -693,7 +693,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	{
 		private readonly AsyncEnumerableManager manager;
 		private readonly OutboundScope? priorScope;
-		private readonly List<long> tokens = [];
+		private List<long>? tokens;
 		private bool committed;
 
 		/// <summary>Initializes a new instance of the <see cref="OutboundScope"/> class.</summary>
@@ -714,9 +714,9 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		public void Dispose()
 		{
 			this.manager.activeOutboundScope.Value = this.priorScope;
-			if (!this.committed)
+			if (!this.committed && this.tokens is { } tokens)
 			{
-				foreach (long token in this.tokens)
+				foreach (long token in tokens)
 				{
 					this.manager.DisposeGeneratorAsync(token).AsTask().Forget();
 				}
@@ -725,14 +725,14 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 
 		/// <summary>Records a generator created while serializing this message.</summary>
 		/// <param name="token">The token identifying the generator.</param>
-		internal void Add(long token) => this.tokens.Add(token);
+		internal void Add(long token) => (this.tokens ??= []).Add(token);
 
 		/// <summary>Transfers ownership of the tracked generators to the caller.</summary>
 		/// <returns>The set of generator tokens carried by the serialized message.</returns>
 		internal TokenSet Commit()
 		{
 			this.committed = true;
-			return new([.. this.tokens]);
+			return this.tokens is { Count: > 0 } tokens ? new([.. tokens]) : TokenSet.Empty;
 		}
 	}
 
@@ -741,7 +741,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	{
 		private readonly AsyncEnumerableManager manager;
 		private readonly InboundScope? priorScope;
-		private readonly List<Action<CallScopedLifetime>> consumers = [];
+		private List<Action<CallScopedLifetime>>? consumers;
 
 		/// <summary>Initializes a new instance of the <see cref="InboundScope"/> class.</summary>
 		/// <param name="manager">The owning manager.</param>
@@ -762,15 +762,15 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 
 		/// <summary>Records a consumer created while decoding the message.</summary>
 		/// <param name="retain">Attaches a lease to the consumer.</param>
-		internal void Add(Action<CallScopedLifetime> retain) => this.consumers.Add(retain);
+		internal void Add(Action<CallScopedLifetime> retain) => (this.consumers ??= []).Add(retain);
 
 		/// <summary>Transfers successful response argument ownership to its consumers.</summary>
 		/// <param name="lifetime">The call-scoped argument lifetime, if any.</param>
 		internal void RetainCallScopedArguments(CallScopedLifetime? lifetime)
 		{
-			if (lifetime is not null)
+			if (lifetime is not null && this.consumers is { } consumers)
 			{
-				foreach (Action<CallScopedLifetime> retain in this.consumers)
+				foreach (Action<CallScopedLifetime> retain in consumers)
 				{
 					retain(lifetime);
 				}
@@ -782,6 +782,8 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	/// <param name="tokens">The tokens.</param>
 	internal sealed class TokenSet(long[] tokens)
 	{
+		internal static readonly TokenSet Empty = new([]);
+
 		/// <summary>Gets the tokens.</summary>
 		internal IReadOnlyList<long> Tokens => tokens;
 

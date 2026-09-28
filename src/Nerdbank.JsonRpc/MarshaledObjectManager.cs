@@ -712,7 +712,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	{
 		private readonly MarshaledObjectManager manager;
 		private readonly HandleScope? priorScope;
-		private readonly List<(long Handle, bool CallScopedLifetime)> handles = [];
+		private List<(long Handle, bool CallScopedLifetime)>? handles;
 		private int marshaledObjectCount;
 		private bool committed;
 
@@ -731,9 +731,9 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		public void Dispose()
 		{
 			this.manager.activeScope.Value = this.priorScope;
-			if (!this.committed)
+			if (!this.committed && this.handles is { } handles)
 			{
-				foreach ((long handle, _) in this.handles)
+				foreach ((long handle, _) in handles)
 				{
 					this.manager.ReleaseLocal(handle);
 				}
@@ -742,7 +742,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 		internal void Add(long handle, bool callScopedLifetime)
 		{
-			this.handles.Add((handle, callScopedLifetime));
+			(this.handles ??= []).Add((handle, callScopedLifetime));
 			this.marshaledObjectCount++;
 		}
 
@@ -751,12 +751,14 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		internal HandleSet Commit()
 		{
 			this.committed = true;
-			return new(this.manager, [.. this.handles], this.HasMarshaledObjects);
+			return this.handles is { Count: > 0 } handles ? new(this.manager, [.. handles], this.HasMarshaledObjects) : HandleSet.Empty;
 		}
 	}
 
-	internal sealed class HandleSet(MarshaledObjectManager manager, (long Handle, bool CallScopedLifetime)[] handles, bool hasMarshaledObjects)
+	internal sealed class HandleSet(MarshaledObjectManager? manager, (long Handle, bool CallScopedLifetime)[] handles, bool hasMarshaledObjects)
 	{
+		internal static readonly HandleSet Empty = new(null, [], false);
+
 		private const int CallScopedReleased = 1;
 		private const int AllReleased = 2;
 		private int releaseState;
@@ -782,7 +784,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 					{
 						if (callScopedLifetime)
 						{
-							manager.ReleaseLocal(handle);
+							manager!.ReleaseLocal(handle);
 						}
 					}
 
@@ -807,7 +809,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 					{
 						if ((state & CallScopedReleased) == 0 || !callScopedLifetime)
 						{
-							manager.ReleaseLocal(handle);
+							manager!.ReleaseLocal(handle);
 						}
 					}
 
@@ -821,7 +823,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	{
 		private readonly MarshaledObjectManager manager;
 		private readonly InboundCallScope? priorScope;
-		private readonly List<(CallScopedHandle Handle, bool CallScopedLifetime)> proxies = [];
+		private List<(CallScopedHandle Handle, bool CallScopedLifetime)>? proxies;
 		private bool succeeded;
 
 		internal InboundCallScope(MarshaledObjectManager manager, bool hasResponse)
@@ -840,9 +842,9 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		public void Dispose()
 		{
 			this.manager.activeInboundCall.Value = this.priorScope;
-			foreach ((CallScopedHandle handle, bool callScopedLifetime) in this.proxies)
+			if (!this.succeeded && this.proxies is { } proxies)
 			{
-				if (!this.succeeded)
+				foreach ((CallScopedHandle handle, _) in proxies)
 				{
 					handle.Invalidate();
 				}
@@ -853,7 +855,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 		internal void Add(CallScopedHandle proxy, bool callScopedLifetime)
 		{
-			this.proxies.Add((proxy, callScopedLifetime));
+			(this.proxies ??= []).Add((proxy, callScopedLifetime));
 			if (callScopedLifetime)
 			{
 				this.Lifetime ??= new(() =>

@@ -124,7 +124,7 @@ public ref struct JsonRpcArgumentsBuilder
 		}
 
 		this.built = true;
-		return JsonRpcValue.FromOwnedBytes(this.buffer.AsReadOnlySequence.ToArray(), this.serializer.Encoding, this.marshaledObjectsScope.Commit()).WithProgressRegistrations(this.progressScope.Commit()).WithOutOfBandChannels(this.outOfBandStreamScope.Commit()).WithAsyncEnumerableTokens(this.asyncEnumerableScope.Commit());
+		return JsonRpcValue.FromPooledBytes(this.buffer.AsReadOnlySequence, this.serializer.Encoding, this.marshaledObjectsScope.Commit()).WithProgressRegistrations(this.progressScope.Commit()).WithOutOfBandChannels(this.outOfBandStreamScope.Commit()).WithAsyncEnumerableTokens(this.asyncEnumerableScope.Commit());
 	}
 
 	/// <summary>Releases buffers owned by this builder.</summary>

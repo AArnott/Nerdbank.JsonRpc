@@ -151,7 +151,7 @@ internal sealed class OutOfBandStreamManager : IDisposable
 	{
 		private readonly OutOfBandStreamManager manager;
 		private readonly OutboundScope? priorScope;
-		private readonly List<MultiplexingStream.Channel> channels = [];
+		private List<MultiplexingStream.Channel>? channels;
 		private bool committed;
 
 		internal OutboundScope(OutOfBandStreamManager manager)
@@ -166,16 +166,16 @@ internal sealed class OutOfBandStreamManager : IDisposable
 			this.manager.activeOutboundScope.Value = this.priorScope;
 			if (!this.committed)
 			{
-				new ChannelSet([.. this.channels]).Dispose();
+				new ChannelSet(this.channels?.ToArray() ?? []).Dispose();
 			}
 		}
 
-		internal void Add(MultiplexingStream.Channel channel) => this.channels.Add(channel);
+		internal void Add(MultiplexingStream.Channel channel) => (this.channels ??= []).Add(channel);
 
 		internal ChannelSet Commit()
 		{
 			this.committed = true;
-			return new([.. this.channels]);
+			return this.channels is { Count: > 0 } channels ? new([.. channels]) : ChannelSet.Empty;
 		}
 	}
 
@@ -183,7 +183,7 @@ internal sealed class OutOfBandStreamManager : IDisposable
 	{
 		private readonly OutOfBandStreamManager manager;
 		private readonly InboundScope? priorScope;
-		private readonly List<MultiplexingStream.Channel> channels = [];
+		private List<MultiplexingStream.Channel>? channels;
 		private bool completed;
 
 		internal InboundScope(OutOfBandStreamManager manager, bool hasResponse)
@@ -201,16 +201,16 @@ internal sealed class OutOfBandStreamManager : IDisposable
 			this.manager.activeInboundScope.Value = this.priorScope;
 			if (!this.completed)
 			{
-				new ChannelSet([.. this.channels]).Dispose();
+				new ChannelSet(this.channels?.ToArray() ?? []).Dispose();
 			}
 		}
 
-		internal void Add(MultiplexingStream.Channel channel) => this.channels.Add(channel);
+		internal void Add(MultiplexingStream.Channel channel) => (this.channels ??= []).Add(channel);
 
 		internal void Complete(bool successful)
 		{
 			this.completed = true;
-			ChannelSet set = new([.. this.channels]);
+			ChannelSet set = this.channels is { Count: > 0 } channels ? new([.. channels]) : ChannelSet.Empty;
 			if (successful)
 			{
 				this.manager.TrackActiveChannels(set);
@@ -224,6 +224,8 @@ internal sealed class OutOfBandStreamManager : IDisposable
 
 	internal sealed class ChannelSet(MultiplexingStream.Channel[] channels) : IDisposable
 	{
+		internal static readonly ChannelSet Empty = new([]);
+
 		internal bool IsEmpty => channels.Length == 0;
 
 		public void Dispose()
