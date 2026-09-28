@@ -31,7 +31,7 @@ internal sealed class MarshaledObjectProxyClient(JsonRpc owner, long handle, Mar
 	{
 		if (method == "dispose")
 		{
-			if (Interlocked.Exchange(ref this.disposed, 1) == 0 && !callScopedHandle.IsCallScoped)
+			if (Interlocked.Exchange(ref this.disposed, 1) == 0 && !callScopedHandle.IsCallScoped && callScopedHandle.IsActive)
 			{
 				owner.MarshaledObjects.Release(handle);
 			}

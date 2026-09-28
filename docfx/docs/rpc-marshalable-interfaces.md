@@ -1,6 +1,6 @@
 # RPC-marshalable interfaces
 
-A value declared as an interface marked with <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute> is sent by reference instead of by value. The receiving endpoint gets a generated proxy; calls on that proxy are sent to the endpoint that owns the object. For wire-protocol and lifetime details, see StreamJsonRpc's [RPC-marshalable objects documentation](https://microsoft.github.io/vs-streamjsonrpc/exotic_types/rpc_marshalable_objects.html); this page describes the subset currently supported by Nerdbank.JsonRpc.
+A value declared as an interface marked with <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute> is sent by reference instead of by value. The receiving endpoint gets a generated proxy; calls on that proxy are sent to the endpoint that owns the object. For wire-protocol and lifetime details, see StreamJsonRpc's [RPC-marshalable objects documentation](https://microsoft.github.io/vs-streamjsonrpc/exotic_types/rpc_marshalable_objects.html); this page describes Nerdbank.JsonRpc's support and usage requirements.
 
 Marshalable interfaces declare methods only and need a generated PolyType shape that includes public instance methods. Explicit-lifetime interfaces (the default) must inherit <xref:System.IDisposable>; the owner disposes the target when the receiver disposes the proxy or when the connection closes. Methods must return `Task`, `Task<T>`, `ValueTask`, or `ValueTask<T>`; `void` methods are not supported except for `IDisposable.Dispose()`.
 
@@ -19,15 +19,41 @@ Set <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute.CallScopedLifetime> to `true`
 
 Call-scoped interfaces are supported only in request arguments, not return values. No marshalable interface may be sent in a notification because there is no response to confirm acceptance. When a request returns a JSON-RPC error, its marshaled arguments are released; successful explicit-lifetime proxies remain valid until disposed or the connection closes.
 
+## Optional interfaces
+
+Apply <xref:Nerdbank.JsonRpc.RpcMarshalableOptionalInterfaceAttribute> to a marshalable base interface when implementations may expose additional RPC capabilities. Each optional interface has a stable signed 32-bit ID that must never be reused for a different interface. The optional interface must have a generated PolyType method shape, just like the base interface.
+
+```csharp
+[RpcMarshalable]
+[RpcMarshalableOptionalInterface(1, typeof(IResettableCounter))]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface ICounter : IDisposable
+{
+    Task<int> IncrementAsync(CancellationToken cancellationToken);
+}
+
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IResettableCounter
+{
+    Task ResetAsync(CancellationToken cancellationToken);
+}
+```
+
+The sender advertises only interfaces implemented by the actual target. The receiver's generated proxy implements exactly the advertised interfaces it recognizes, so normal C# type tests and casts provide capability discovery (`counter is IResettableCounter`). Unknown IDs are ignored for version tolerance. Optional calls use `$/invokeProxy/{handle}/{interfaceId}.{method}` on the wire, which keeps same-named methods on different interfaces distinct. Optional capabilities preserve the base object's identity and lifetime; disposing any generated proxy releases that marshaled handle. As with the base interface, optional capabilities cannot be forwarded to a third connection.
+
 ## Connection boundaries
 
 A received marshaled proxy may be sent back over the same `JsonRpc` connection. Its owner receives the original object, not a proxy to a proxy.
 
 Forwarding a received proxy over a **different** `JsonRpc` connection (for example, from A through B to C) is not supported and fails serialization with `NotSupportedException` (wrapped in `MessagePackSerializationException` when using MessagePack). This applies to `[RpcMarshalable]` interfaces, `IDisposable`, and `IObserver<T>`, including values nested in object graphs. The rejected forwarding attempt does not release the original proxy. Handles, identity, and lifetime ownership are connection-local; multi-party forwarding would require additional ownership rules. Application-written forwarding wrappers are not detected and are responsible for their own lifetime management.
 
-## Remaining general-marshaling gaps
+## Owner revocation
 
-The core marshaling protocol and both lifetime models are implemented, but full parity is still tracked by [issue #69](https://github.com/AArnott/Nerdbank.JsonRpc/issues/69). Optional-interface advertisement and discovery are not yet supported ([#84](https://github.com/AArnott/Nerdbank.JsonRpc/issues/84)). Owner-initiated revocation, including proxy invalidation on `ownedBySender: true` release notifications, is also not yet supported ([#83](https://github.com/AArnott/Nerdbank.JsonRpc/issues/83)); receiver disposal and connection cleanup are supported.
+The owner may terminate every active marshaled relationship for one target by calling <xref:Nerdbank.JsonRpc.JsonRpc.RevokeMarshaledObject(System.Object)>. This object-wide operation returns the number of handles revoked, sends an `ownedBySender: true` release notification for each handle, and leaves handles for other objects untouched. It does not dispose the target; after revocation, its owner is solely responsible for disposal. To revoke relationships independently, marshal distinct wrapper objects instead of the same target instance.
+
+After the peer processes the notification, generated proxies reject new calls with `ObjectDisposedException`; a raw invocation that races after the owning endpoint has removed the handle receives JSON-RPC error -32001. Calls already dispatched before revocation may complete. Repeated revocation, proxy disposal racing revocation, and later scope cleanup are idempotent. Call-scoped targets normally expire with their request (including any async-enumerable extension), but their owner may explicitly revoke them early through the same API.
+
+Together with optional interfaces, receiver disposal, call-scoped and explicit lifetimes, same-connection round trips, and connection cleanup, this completes the general marshalable-object work tracked by [issue #69](https://github.com/AArnott/Nerdbank.JsonRpc/issues/69). Third-party forwarding remains deliberately unsupported as described below.
 
 ## Observer callbacks
 

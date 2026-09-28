@@ -1,6 +1,10 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+#if NET
+using System.Diagnostics.CodeAnalysis;
+#endif
+
 using System.Collections.Concurrent;
 using System.Net;
 using System.Reflection;
@@ -436,19 +440,37 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		this.asyncEnumerables.Dispose();
 	}
 
-	internal static object AttachCore(IJsonRpcClient client, Type interfaceType, JsonRpcProxyOptions? options = null)
+	/// <summary>Revokes every active marshaled relationship for an object owned by this connection.</summary>
+	/// <param name="target">The previously marshaled target object.</param>
+	/// <returns>The number of handles revoked.</returns>
+	/// <remarks>
+	/// This operation is object-wide: every handle issued for <paramref name="target"/> is revoked, while handles
+	/// for other objects are unaffected. Revocation does not dispose <paramref name="target"/>; its owner remains
+	/// responsible for its lifetime. Calls already dispatched remotely may complete.
+	/// </remarks>
+	public int RevokeMarshaledObject(object target)
+	{
+		Requires.NotNull(target);
+		return this.marshaledObjects.Revoke(target);
+	}
+
+	internal static object AttachCore(
+		IJsonRpcClient client,
+		Type interfaceType,
+		JsonRpcProxyOptions? options = null,
+#if NET
+		[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] Type? implementationType = null)
+#else
+		Type? implementationType = null)
+#endif
 	{
 		Requires.NotNull(client);
 		Requires.NotNull(interfaceType);
 		Requires.Argument(interfaceType.IsInterface, nameof(interfaceType), "The requested proxy type must be an interface.");
 
 		JsonRpcProxyImplementationAttribute? implementation = interfaceType.GetCustomAttribute<JsonRpcProxyImplementationAttribute>();
-		if (implementation is null)
-		{
-			throw new NotSupportedException($"No generated JSON-RPC proxy was found for interface '{interfaceType.FullName}'. Add GenerateJsonRpcProxyAttribute to the interface or request an annotated composite interface.");
-		}
-
-		Type proxyType = implementation.ProxyType;
+		Type proxyType = implementationType ?? implementation?.ProxyType
+			?? throw new NotSupportedException($"No generated JSON-RPC proxy was found for interface '{interfaceType.FullName}'. Add GenerateJsonRpcProxyAttribute to the interface or request an annotated composite interface.");
 		if (!interfaceType.IsAssignableFrom(proxyType))
 		{
 			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not implement requested interface '{interfaceType.FullName}'.");
@@ -476,7 +498,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	internal void PostMarshaledNotification(string method, JsonRpcValue arguments) => this.PostMessage(new JsonRpcRequest { Method = method, Arguments = arguments });
 
-	internal JsonRpcValue MarshalReleaseArguments(long handle)
+	internal JsonRpcValue MarshalReleaseArguments(long handle, bool ownedBySender = false)
 	{
 		if (this.channel.Encoding == JsonRpcEncoding.Json)
 		{
@@ -484,7 +506,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			using Utf8JsonWriter writer = new(buffer);
 			writer.WriteStartArray();
 			writer.WriteNumberValue(handle);
-			writer.WriteBooleanValue(false);
+			writer.WriteBooleanValue(ownedBySender);
 			writer.WriteEndArray();
 			writer.Flush();
 			return JsonRpcValue.FromJson(buffer.AsReadOnlySequence);
@@ -494,7 +516,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		MessagePackWriter msgpackWriter = new(msgpackBuffer);
 		msgpackWriter.WriteArrayHeader(2);
 		msgpackWriter.Write(handle);
-		msgpackWriter.Write(false);
+		msgpackWriter.Write(ownedBySender);
 		msgpackWriter.Flush();
 		return JsonRpcValue.FromMessagePack((RawMessagePack)msgpackBuffer.AsReadOnlySequence);
 	}
@@ -674,8 +696,17 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 		else if (!this.handlers.TryGetValue(request.Method, out handler))
 		{
+			bool missingMarshaledObject = this.marshaledObjects.IsMissingHandleInvocation(request, out long missingHandle);
 			return Task.FromResult<JsonRpcResponse?>(request.Id is RequestId missingId
-				? new JsonRpcError { Id = missingId, Error = new() { Code = JsonRpcErrorCode.MethodNotFound, Message = $"The method {request.Method} is not supported." } }
+				? new JsonRpcError
+				{
+					Id = missingId,
+					Error = new()
+					{
+						Code = missingMarshaledObject ? JsonRpcErrorCode.NoMarshaledObjectFound : JsonRpcErrorCode.MethodNotFound,
+						Message = missingMarshaledObject ? $"No marshaled object with handle {missingHandle} exists." : $"The method {request.Method} is not supported.",
+					},
+				}
 				: null);
 		}
 

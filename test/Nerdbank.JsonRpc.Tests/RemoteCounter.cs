@@ -9,14 +9,24 @@ internal sealed class RemoteCounter : IRemoteCounter
 
 	internal bool IsDisposed { get; private set; }
 
-	public Task<int> IncrementAsync(CancellationToken cancellationToken)
+	internal TaskCompletionSource<bool>? IncrementStarted { get; set; }
+
+	internal TaskCompletionSource<bool>? ContinueIncrement { get; set; }
+
+	public async Task<int> IncrementAsync(CancellationToken cancellationToken)
 	{
 		if (this.IsDisposed)
 		{
 			throw new ObjectDisposedException(nameof(RemoteCounter));
 		}
 
-		return Task.FromResult(++this.value);
+		this.IncrementStarted?.TrySetResult(true);
+		if (this.ContinueIncrement is { } continueIncrement)
+		{
+			await continueIncrement.Task.ConfigureAwait(false);
+		}
+
+		return ++this.value;
 	}
 
 	public void Dispose()

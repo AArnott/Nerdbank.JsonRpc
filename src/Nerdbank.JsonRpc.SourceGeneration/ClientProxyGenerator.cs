@@ -17,6 +17,7 @@ namespace Nerdbank.JsonRpc.SourceGeneration;
 public sealed class ClientProxyGenerator : IIncrementalGenerator
 {
 	private const string DiagnosticHelpLink = "https://aarnott.github.io/Nerdbank.JsonRpc/analyzers/NBJSONRPC001.html";
+	private const int MaxOptionalInterfaces = 8;
 
 	private static readonly DiagnosticDescriptor UnsupportedMethodSignature = new(
 		"NBJSONRPC001",
@@ -100,6 +101,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		Compilation compilation = context.SemanticModel.Compilation;
 		INamedTypeSymbol? generateProxyAttribute = compilation.GetTypeByMetadataName(KnownApis.GenerateJsonRpcProxyAttribute);
 		INamedTypeSymbol? rpcMarshalableAttribute = compilation.GetTypeByMetadataName(KnownApis.RpcMarshalableAttribute);
+		INamedTypeSymbol? optionalInterfaceAttribute = compilation.GetTypeByMetadataName(KnownApis.RpcMarshalableOptionalInterfaceAttribute);
 		bool hasGeneratedProxyAttribute = hasGenerateProxyAttribute || HasAttribute(interfaceSymbol, generateProxyAttribute);
 		if (!hasGenerateProxyAttribute && hasGeneratedProxyAttribute)
 		{
@@ -116,6 +118,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			isCallScoped,
 			hasGeneratedProxyAttribute,
 			rpcMarshalableAttribute,
+			optionalInterfaceAttribute,
 			cancellationToken);
 		ImmutableArray<DiagnosticInfo> diagnostics = info.Diagnostics;
 		string? source = diagnostics.IsEmpty ? RenderProxy(info) : null;
@@ -135,21 +138,22 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 	}
 
-	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol, InterfaceDeclarationSyntax interfaceDeclaration, Compilation compilation, bool isMarshalable, bool isCallScoped, bool hasGenerateProxyAttribute, INamedTypeSymbol? marshalableAttribute, CancellationToken cancellationToken)
+	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol, InterfaceDeclarationSyntax interfaceDeclaration, Compilation compilation, bool isMarshalable, bool isCallScoped, bool hasGenerateProxyAttribute, INamedTypeSymbol? marshalableAttribute, INamedTypeSymbol? optionalInterfaceAttribute, CancellationToken cancellationToken)
 	{
 		INamedTypeSymbol? methodShapeAttribute = compilation.GetTypeByMetadataName(KnownApis.MethodShapeAttribute);
 		ImmutableArray<MethodInfo>.Builder methods = ImmutableArray.CreateBuilder<MethodInfo>();
 		ImmutableArray<DiagnosticInfo>.Builder diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
+		ImmutableArray<OptionalInterfaceInfo>.Builder optionalInterfaces = ImmutableArray.CreateBuilder<OptionalInterfaceInfo>();
 		if (!interfaceDeclaration.Modifiers.Any(SyntaxKind.PartialKeyword))
 		{
 			diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceDeclaration.Identifier.GetLocation(), interfaceSymbol.ToDisplayString(), "annotated interfaces must be partial"));
-			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasGenerateProxyAttribute, diagnostics.ToImmutable());
+			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), optionalInterfaces.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasGenerateProxyAttribute, diagnostics.ToImmutable());
 		}
 
 		if (GetUnsupportedInterfaceReason(interfaceSymbol, isMarshalable, isCallScoped) is string interfaceReason)
 		{
 			diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceSymbol.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), interfaceReason));
-			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasGenerateProxyAttribute, diagnostics.ToImmutable());
+			return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), optionalInterfaces.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasGenerateProxyAttribute, diagnostics.ToImmutable());
 		}
 
 		foreach (IMethodSymbol method in GetProxyMethods(interfaceSymbol))
@@ -161,10 +165,60 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				continue;
 			}
 
-			methods.Add(CreateMethodInfo(method, methodShapeAttribute));
+			methods.Add(CreateMethodInfo(method, methodShapeAttribute, optionalInterfaceId: null));
 		}
 
-		return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasGenerateProxyAttribute, diagnostics.ToImmutable());
+		if (isMarshalable && optionalInterfaceAttribute is not null)
+		{
+			ImmutableArray<AttributeData> optionalInterfaceAttributes = interfaceSymbol.GetAttributes().Where(attribute => SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, optionalInterfaceAttribute)).ToImmutableArray();
+			if (optionalInterfaceAttributes.Length > MaxOptionalInterfaces)
+			{
+				diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceSymbol.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), $"at most {MaxOptionalInterfaces} optional interfaces are supported"));
+			}
+
+			HashSet<int> interfaceIds = [];
+			foreach (AttributeData attribute in optionalInterfaceAttributes.Take(MaxOptionalInterfaces))
+			{
+				if (attribute.ConstructorArguments is not [{ Value: int interfaceId }, { Value: INamedTypeSymbol optionalInterface }])
+				{
+					continue;
+				}
+
+				if (optionalInterface is not { TypeKind: TypeKind.Interface })
+				{
+					diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceSymbol.Locations.FirstOrDefault(), optionalInterface.ToDisplayString(), "optional marshalable types must be interfaces"));
+					continue;
+				}
+
+				if (!interfaceIds.Add(interfaceId))
+				{
+					diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceSymbol.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), $"optional interface ID {interfaceId} is declared more than once"));
+					continue;
+				}
+
+				ImmutableArray<MethodInfo>.Builder optionalMethods = ImmutableArray.CreateBuilder<MethodInfo>();
+				if (GetUnsupportedOptionalInterfaceReason(optionalInterface) is string optionalReason)
+				{
+					diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceSymbol.Locations.FirstOrDefault(), optionalInterface.ToDisplayString(), optionalReason));
+					continue;
+				}
+
+				foreach (IMethodSymbol method in GetProxyMethods(optionalInterface))
+				{
+					if (GetUnsupportedSignatureReason(method, isMarshalable: true, marshalableAttribute) is string reason)
+					{
+						diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: true, method.Locations.FirstOrDefault(), method.ToDisplayString(), reason));
+						continue;
+					}
+
+					optionalMethods.Add(CreateMethodInfo(method, methodShapeAttribute, interfaceId));
+				}
+
+				optionalInterfaces.Add(new(interfaceId, optionalInterface, optionalMethods.ToImmutable()));
+			}
+		}
+
+		return new InterfaceInfo(interfaceSymbol, methods.ToImmutable(), optionalInterfaces.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasGenerateProxyAttribute, diagnostics.ToImmutable());
 	}
 
 	private static IEnumerable<IMethodSymbol> GetProxyMethods(INamedTypeSymbol interfaceSymbol)
@@ -214,6 +268,26 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			{
 				return "marshalable interfaces cannot declare properties or events";
 			}
+		}
+
+		return null;
+	}
+
+	private static string? GetUnsupportedOptionalInterfaceReason(INamedTypeSymbol interfaceSymbol)
+	{
+		if (interfaceSymbol.TypeParameters.Length > 0)
+		{
+			return "generic interfaces are not supported yet";
+		}
+
+		if (interfaceSymbol.ContainingType is not null)
+		{
+			return "nested interfaces are not supported yet";
+		}
+
+		if (interfaceSymbol.AllInterfaces.Concat([interfaceSymbol]).Any(static type => type.GetMembers().Any(static member => member is IPropertySymbol or IEventSymbol)))
+		{
+			return "optional marshalable interfaces cannot declare properties or events";
 		}
 
 		return null;
@@ -296,7 +370,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			.Any(static method => method.IsGenericMethod && method.TypeParameters.Length == 1 && method.ContainingAssembly.Name == KnownApis.PolyTypeAssembly) is true;
 	}
 
-	private static MethodInfo CreateMethodInfo(IMethodSymbol method, INamedTypeSymbol? methodShapeAttribute)
+	private static MethodInfo CreateMethodInfo(IMethodSymbol method, INamedTypeSymbol? methodShapeAttribute, int? optionalInterfaceId)
 	{
 		bool hasCancellationToken = method.Parameters.LastOrDefault() is { } lastParameter && IsCancellationToken(lastParameter.Type);
 		ImmutableArray<IParameterSymbol> payloadParameters = hasCancellationToken
@@ -306,7 +380,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		ProxyMethodKind methodKind = GetMethodKind(method.ReturnType, out string? resultTypeName);
 		string? explicitRpcName = GetExplicitRpcName(method, methodShapeAttribute);
 
-		return new MethodInfo(method, payloadParameters, hasCancellationToken, methodKind, resultTypeName, explicitRpcName);
+		return new MethodInfo(method, payloadParameters, hasCancellationToken, methodKind, resultTypeName, explicitRpcName, optionalInterfaceId);
 	}
 
 	/// <summary>
@@ -374,12 +448,6 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	private static string RenderProxy(InterfaceInfo info)
 	{
 		SourceWriter builder = new();
-		ImmutableArray<ShapeFieldInfo> shapeFields = GetShapeFields(info.Methods);
-		bool needsMethodNameTransform = info.Methods.Any(m => m.ExplicitRpcName is null && m.Kind is not ProxyMethodKind.Unsupported && !(info.IsMarshalable && IsDisposeMethod(m)));
-		string? methodNameTransformField = needsMethodNameTransform ? GetGeneratedMemberName(info, "NerdbankJsonRpc_MethodNameTransform") : null;
-		ImmutableArray<string?> transformedRpcNameFields = info.Methods
-			.Select((method, index) => method is { ExplicitRpcName: null, Kind: not ProxyMethodKind.Unsupported } && !(info.IsMarshalable && IsDisposeMethod(method)) ? GetGeneratedMemberName(info, $"NerdbankJsonRpc_TransformedRpcName{index}") : null)
-			.ToImmutableArray();
 		builder.AppendLine("#nullable enable");
 		builder.AppendLine();
 		if (!info.Symbol.ContainingNamespace.IsGlobalNamespace)
@@ -389,12 +457,75 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 
 		builder.Append("[global::Nerdbank.JsonRpc.JsonRpcProxyImplementationAttribute(typeof(").Append(info.ProxyTypeName).AppendLine("))]");
+		ImmutableArray<OptionalInterfaceInfo> optionalInterfaces = info.OptionalInterfaces.OrderBy(static optional => optional.InterfaceId).ToImmutableArray();
+		int variantCount = 1 << optionalInterfaces.Length;
+		for (int mask = 1; mask < variantCount; mask++)
+		{
+			string proxyTypeName = info.Symbol.ContainingNamespace.IsGlobalNamespace
+				? "global::" + GetVariantProxyName(info, mask)
+				: "global::" + info.Symbol.ContainingNamespace.ToDisplayString() + "." + GetVariantProxyName(info, mask);
+			builder.Append("[global::Nerdbank.JsonRpc.JsonRpcOptionalProxyImplementationAttribute(typeof(").Append(proxyTypeName).Append(')');
+			for (int index = 0; index < optionalInterfaces.Length; index++)
+			{
+				if ((mask & (1 << index)) != 0)
+				{
+					builder.Append(", ").Append(optionalInterfaces[index].InterfaceId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+				}
+			}
+
+			builder.AppendLine(")]");
+		}
+
 		builder.Append(GetAccessibility(info.Symbol.DeclaredAccessibility)).Append(" partial interface ").Append(info.Symbol.Name).AppendLine();
 		builder.OpenBlock();
 		builder.CloseBlock();
 		builder.AppendLine();
 
-		builder.Append("internal sealed class ").Append(info.ProxyName).Append(" : ").Append(info.InterfaceName).AppendLine();
+		RenderProxyClass(builder, info, info.ProxyName, info.Methods, []);
+		for (int mask = 1; mask < variantCount; mask++)
+		{
+			ImmutableArray<OptionalInterfaceInfo> implemented = optionalInterfaces.Where((_, index) => (mask & (1 << index)) != 0).ToImmutableArray();
+			ImmutableArray<MethodInfo>.Builder methods = ImmutableArray.CreateBuilder<MethodInfo>();
+			HashSet<string> baseMethodSignatures = new(StringComparer.Ordinal);
+			foreach (MethodInfo method in info.Methods)
+			{
+				baseMethodSignatures.Add(GetMethodSignatureKey(method.Symbol));
+				methods.Add(method);
+			}
+
+			foreach (MethodInfo method in implemented.SelectMany(static optional => optional.Methods))
+			{
+				// A base method can implement an overlapping optional interface member. Keep distinct optional
+				// interface methods because they use explicit implementations and distinct wire prefixes.
+				if (!baseMethodSignatures.Contains(GetMethodSignatureKey(method.Symbol)))
+				{
+					methods.Add(method);
+				}
+			}
+
+			builder.AppendLine();
+			RenderProxyClass(builder, info, GetVariantProxyName(info, mask), methods.ToImmutable(), implemented);
+		}
+
+		return builder.ToString();
+	}
+
+	private static void RenderProxyClass(SourceWriter builder, InterfaceInfo info, string proxyName, ImmutableArray<MethodInfo> methods, ImmutableArray<OptionalInterfaceInfo> optionalInterfaces)
+	{
+		ImmutableArray<ShapeFieldInfo> shapeFields = GetShapeFields(methods);
+		bool needsMethodNameTransform = methods.Any(m => m.ExplicitRpcName is null && m.Kind is not ProxyMethodKind.Unsupported && !(info.IsMarshalable && IsDisposeMethod(m)));
+		string? methodNameTransformField = needsMethodNameTransform ? GetGeneratedMemberName(info, "NerdbankJsonRpc_MethodNameTransform") : null;
+		ImmutableArray<string?> transformedRpcNameFields = methods
+			.Select((method, index) => method is { ExplicitRpcName: null, Kind: not ProxyMethodKind.Unsupported } && !(info.IsMarshalable && IsDisposeMethod(method)) ? GetGeneratedMemberName(info, $"NerdbankJsonRpc_TransformedRpcName{index}") : null)
+			.ToImmutableArray();
+
+		builder.Append("internal sealed class ").Append(proxyName).Append(" : ").Append(info.InterfaceName);
+		foreach (OptionalInterfaceInfo optionalInterface in optionalInterfaces)
+		{
+			builder.Append(", ").Append(optionalInterface.Symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+		}
+
+		builder.AppendLine();
 		builder.OpenBlock();
 		builder.AppendLine("\tprivate readonly global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc;");
 		builder.AppendLine("\tprivate readonly bool useNamedArguments;");
@@ -404,7 +535,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.Append("\tprivate readonly global::System.Func<string, string> ").Append(transformField).AppendLine(";");
 		}
 
-		for (int i = 0; i < info.Methods.Length; i++)
+		for (int i = 0; i < methods.Length; i++)
 		{
 			if (transformedRpcNameFields[i] is string fieldName)
 			{
@@ -413,7 +544,6 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 
 		builder.AppendLine();
-
 		foreach (ShapeFieldInfo shapeField in shapeFields)
 		{
 			builder.Append("\tprivate readonly global::PolyType.ITypeShape<")
@@ -428,7 +558,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.AppendLine();
 		}
 
-		builder.Append("\tinternal ").Append(info.ProxyName).Append("(global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc, global::Nerdbank.JsonRpc.JsonRpcProxyOptions options)").AppendLine();
+		builder.Append("\tinternal ").Append(proxyName).Append("(global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc, global::Nerdbank.JsonRpc.JsonRpcProxyOptions options)").AppendLine();
 		builder.OpenBlock("\t");
 		builder.AppendLine("\t\tthis.jsonRpc = jsonRpc;");
 		builder.AppendLine("\t\tthis.useNamedArguments = options.UseNamedArguments;");
@@ -457,16 +587,16 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 
 		builder.CloseBlock("\t");
-
-		for (int i = 0; i < info.Methods.Length; i++)
+		for (int i = 0; i < methods.Length; i++)
 		{
 			builder.AppendLine();
-			builder.Append(RenderMethod(info.Methods[i], shapeFields, transformedRpcNameFields[i], methodNameTransformField, info.IsMarshalable));
+			builder.Append(RenderMethod(methods[i], shapeFields, transformedRpcNameFields[i], methodNameTransformField, info.IsMarshalable));
 		}
 
 		builder.CloseBlock();
-		return builder.ToString();
 	}
+
+	private static string GetVariantProxyName(InterfaceInfo info, int mask) => $"{info.ProxyName}_Optional{mask}";
 
 	private static string GetGeneratedMemberName(InterfaceInfo info, string baseName)
 	{
@@ -520,8 +650,31 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		string parameters = string.Join(", ", method.Symbol.Parameters.Select(static p => $"{GetTypeName(p.Type, p.NullableAnnotation)} {EscapeIdentifier(p.Name)}"));
 		string cancellationToken = method.HasCancellationToken ? EscapeIdentifier(method.Symbol.Parameters[^1].Name) : KnownApis.CancellationToken + ".None";
 
-		builder.Append("\tpublic ").Append(method.Symbol.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append(' ').Append(EscapeIdentifier(method.Symbol.Name)).Append('(').Append(parameters).AppendLine(")");
+		if (method.OptionalInterfaceId is null)
+		{
+			builder.Append("\tpublic ");
+		}
+		else
+		{
+			builder.Append("\t");
+		}
+
+		builder.Append(method.Symbol.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append(' ');
+		if (method.OptionalInterfaceId is not null)
+		{
+			builder.Append(method.Symbol.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append('.');
+		}
+
+		builder.Append(EscapeIdentifier(method.Symbol.Name)).Append('(').Append(parameters).AppendLine(")");
 		builder.OpenBlock("\t");
+
+		if (isMarshalable && IsDisposeMethod(method))
+		{
+			builder.AppendLine("\t\tthis.jsonRpc.NotifyAsync(\"dispose\", default, global::System.Threading.CancellationToken.None).Preserve();");
+			builder.AppendLine("\t\treturn;");
+			builder.CloseBlock("\t");
+			return builder.ToString();
+		}
 
 		if (method.Kind is not ProxyMethodKind.Unsupported)
 		{
@@ -617,14 +770,23 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	/// <returns><paramref name="builder"/>, for chaining.</returns>
 	private static SourceWriter AppendRpcMethodName(SourceWriter builder, MethodInfo method, string? transformedRpcNameField, string? methodNameTransformField)
 	{
+		if (method.OptionalInterfaceId is int interfaceId)
+		{
+			builder.Append("(");
+			AppendQuoted(builder, interfaceId.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".");
+			builder.Append(" + ");
+		}
+
 		if (method.ExplicitRpcName is string explicitRpcName)
 		{
-			return AppendQuoted(builder, explicitRpcName);
+			AppendQuoted(builder, explicitRpcName);
+			return method.OptionalInterfaceId is null ? builder : builder.Append(")");
 		}
 
 		builder.Append("(this.").Append(transformedRpcNameField).Append(" ??= this.").Append(methodNameTransformField).Append("(");
 		AppendQuoted(builder, method.Symbol.Name);
-		return builder.Append("))");
+		builder.Append("))");
+		return method.OptionalInterfaceId is null ? builder : builder.Append(")");
 	}
 
 	private static string GetShapeFieldName(string typeName, ImmutableArray<ShapeFieldInfo> shapeFields)
@@ -729,6 +891,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	{
 		internal const string GenerateJsonRpcProxyAttribute = "Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute";
 		internal const string RpcMarshalableAttribute = "Nerdbank.JsonRpc.RpcMarshalableAttribute";
+		internal const string RpcMarshalableOptionalInterfaceAttribute = "Nerdbank.JsonRpc.RpcMarshalableOptionalInterfaceAttribute";
 		internal const string MethodShapeAttribute = "PolyType.MethodShapeAttribute";
 		internal const string TypeShapeResolver = "PolyType.Abstractions.TypeShapeResolver";
 		internal const string CallScopedLifetime = "CallScopedLifetime";
@@ -747,7 +910,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		internal const string Void = "void";
 	}
 
-	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods, bool HasStaticTypeShapeResolver, bool IsMarshalable, bool IsCallScoped, bool HasGenerateProxyAttribute, ImmutableArray<DiagnosticInfo> Diagnostics)
+	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods, ImmutableArray<OptionalInterfaceInfo> OptionalInterfaces, bool HasStaticTypeShapeResolver, bool IsMarshalable, bool IsCallScoped, bool HasGenerateProxyAttribute, ImmutableArray<DiagnosticInfo> Diagnostics)
 	{
 		internal string HintName => this.Symbol.ContainingNamespace.IsGlobalNamespace ? this.ProxyName + ".g.cs" : this.Symbol.ContainingNamespace.ToDisplayString() + "." + this.ProxyName + ".g.cs";
 
@@ -768,7 +931,10 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		bool HasCancellationToken,
 		ProxyMethodKind Kind,
 		string? ResultTypeName,
-		string? ExplicitRpcName);
+		string? ExplicitRpcName,
+		int? OptionalInterfaceId);
+
+	private sealed record OptionalInterfaceInfo(int InterfaceId, INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods);
 
 	private sealed record ShapeFieldInfo(string TypeName, string FieldName);
 }
