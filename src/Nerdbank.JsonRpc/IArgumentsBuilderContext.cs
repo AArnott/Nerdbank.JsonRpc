@@ -12,4 +12,6 @@ internal interface IArgumentsBuilderContext
 	ProgressManager Progress { get; }
 
 	OutOfBandStreamManager OutOfBandStreams { get; }
+
+	AsyncEnumerableManager AsyncEnumerables { get; }
 }

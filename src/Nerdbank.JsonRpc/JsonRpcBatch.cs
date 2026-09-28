@@ -39,6 +39,8 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 
 	OutOfBandStreamManager IArgumentsBuilderContext.OutOfBandStreams => this.owner.OutOfBandStreams;
 
+	AsyncEnumerableManager IArgumentsBuilderContext.AsyncEnumerables => this.owner.AsyncEnumerables;
+
 	/// <inheritdoc/>
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);
 
@@ -136,12 +138,13 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects();
 		using ProgressManager.RegistrationScope progressScope = this.owner.Progress.TrackRegistrations();
 		using OutOfBandStreamManager.OutboundScope outOfBandStreamScope = this.owner.OutOfBandStreams.TrackOutboundRequest();
+		using AsyncEnumerableManager.OutboundScope asyncEnumerableScope = this.owner.AsyncEnumerables.TrackOutboundMessage();
 		JsonRpcValue serializedArguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = this.owner.GetNextRequestId(),
 			Method = method,
-			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithProgressRegistrations(progressScope.Commit()).WithOutOfBandChannels(outOfBandStreamScope.Commit()),
+			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithProgressRegistrations(progressScope.Commit()).WithOutOfBandChannels(outOfBandStreamScope.Commit()).WithAsyncEnumerableTokens(asyncEnumerableScope.Commit()),
 		};
 
 		ValueTask<JsonRpcResponse> responseTask = this.AddRequestAsync(request, cancellationToken);
@@ -163,12 +166,13 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects();
 		using ProgressManager.RegistrationScope progressScope = this.owner.Progress.TrackRegistrations();
 		using OutOfBandStreamManager.OutboundScope outOfBandStreamScope = this.owner.OutOfBandStreams.TrackOutboundRequest();
+		using AsyncEnumerableManager.OutboundScope asyncEnumerableScope = this.owner.AsyncEnumerables.TrackOutboundMessage();
 		JsonRpcValue serializedArguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = this.owner.GetNextRequestId(),
 			Method = method,
-			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithProgressRegistrations(progressScope.Commit()).WithOutOfBandChannels(outOfBandStreamScope.Commit()),
+			Arguments = serializedArguments.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithProgressRegistrations(progressScope.Commit()).WithOutOfBandChannels(outOfBandStreamScope.Commit()).WithAsyncEnumerableTokens(asyncEnumerableScope.Commit()),
 		};
 
 		ValueTask<JsonRpcResponse> responseTask = this.AddRequestAsync(request, cancellationToken);
@@ -189,6 +193,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	{
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects();
 		using ProgressManager.RegistrationScope progressScope = this.owner.Progress.TrackRegistrations();
+		using AsyncEnumerableManager.OutboundScope asyncEnumerableScope = this.owner.AsyncEnumerables.TrackOutboundMessage();
 		JsonRpcValue serializedArguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken);
 		if (marshaledObjectsScope.HasMarshaledObjects)
 		{
@@ -196,6 +201,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		}
 
 		this.owner.Progress.EnsureNoProgressRegistrations(serializedArguments.WithProgressRegistrations(progressScope.Commit()));
+		this.owner.AsyncEnumerables.EnsureNoAsyncEnumerables(serializedArguments.WithAsyncEnumerableTokens(asyncEnumerableScope.Commit()));
 
 		JsonRpcRequest request = new()
 		{
@@ -244,6 +250,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	{
 		this.owner.MarshaledObjects.EnsureNoMarshaledObjects(arguments);
 		this.owner.Progress.EnsureNoProgressRegistrations(arguments);
+		this.owner.AsyncEnumerables.EnsureNoAsyncEnumerables(arguments);
 		JsonRpcRequest request = new()
 		{
 			Id = null,
@@ -299,6 +306,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 
 					this.owner.Progress.RegisterOutboundRequest(entry.Request);
 					this.owner.OutOfBandStreams.RegisterOutboundRequest(entry.Request);
+					this.owner.AsyncEnumerables.RegisterOutboundRequest(entry.Request);
 				}
 			}
 
@@ -341,6 +349,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 						this.owner.TryUnregisterOutboundRequest(entry.Request.Id.Value);
 						this.owner.Progress.UnregisterOutboundRequest(entry.Request);
 						this.owner.OutOfBandStreams.CompleteOutboundRequest(entry.Request.Id.Value, successful: false);
+						this.owner.AsyncEnumerables.CompleteOutboundRequest(entry.Request.Id.Value);
 					}
 
 					entry.ResponseCompletionSource.TrySetException(ex);
@@ -724,6 +733,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			}
 
 			this.owner.owner.MarshaledObjects.ReleaseLocalObjects(this.Request.Arguments);
+			this.owner.owner.AsyncEnumerables.ReleaseGenerators(this.Request.Arguments);
 		}
 
 		internal void Fault(Exception ex)
@@ -733,6 +743,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 				this.owner.owner.TryUnregisterOutboundRequest(this.Request.Id.Value);
 				this.owner.owner.Progress.UnregisterOutboundRequest(this.Request);
 				this.owner.owner.OutOfBandStreams.CompleteOutboundRequest(this.Request.Id.Value, successful: false);
+				this.owner.owner.AsyncEnumerables.CompleteOutboundRequest(this.Request.Id.Value);
 			}
 
 			this.ResponseCompletionSource?.TrySetException(ex);

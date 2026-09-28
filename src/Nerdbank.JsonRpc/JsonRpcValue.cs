@@ -21,13 +21,14 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 {
 	private readonly byte[]? bytes;
 
-	private JsonRpcValue(byte[] bytes, JsonRpcEncoding encoding, MarshaledObjectManager.HandleSet? marshaledHandles = null, ProgressManager.RegistrationSet? progressRegistrations = null, OutOfBandStreamManager.ChannelSet? outOfBandChannels = null)
+	private JsonRpcValue(byte[] bytes, JsonRpcEncoding encoding, MarshaledObjectManager.HandleSet? marshaledHandles = null, ProgressManager.RegistrationSet? progressRegistrations = null, OutOfBandStreamManager.ChannelSet? outOfBandChannels = null, AsyncEnumerableManager.TokenSet? asyncEnumerableTokens = null)
 	{
 		this.bytes = bytes;
 		this.Encoding = encoding;
 		this.MarshaledHandles = marshaledHandles;
 		this.ProgressRegistrations = progressRegistrations;
 		this.OutOfBandChannels = outOfBandChannels;
+		this.AsyncEnumerableTokens = asyncEnumerableTokens;
 	}
 
 	/// <summary>Gets the encoding of this value.</summary>
@@ -47,6 +48,8 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	internal ProgressManager.RegistrationSet? ProgressRegistrations { get; }
 
 	internal OutOfBandStreamManager.ChannelSet? OutOfBandChannels { get; }
+
+	internal AsyncEnumerableManager.TokenSet? AsyncEnumerableTokens { get; }
 
 	/// <summary>Converts a MessagePack raw value into a tagged value.</summary>
 	/// <param name="value">The raw value.</param>
@@ -103,9 +106,14 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	/// <summary>Creates a copy of this value with marshaled handle ownership attached.</summary>
 	/// <param name="marshaledHandles">The marshaled local handles owned by this encoded value.</param>
 	/// <returns>The copied value.</returns>
-	internal JsonRpcValue WithMarshaledHandles(MarshaledObjectManager.HandleSet marshaledHandles) => new(this.OwnedBytes.ToArray(), this.Encoding, marshaledHandles, this.ProgressRegistrations, this.OutOfBandChannels);
+	internal JsonRpcValue WithMarshaledHandles(MarshaledObjectManager.HandleSet marshaledHandles) => new(this.OwnedBytes.ToArray(), this.Encoding, marshaledHandles, this.ProgressRegistrations, this.OutOfBandChannels, this.AsyncEnumerableTokens);
 
-	internal JsonRpcValue WithProgressRegistrations(ProgressManager.RegistrationSet progressRegistrations) => new(this.OwnedBytes.ToArray(), this.Encoding, this.MarshaledHandles, progressRegistrations, this.OutOfBandChannels);
+	internal JsonRpcValue WithProgressRegistrations(ProgressManager.RegistrationSet progressRegistrations) => new(this.OwnedBytes.ToArray(), this.Encoding, this.MarshaledHandles, progressRegistrations, this.OutOfBandChannels, this.AsyncEnumerableTokens);
 
-	internal JsonRpcValue WithOutOfBandChannels(OutOfBandStreamManager.ChannelSet outOfBandChannels) => new(this.OwnedBytes.ToArray(), this.Encoding, this.MarshaledHandles, this.ProgressRegistrations, outOfBandChannels);
+	internal JsonRpcValue WithOutOfBandChannels(OutOfBandStreamManager.ChannelSet outOfBandChannels) => new(this.OwnedBytes.ToArray(), this.Encoding, this.MarshaledHandles, this.ProgressRegistrations, outOfBandChannels, this.AsyncEnumerableTokens);
+
+	/// <summary>Creates a copy of this value with async enumerable generator ownership attached.</summary>
+	/// <param name="asyncEnumerableTokens">The generator tokens encoded into this value.</param>
+	/// <returns>The copied value.</returns>
+	internal JsonRpcValue WithAsyncEnumerableTokens(AsyncEnumerableManager.TokenSet asyncEnumerableTokens) => new(this.OwnedBytes.ToArray(), this.Encoding, this.MarshaledHandles, this.ProgressRegistrations, this.OutOfBandChannels, asyncEnumerableTokens);
 }

@@ -43,6 +43,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		TaskOfT,
 		ValueTask,
 		Task,
+		AsyncEnumerableOfT,
 		Notification,
 	}
 
@@ -353,6 +354,13 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				resultTypeName = namedReturnType.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 				return genericTypeName == KnownApis.ValueTaskOfT ? ProxyMethodKind.ValueTaskOfT : ProxyMethodKind.TaskOfT;
 			}
+
+			if (genericTypeName == KnownApis.IAsyncEnumerableOfT)
+			{
+				// The shape is required for the sequence type itself, not its element type.
+				resultTypeName = returnTypeName;
+				return ProxyMethodKind.AsyncEnumerableOfT;
+			}
 		}
 
 		return returnTypeName switch
@@ -559,6 +567,12 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 					AppendRpcMethodName(builder, method, transformedRpcNameField, methodNameTransformField).Append(", arguments, ");
 					builder.Append(cancellationToken).AppendLine(").AsTask();");
 					break;
+				case ProxyMethodKind.AsyncEnumerableOfT:
+					builder.Append("\t\treturn global::Nerdbank.JsonRpc.JsonRpcEnumerableExtensions.RequestEnumerable(this.jsonRpc, ");
+					AppendRpcMethodName(builder, method, transformedRpcNameField, methodNameTransformField).Append(", arguments, ");
+					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
+					builder.Append(cancellationToken).AppendLine(");");
+					break;
 				case ProxyMethodKind.Notification:
 					builder.Append("\t\tthis.jsonRpc.NotifyAsync(");
 					if (isMarshalable && IsDisposeMethod(method))
@@ -726,6 +740,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		internal const string Dispose = "Dispose";
 		internal const string CancellationToken = "global::System.Threading.CancellationToken";
 		internal const string ValueTaskOfT = "global::System.Threading.Tasks.ValueTask<TResult>";
+		internal const string IAsyncEnumerableOfT = "global::System.Collections.Generic.IAsyncEnumerable<T>";
 		internal const string TaskOfT = "global::System.Threading.Tasks.Task<TResult>";
 		internal const string ValueTask = "global::System.Threading.Tasks.ValueTask";
 		internal const string Task = "global::System.Threading.Tasks.Task";
