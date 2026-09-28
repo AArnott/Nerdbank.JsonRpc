@@ -21,7 +21,7 @@ Call-scoped interfaces are supported only in request arguments, not return value
 
 ### Method naming on marshaled objects
 
-Marshaled objects are registered as RPC targets and attached as proxies implicitly, so their method names come from <xref:Nerdbank.JsonRpc.JsonRpc.DefaultTargetOptions> and <xref:Nerdbank.JsonRpc.JsonRpc.DefaultProxyOptions> rather than from options passed to an individual `AddRpcTarget` or `Attach` call. Set those properties before `Start` to control naming for marshaled objects, including when [interoperating with StreamJsonRpc](method-naming.md#interoperating-with-streamjsonrpc).
+Methods on marshaled objects are invoked on the wire by their verbatim CLR names (for example `$/invokeProxy/0/AddAsync`), regardless of the <xref:Nerdbank.JsonRpc.JsonRpcTargetOptions.MethodNameTransform> or <xref:Nerdbank.JsonRpc.JsonRpcProxyOptions.MethodNameTransform> used elsewhere on the connection. Because these objects are marshaled implicitly, their naming is fixed by the protocol rather than by user configuration, and it matches StreamJsonRpc so the two interoperate without any setup. Use <xref:Nerdbank.JsonRpc.MethodShapeAttribute.Name> to give an individual method a different name.
 
 ## Optional interfaces
 

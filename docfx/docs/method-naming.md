@@ -16,19 +16,9 @@ StreamJsonRpc's default behavior is to send and expect CLR-style method names (f
 
 [!code-csharp[](../../samples/cs/method-naming.cs#identity-proxy-naming)]
 
-### Connection-wide defaults
+### Marshaled objects
 
-Some RPC targets and proxies are created implicitly and therefore cannot be configured at a call site. The most important case is [RPC-marshalable objects](rpc-marshalable-interfaces.md): when a marshalable value crosses the connection, the sender registers it as a target and the receiver attaches a proxy to it, both without your involvement.
-
-Set <xref:Nerdbank.JsonRpc.JsonRpc.DefaultTargetOptions> and <xref:Nerdbank.JsonRpc.JsonRpc.DefaultProxyOptions> to control naming for those implicit registrations, and as the fallback for <xref:Nerdbank.JsonRpc.JsonRpc.AddRpcTarget*> and <xref:Nerdbank.JsonRpc.JsonRpc.Attach*> calls that do not pass their own options. Both must be set before <xref:Nerdbank.JsonRpc.JsonRpc.Start>. Configuring both with `Identity` makes every method name on the connection, including those on marshaled objects, match a default-configured StreamJsonRpc peer:
-
-```cs
-JsonRpc rpc = new(channel)
-{
-    DefaultTargetOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity },
-    DefaultProxyOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity },
-};
-```
+[RPC-marshalable objects](rpc-marshalable-interfaces.md) are registered as targets and attached as proxies implicitly, so they do not use the options above. Their method names are part of the marshaling protocol: CLR method names are used verbatim (for example `$/invokeProxy/0/AddAsync`), exactly as StreamJsonRpc does. They interoperate with StreamJsonRpc with no configuration. <xref:Nerdbank.JsonRpc.MethodShapeAttribute.Name> still overrides the name of an individual method.
 
 ## Custom transforms
 

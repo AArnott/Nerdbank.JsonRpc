@@ -247,7 +247,7 @@ public class GeneratedProxyTests
 
 		// Read the raw wire marker instead of a generated proxy so the test can drive the protocol directly.
 		MarshaledObjectMarker marker = await clientRpc.RequestAsync("getCounter", CreateEmptyArguments(clientRpc), ShapeProvider.Default.MarshaledObjectMarker, CancellationToken.None);
-		string incrementMethod = $"$/invokeProxy/{marker.Handle}/increment";
+		string incrementMethod = $"$/invokeProxy/{marker.Handle}/IncrementAsync";
 		Assert.Equal(1, await clientRpc.RequestAsync(incrementMethod, CreateEmptyArguments(clientRpc), ShapeProvider.Default.Int32, CancellationToken.None));
 
 		await clientRpc.NotifyAsync("$/releaseMarshaledObject", marker, ShapeProvider.Default.MarshaledObjectMarker, CancellationToken.None);

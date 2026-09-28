@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -44,7 +44,7 @@ internal partial interface IWireService
 public class WireCompatibilityTests : TestBase
 {
 	[Test]
-	public async Task ProgressNotificationSendsPositionalArguments()
+	public async Task ProgressNotificationSendsNamedArguments()
 	{
 		using WirePeer peer = WirePeer.ConnectToNerdbankServer(new WireService());
 		await peer.SendAsync("""{"jsonrpc":"2.0","id":1,"method":"report","params":[5]}""");
@@ -52,9 +52,26 @@ public class WireCompatibilityTests : TestBase
 		JsonElement notification = await peer.ReceiveAsync(this.TimeoutToken);
 		Assert.Equal("$/progress", notification.GetProperty("method").GetString());
 		JsonElement parameters = notification.GetProperty("params");
-		Assert.Equal(JsonValueKind.Array, parameters.ValueKind);
-		Assert.Equal(5, parameters[0].GetInt32());
-		Assert.Equal(1, parameters[1].GetInt32());
+		Assert.Equal(JsonValueKind.Object, parameters.ValueKind);
+		Assert.Equal(5, parameters.GetProperty("token").GetInt32());
+		Assert.Equal(1, parameters.GetProperty("value").GetInt32());
+	}
+
+	[Test]
+	public async Task ProgressNotificationAcceptsPositionalArguments()
+	{
+		using WirePeer peer = WirePeer.ConnectToNerdbankClient();
+		RecordingProgress progress = new();
+		Task request = peer.NerdbankClient.Report(progress, this.TimeoutToken);
+
+		// StreamJsonRpc sends this form whenever the originating request used positional arguments.
+		JsonElement call = await peer.ReceiveAsync(this.TimeoutToken);
+		int token = call.GetProperty("params")[0].GetInt32();
+		await peer.SendAsync($$$"""{"jsonrpc":"2.0","method":"$/progress","params":[{{{token}}},42]}""");
+		await peer.SendAsync(WirePeer.Result(call, "null"));
+
+		await request.WithCancellation(this.TimeoutToken);
+		Assert.Equal(new[] { 42 }, await progress.WaitForAsync(1, this.TimeoutToken));
 	}
 
 	[Test]
@@ -101,16 +118,17 @@ public class WireCompatibilityTests : TestBase
 	}
 
 	[Test]
-	public async Task MarshaledObjectMarkerWithoutLifetimeIsTreatedAsExplicit()
+	[Arguments("""{"__jsonrpc_marshaled":1,"handle":7}""")]
+	[Arguments("""{"__jsonrpc_marshaled":1,"handle":7,"lifetime":"explicit"}""")]
+	public async Task MarshaledObjectMarkerWithExplicitLifetimeIsAccepted(string marker)
 	{
 		WireService service = new();
 		using WirePeer peer = WirePeer.ConnectToNerdbankServer(service);
 
-		// A marker without a lifetime property is what StreamJsonRpc sends for explicit-lifetime objects.
-		await peer.SendAsync("""{"jsonrpc":"2.0","id":1,"method":"useCounter","params":[{"__jsonrpc_marshaled":1,"handle":7}]}""");
+		await peer.SendAsync($$"""{"jsonrpc":"2.0","id":1,"method":"useCounter","params":[{{marker}}]}""");
 
 		JsonElement call = await peer.ReceiveAsync(this.TimeoutToken);
-		Assert.Equal("$/invokeProxy/7/add", call.GetProperty("method").GetString());
+		Assert.Equal("$/invokeProxy/7/Add", call.GetProperty("method").GetString());
 		await peer.SendAsync($$"""{"jsonrpc":"2.0","id":{{call.GetProperty("id").GetInt32()}},"result":11}""");
 
 		JsonElement response = await peer.ReceiveAsync(this.TimeoutToken);
@@ -151,15 +169,14 @@ public class WireCompatibilityTests : TestBase
 	}
 
 	[Test]
-	public async Task DefaultTargetOptionsApplyToMarshaledObjects()
+	public async Task MarshaledObjectAcceptsVerbatimMethodNames()
 	{
-		using WirePeer peer = WirePeer.ConnectToNerdbankServer(
-			new WireService(),
-			targetOptions: new() { MethodNameTransform = CommonMethodNameTransforms.Identity });
-		await peer.SendAsync("""{"jsonrpc":"2.0","id":1,"method":"GetCounter","params":[]}""");
+		using WirePeer peer = WirePeer.ConnectToNerdbankServer(new WireService());
+		await peer.SendAsync("""{"jsonrpc":"2.0","id":1,"method":"getCounter","params":[]}""");
 		JsonElement marker = (await peer.ReceiveAsync(this.TimeoutToken)).GetProperty("result");
 		int handle = marker.GetProperty("handle").GetInt32();
 
+		// The connection's own target is camelCased, but the marshaled object's method names are fixed by the protocol.
 		await peer.SendAsync($$"""{"jsonrpc":"2.0","id":2,"method":"$/invokeProxy/{{handle}}/Add","params":[4]}""");
 
 		JsonElement response = await peer.ReceiveAsync(this.TimeoutToken);
@@ -167,13 +184,12 @@ public class WireCompatibilityTests : TestBase
 	}
 
 	[Test]
-	public async Task DefaultProxyOptionsApplyToMarshaledProxies()
+	public async Task MarshaledProxySendsVerbatimMethodNames()
 	{
-		using WirePeer peer = WirePeer.ConnectToNerdbankClient(
-			proxyOptions: new() { MethodNameTransform = CommonMethodNameTransforms.Identity });
+		using WirePeer peer = WirePeer.ConnectToNerdbankClient();
 		Task<IWireCounter> request = peer.NerdbankClient.GetCounter(this.TimeoutToken);
 		JsonElement call = await peer.ReceiveAsync(this.TimeoutToken);
-		Assert.Equal("GetCounter", call.GetProperty("method").GetString());
+		Assert.Equal("getCounter", call.GetProperty("method").GetString());
 		await peer.SendAsync(WirePeer.Result(call, """{"__jsonrpc_marshaled":1,"handle":3}"""));
 
 		IWireCounter counter = await request.WithCancellation(this.TimeoutToken);
@@ -274,19 +290,19 @@ public class WireCompatibilityTests : TestBase
 			this.rpc.Dispose();
 		}
 
-		internal static WirePeer ConnectToNerdbankServer(IWireService target, JsonRpcTargetOptions? targetOptions = null)
+		internal static WirePeer ConnectToNerdbankServer(IWireService target)
 		{
 			(IDuplexPipe peerPipe, IDuplexPipe rpcPipe) = FullDuplexStream.CreatePipePair();
-			JsonRpc rpc = Create(rpcPipe, targetOptions: targetOptions);
+			JsonRpc rpc = Create(rpcPipe);
 			rpc.AddRpcTarget<IWireService>(target);
 			rpc.Start();
 			return new(rpc, peerPipe, null);
 		}
 
-		internal static WirePeer ConnectToNerdbankClient(JsonRpcProxyOptions? proxyOptions = null)
+		internal static WirePeer ConnectToNerdbankClient()
 		{
 			(IDuplexPipe peerPipe, IDuplexPipe rpcPipe) = FullDuplexStream.CreatePipePair();
-			JsonRpc rpc = Create(rpcPipe, proxyOptions: proxyOptions);
+			JsonRpc rpc = Create(rpcPipe);
 			rpc.Start();
 			return new(rpc, peerPipe, rpc.Attach<IWireService>());
 		}
@@ -326,20 +342,7 @@ public class WireCompatibilityTests : TestBase
 			}
 		}
 
-		private static JsonRpc Create(IDuplexPipe pipe, JsonRpcTargetOptions? targetOptions = null, JsonRpcProxyOptions? proxyOptions = null)
-		{
-			JsonRpc rpc = new(new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
-			if (targetOptions is not null)
-			{
-				rpc.DefaultTargetOptions = targetOptions;
-			}
-
-			if (proxyOptions is not null)
-			{
-				rpc.DefaultProxyOptions = proxyOptions;
-			}
-
-			return rpc;
-		}
+		private static JsonRpc Create(IDuplexPipe pipe)
+			=> new(new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
 	}
 }

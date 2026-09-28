@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -304,18 +304,20 @@ internal sealed class ProgressManager(JsonRpc owner)
 			if (token.Encoding == JsonRpcEncoding.Json)
 			{
 				using Sequence<byte> buffer = new();
-				Write(buffer, "[");
+				Write(buffer, "{\"token\":");
 				Write(buffer, token.OwnedBytes.Span);
-				Write(buffer, ",");
+				Write(buffer, ",\"value\":");
 				Write(buffer, value.OwnedBytes.Span);
-				Write(buffer, "]");
+				Write(buffer, "}");
 				return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
 			}
 
 			using Sequence<byte> messagePackBuffer = new();
 			MessagePackWriter writer = new(messagePackBuffer);
-			writer.WriteArrayHeader(2);
+			writer.WriteMapHeader(2);
+			writer.Write("token");
 			writer.Write(token.AsMessagePack());
+			writer.Write("value");
 			writer.Write(value.AsMessagePack());
 			writer.Flush();
 			return JsonRpcValue.FromMessagePack((RawMessagePack)messagePackBuffer.AsReadOnlySequence.ToArray());

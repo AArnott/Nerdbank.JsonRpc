@@ -13,6 +13,9 @@ public sealed record JsonRpcTargetOptions
 	private Func<string, string> methodNameTransform = CommonMethodNameTransforms.Default;
 	private Func<string, string> eventNameTransform = CommonMethodNameTransforms.CamelCase;
 
+	/// <summary>Gets a shared instance with default settings.</summary>
+	public static JsonRpcTargetOptions Default { get; } = new();
+
 	/// <summary>
 	/// Gets a function that maps a CLR method name without an explicit <see cref="MethodShapeAttribute.Name"/> to the JSON-RPC method name that dispatches to it.
 	/// </summary>

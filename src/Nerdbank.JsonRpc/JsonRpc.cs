@@ -81,58 +81,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
-	/// <summary>
-	/// Gets or sets the options applied to proxies created by <see cref="Attach{T}(JsonRpcProxyOptions?)"/> when no options are given,
-	/// and to proxies created for marshaled objects received from the remote party.
-	/// </summary>
-	/// <value>Defaults to a <see cref="JsonRpcProxyOptions"/> with default settings.</value>
-	/// <remarks>
-	/// <para>
-	/// Proxies for marshaled objects are created implicitly, so this is the only way to control the JSON-RPC method names they send.
-	/// Set <see cref="JsonRpcProxyOptions.MethodNameTransform"/> to <see cref="CommonMethodNameTransforms.Identity"/> to interoperate
-	/// with a StreamJsonRpc peer that uses its default (untransformed) method naming.
-	/// </para>
-	/// <para>This property must be set before <see cref="Start"/>.</para>
-	/// </remarks>
-	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
-	/// <exception cref="InvalidOperationException">Thrown when setting this property after <see cref="Start"/> has been called.</exception>
-	public JsonRpcProxyOptions DefaultProxyOptions
-	{
-		get => field ??= new JsonRpcProxyOptions();
-		set
-		{
-			Requires.NotNull(value);
-			this.ThrowIfStarted();
-			field = value;
-		}
-	}
-
-	/// <summary>
-	/// Gets or sets the options applied by <see cref="AddRpcTarget{T}(T, ITypeShape{T}, JsonRpcTargetOptions?)"/> when no options are given,
-	/// and to marshaled objects sent to the remote party.
-	/// </summary>
-	/// <value>Defaults to a <see cref="JsonRpcTargetOptions"/> with default settings.</value>
-	/// <remarks>
-	/// <para>
-	/// Marshaled objects are registered as RPC targets implicitly, so this is the only way to control the JSON-RPC method names they accept.
-	/// Set <see cref="JsonRpcTargetOptions.MethodNameTransform"/> to <see cref="CommonMethodNameTransforms.Identity"/> to interoperate
-	/// with a StreamJsonRpc peer that uses its default (untransformed) method naming.
-	/// </para>
-	/// <para>This property must be set before <see cref="Start"/>.</para>
-	/// </remarks>
-	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
-	/// <exception cref="InvalidOperationException">Thrown when setting this property after <see cref="Start"/> has been called.</exception>
-	public JsonRpcTargetOptions DefaultTargetOptions
-	{
-		get => field ??= new JsonRpcTargetOptions();
-		set
-		{
-			Requires.NotNull(value);
-			this.ThrowIfStarted();
-			field = value;
-		}
-	}
-
 	/// <summary>Gets the logger for request and connection failures. Defaults to <see cref="NullLogger.Instance"/>.</summary>
 	public ILogger Logger
 	{
@@ -255,7 +203,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	{
 		Requires.NotNull(shape);
 
-		var registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, options ?? this.DefaultTargetOptions)!;
+		var registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, options ?? JsonRpcTargetOptions.Default)!;
 		lock (this.targetRegistrationSync)
 		{
 			if (this.disposed)
@@ -303,7 +251,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <param name="interfaceType">The RPC contract interface to proxy.</param>
 	/// <param name="options">Options controlling argument encoding for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <paramref name="interfaceType"/>.</returns>
-	public object Attach(Type interfaceType, JsonRpcProxyOptions? options = null) => AttachCore(this, interfaceType, options ?? this.DefaultProxyOptions);
+	public object Attach(Type interfaceType, JsonRpcProxyOptions? options = null) => AttachCore(this, interfaceType, options ?? JsonRpcProxyOptions.Default);
 
 #if NET
 	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, CancellationToken cancellationToken)
@@ -534,7 +482,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not have a constructor that accepts an IJsonRpcClient and JsonRpcProxyOptions instance.");
 		}
 
-		return constructor.Invoke([client, options ?? new JsonRpcProxyOptions()]);
+		return constructor.Invoke([client, options ?? JsonRpcProxyOptions.Default]);
 	}
 
 	internal RequestId GetNextRequestId()

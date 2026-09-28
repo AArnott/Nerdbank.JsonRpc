@@ -1,11 +1,10 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-#if NET8_0_OR_GREATER
-
 using System.Buffers;
 using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
+using Microsoft.VisualStudio.Threading;
 using Nerdbank.Streams;
 using PolyType;
 using StreamRpc = StreamJsonRpc.JsonRpc;
@@ -91,7 +90,7 @@ public class StreamJsonRpcInteropTests : TestBase
 		RecordingObserver observer = new();
 		await fixture.NerdbankClient.Observe(observer, this.TimeoutToken);
 		Assert.Equal(new[] { 1, 2, 3 }, await observer.Values.WaitForAsync(3, this.TimeoutToken));
-		await observer.Completed.WaitAsync(this.TimeoutToken);
+		await observer.Completed.WithCancellation(this.TimeoutToken);
 	}
 
 	[Test]
@@ -101,7 +100,7 @@ public class StreamJsonRpcInteropTests : TestBase
 		RecordingObserver observer = new();
 		await fixture.StreamJsonRpcClient.Observe(observer, this.TimeoutToken);
 		Assert.Equal(new[] { 1, 2, 3 }, await observer.Values.WaitForAsync(3, this.TimeoutToken));
-		await observer.Completed.WaitAsync(this.TimeoutToken);
+		await observer.Completed.WithCancellation(this.TimeoutToken);
 	}
 
 	[Test]
@@ -419,7 +418,7 @@ public class StreamJsonRpcInteropTests : TestBase
 					signalTask = this.signal.Task;
 				}
 
-				await signalTask.WaitAsync(cancellationToken);
+				await signalTask.WithCancellation(cancellationToken);
 			}
 		}
 	}
@@ -430,6 +429,12 @@ public class StreamJsonRpcInteropTests : TestBase
 	/// </summary>
 	private sealed class InteropFixture : IDisposable
 	{
+		/// <summary>Matches StreamJsonRpc's default (verbatim) naming for the top-level contract. Marshaled objects need no such configuration.</summary>
+		private static readonly JsonRpcProxyOptions NerdbankProxyOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity };
+
+		/// <inheritdoc cref="NerdbankProxyOptions"/>
+		private static readonly JsonRpcTargetOptions NerdbankTargetOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity };
+
 		private readonly JsonRpc nerdbankRpc;
 		private readonly StreamRpc streamJsonRpc;
 		private readonly IDisposable[] multiplexers;
@@ -468,14 +473,14 @@ public class StreamJsonRpcInteropTests : TestBase
 
 			JsonRpc nerdbankRpc = CreateNerdbankRpc(clientPipe);
 			nerdbankRpc.Start();
-			return new(nerdbankRpc, streamJsonRpc, nerdbankRpc.Attach<IInteropContract>());
+			return new(nerdbankRpc, streamJsonRpc, nerdbankRpc.Attach<IInteropContract>(NerdbankProxyOptions));
 		}
 
 		internal static InteropFixture NerdbankServer()
 		{
 			(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 			JsonRpc nerdbankRpc = CreateNerdbankRpc(serverPipe);
-			nerdbankRpc.AddRpcTarget<IInteropContract>(new InteropTarget());
+			nerdbankRpc.AddRpcTarget<IInteropContract>(new InteropTarget(), NerdbankTargetOptions);
 			nerdbankRpc.Start();
 
 			StreamRpc streamJsonRpc = new(CreateHandler(clientPipe));
@@ -495,7 +500,7 @@ public class StreamJsonRpcInteropTests : TestBase
 			JsonRpc nerdbankRpc = CreateNerdbankRpc(nerdbankPipe);
 			nerdbankRpc.MultiplexingStream = nerdbankMx;
 			nerdbankRpc.Start();
-			return new(nerdbankRpc, streamJsonRpc, nerdbankRpc.Attach<IInteropContract>(), nerdbankMx, streamMx);
+			return new(nerdbankRpc, streamJsonRpc, nerdbankRpc.Attach<IInteropContract>(NerdbankProxyOptions), nerdbankMx, streamMx);
 		}
 
 		/// <summary>Creates a fixture whose endpoints are multiplexed, enabling out-of-band streams.</summary>
@@ -504,7 +509,7 @@ public class StreamJsonRpcInteropTests : TestBase
 			(MultiplexingStream nerdbankMx, MultiplexingStream streamMx, IDuplexPipe nerdbankPipe, IDuplexPipe streamPipe) = await CreateMultiplexedPairAsync();
 			JsonRpc nerdbankRpc = CreateNerdbankRpc(nerdbankPipe);
 			nerdbankRpc.MultiplexingStream = nerdbankMx;
-			nerdbankRpc.AddRpcTarget<IInteropContract>(new InteropTarget());
+			nerdbankRpc.AddRpcTarget<IInteropContract>(new InteropTarget(), NerdbankTargetOptions);
 			nerdbankRpc.Start();
 
 			StreamRpc streamJsonRpc = new(CreateHandler(streamPipe, streamMx));
@@ -529,15 +534,9 @@ public class StreamJsonRpcInteropTests : TestBase
 		}
 
 		private static JsonRpc CreateNerdbankRpc(IDuplexPipe pipe) => new(
-			new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance))
-		{
-			DefaultProxyOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity },
-			DefaultTargetOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity },
-		};
+			new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance));
 
 		private static StreamJsonRpc.IJsonRpcMessageHandler CreateHandler(IDuplexPipe pipe, MultiplexingStream? multiplexingStream = null)
 			=> new StreamJsonRpc.NewLineDelimitedMessageHandler(pipe, new StreamJsonRpc.JsonMessageFormatter { MultiplexingStream = multiplexingStream });
 	}
 }
-
-#endif
