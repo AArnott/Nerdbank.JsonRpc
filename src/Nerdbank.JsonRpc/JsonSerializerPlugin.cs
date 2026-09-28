@@ -23,7 +23,7 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	/// <inheritdoc/>
 	public override JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, CancellationToken cancellationToken = default)
 	{
-		using Sequence<byte> buffer = new();
+		using Sequence<byte> buffer = new(ArrayPool<byte>.Shared);
 		this.Serializer.Serialize(buffer, value, shape, cancellationToken);
 		return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
 	}
@@ -91,7 +91,7 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	internal override JsonRpcValue SerializeCancellation(RequestId id, CancellationToken cancellationToken)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
-		using Sequence<byte> buffer = new();
+		using Sequence<byte> buffer = new(ArrayPool<byte>.Shared);
 		using Utf8JsonWriter writer = new(buffer);
 		writer.WriteStartObject();
 		writer.WritePropertyName("id");

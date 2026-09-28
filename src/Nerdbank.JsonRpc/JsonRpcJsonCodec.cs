@@ -88,7 +88,7 @@ internal static class JsonRpcJsonCodec
 	/// <returns>The encoded UTF-8 payload without framing.</returns>
 	internal static byte[] Write(JsonRpcMessage message)
 	{
-		using Sequence<byte> buffer = new();
+		using Sequence<byte> buffer = new(ArrayPool<byte>.Shared);
 		using Utf8JsonWriter writer = new(buffer);
 		if (message is JsonRpcMessageBatch batch)
 		{
