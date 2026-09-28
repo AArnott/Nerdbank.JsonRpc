@@ -61,7 +61,7 @@ The sender serializes an anonymous multiplex-channel ID as the parameter or resu
 
 ## Async enumerables
 
-`IAsyncEnumerable<T>` parameters and return values are marshaled by reference so the receiver pulls items on demand instead of waiting for the whole sequence to be produced and encoded. Use it for long, expensive, or unbounded sequences where the consumer may stop early. Provide a PolyType shape for the element type through the containing RPC contract's shape provider.
+`IAsyncEnumerable<T>` arguments and return values are marshaled by reference so the receiver pulls items on demand instead of waiting for the whole sequence to be produced and encoded. This works anywhere it is declared in the object graph reachable from an argument or return value, not just at the top level (for example, a property of a DTO typed `IAsyncEnumerable<T>` is marshaled the same way). As with the other exotic types on this page, the value must be *declared* as `IAsyncEnumerable<T>` (or as an interface/DTO whose shape resolves to it) at that point in the graph; a value merely typed `object` or boxed at runtime is sent by value like any other data, because dispatch is driven by the declared shape, not a runtime type check. Use it for long, expensive, or unbounded sequences where the consumer may stop early. Provide a PolyType shape for the element type through the containing RPC contract's shape provider.
 
 ```csharp
 [GenerateJsonRpcProxy]
