@@ -75,13 +75,20 @@ public partial class AsyncEnumerableTests
 		using Fixture fixture = new(encoding);
 		IAsyncEnumerable<int> sequence = fixture.Client.GetNumbersWithSettingsAsync(5, minBatchSize: 1, maxReadAhead: 0, prefetch: 3, CancellationToken.None);
 
+		await using IAsyncEnumerator<int> enumerator = sequence.GetAsyncEnumerator(CancellationToken.None);
+
+		// Await the first value so the deferred request's response has definitely arrived before checking
+		// how many values the server produced; the response only arrives once the prefetched values are ready.
+		Assert.True(await enumerator.MoveNextAsync());
+		Assert.Equal(0, enumerator.Current);
+
 		// The server must have produced the prefetched values before it answered the original request.
 		Assert.True(await fixture.Client.CountGeneratedValuesAsync(CancellationToken.None) >= 3);
 
-		List<int> received = [];
-		await foreach (int value in sequence)
+		List<int> received = [0];
+		while (await enumerator.MoveNextAsync())
 		{
-			received.Add(value);
+			received.Add(enumerator.Current);
 		}
 
 		Assert.Equal(new[] { 0, 1, 2, 3, 4 }, received);
