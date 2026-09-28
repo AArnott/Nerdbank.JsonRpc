@@ -1003,9 +1003,12 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 				JsonRpcValue response = await this.manager.RequestNextValuesAsync(activeToken, this.cancellationToken).ConfigureAwait(false);
 				(List<JsonRpcValue> values, bool finished) = ReadResultValue(response);
 				this.generatorFinished = finished;
-				foreach (JsonRpcValue value in values)
+				using (InboundScope inboundScope = this.manager.TrackInboundRequest(hasResponse: true))
 				{
-					this.cached.Enqueue(this.manager.Owner.UserDataSerializer.Deserialize(value, this.elementShape, this.cancellationToken));
+					foreach (JsonRpcValue value in values)
+					{
+						this.cached.Enqueue(this.manager.Owner.UserDataSerializer.Deserialize(value, this.elementShape, this.cancellationToken));
+					}
 				}
 
 				if (this.cached.Count == 0)
