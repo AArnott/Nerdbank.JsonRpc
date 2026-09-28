@@ -22,13 +22,7 @@ StreamJsonRpc's default behavior is to send and expect CLR-style method names (f
 
 StreamJsonRpc instead uses verbatim CLR names for RPC-marshalable interfaces. For interoperability with its default configuration, set both <xref:Nerdbank.JsonRpc.JsonRpc.MarshaledTargetOptions> and <xref:Nerdbank.JsonRpc.JsonRpc.MarshaledProxyOptions> before starting the connection:
 
-```cs
-JsonRpc rpc = new(channel)
-{
-    MarshaledTargetOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity },
-    MarshaledProxyOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity },
-};
-```
+[!code-csharp[](../../samples/cs/method-naming.cs#marshaled-interop-naming)]
 
 These properties affect only RPC-marshalable objects, not ordinary RPC targets or proxies. Set the options for your ordinary contract separately if it also needs to use StreamJsonRpc's naming convention. <xref:Nerdbank.JsonRpc.MethodShapeAttribute.Name> still takes precedence over any transform.
 

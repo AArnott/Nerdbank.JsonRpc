@@ -23,6 +23,24 @@ public partial interface ICalculator
 
 public static class MethodNamingExamples
 {
+    /// <summary>Creates an RPC connection configured to use StreamJsonRpc's naming for marshaled objects.</summary>
+    /// <param name="channel">The channel on which to communicate.</param>
+    /// <returns>A configured RPC connection that has not yet been started.</returns>
+    public static JsonRpc CreateMarshaledInteropRpc(JsonRpcPipeChannel channel)
+    {
+        ArgumentNullException.ThrowIfNull(channel);
+
+        #region marshaled-interop-naming
+        JsonRpc rpc = new(channel)
+        {
+            MarshaledTargetOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity },
+            MarshaledProxyOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity },
+        };
+        #endregion
+
+        return rpc;
+    }
+
     public static void Run(JsonRpc rpc, Calculator calculator, bool useIdentityTargetNaming = false)
     {
         ArgumentNullException.ThrowIfNull(rpc);
