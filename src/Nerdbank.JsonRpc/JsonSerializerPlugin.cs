@@ -85,29 +85,32 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	/// <inheritdoc/>
 	internal override (bool Named, List<(string? Name, JsonRpcValue Value)> Values) ReadArguments(JsonRpcValue arguments)
 	{
-		using JsonDocument document = JsonDocument.Parse(RequireJson(arguments));
-		JsonElement root = document.RootElement;
-		bool named = root.ValueKind switch
+		// Scan rather than parse into a document, and share the arguments' buffer rather than copying each argument out of it.
+		Utf8JsonReader reader = new(RequireJson(arguments).Span);
+		reader.Read();
+		bool named = reader.TokenType switch
 		{
-			JsonValueKind.Object => true,
-			JsonValueKind.Array => false,
+			JsonTokenType.StartObject => true,
+			JsonTokenType.StartArray => false,
 			_ => throw new FormatException("Parameters must be an object or array."),
 		};
 		List<(string?, JsonRpcValue)> values = new();
-		if (named)
+		while (reader.Read() && reader.TokenType is not (JsonTokenType.EndObject or JsonTokenType.EndArray))
 		{
-			foreach (JsonProperty property in root.EnumerateObject())
+			string? name = null;
+			if (named)
 			{
-				values.Add((property.Name, JsonRpcValue.FromJson(System.Text.Encoding.UTF8.GetBytes(property.Value.GetRawText()))));
+				name = reader.GetString();
+				reader.Read();
 			}
+
+			int start = checked((int)reader.TokenStartIndex);
+			reader.Skip();
+			values.Add((name, arguments.Slice(start, checked((int)reader.BytesConsumed) - start)));
 		}
-		else
-		{
-			foreach (JsonElement element in root.EnumerateArray())
-			{
-				values.Add((null, JsonRpcValue.FromJson(System.Text.Encoding.UTF8.GetBytes(element.GetRawText()))));
-			}
-		}
+
+		// Reject trailing content, as parsing the whole value would.
+		reader.Read();
 
 		return (named, values);
 	}
