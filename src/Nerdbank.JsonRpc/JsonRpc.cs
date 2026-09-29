@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 #if NET
@@ -313,7 +313,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	public ValueTask<TResult> RequestAsync<TArg, TResult>(string method, in TArg arguments, ITypeShape<TArg> argShape, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
-		RpcCallState callState = new();
+		using RpcCallState.Lease callStateLease = new(RpcCallState.Rent());
+		RpcCallState callState = callStateLease.State;
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects(callState);
 		using ProgressManager.RegistrationScope progressScope = this.progress.TrackRegistrations(callState);
 		using OutOfBandStreamManager.OutboundScope outOfBandStreamScope = this.outOfBandStreams.TrackOutboundRequest(callState);
@@ -332,7 +333,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
-		RpcCallState callState = new();
+		using RpcCallState.Lease callStateLease = new(RpcCallState.Rent());
+		RpcCallState callState = callStateLease.State;
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects(callState);
 		using ProgressManager.RegistrationScope progressScope = this.progress.TrackRegistrations(callState);
 		using OutOfBandStreamManager.OutboundScope outOfBandStreamScope = this.outOfBandStreams.TrackOutboundRequest(callState);
@@ -668,7 +670,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			{
 				case JsonRpcResult result:
 					{
-						RpcCallState callState = new();
+						using RpcCallState.Lease callStateLease = new(RpcCallState.Rent());
+						RpcCallState callState = callStateLease.State;
 						using OutOfBandStreamManager.InboundScope outOfBandStreamScope = this.outOfBandStreams.TrackInboundRequest(hasResponse: true, callState);
 						using AsyncEnumerableManager.InboundScope asyncEnumerableScope = this.asyncEnumerables.TrackInboundRequest(hasResponse: true, callState);
 						TResult returnValue;
@@ -725,7 +728,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	internal JsonRpcValue SerializeMarshaledResult<T>(T value, ITypeShape<T> shape, RpcCallState? inboundCallState, CancellationToken cancellationToken)
 	{
-		RpcCallState callState = new();
+		using RpcCallState.Lease callStateLease = new(RpcCallState.Rent());
+		RpcCallState callState = callStateLease.State;
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects(callState, allowCallScopedLifetime: false);
 		using OutOfBandStreamManager.OutboundScope outOfBandStreamScope = this.outOfBandStreams.TrackOutboundRequest(callState);
 		using AsyncEnumerableManager.OutboundScope asyncEnumerableScope = this.asyncEnumerables.TrackOutboundMessage(callState, inboundCallState?.InboundCall?.Lifetime);

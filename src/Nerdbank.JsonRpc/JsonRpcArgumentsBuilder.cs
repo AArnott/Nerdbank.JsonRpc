@@ -13,6 +13,7 @@ public ref struct JsonRpcArgumentsBuilder
 {
 	private readonly JsonRpcSerializer serializer;
 	private readonly RpcCallState callState;
+	private readonly int callStateGeneration;
 	private readonly MarshaledObjectManager.HandleScope marshaledObjectsScope;
 	private readonly ProgressManager.RegistrationScope progressScope;
 	private readonly OutOfBandStreamManager.OutboundScope outOfBandStreamScope;
@@ -43,7 +44,8 @@ public ref struct JsonRpcArgumentsBuilder
 		}
 
 		this.serializer = context.Serializer;
-		this.callState = new();
+		this.callState = RpcCallState.Rent();
+		this.callStateGeneration = this.callState.Generation;
 		this.marshaledObjectsScope = context.MarshaledObjects.TrackMarshaledObjects(this.callState);
 		this.progressScope = context.Progress.TrackRegistrations(this.callState);
 		this.outOfBandStreamScope = context.OutOfBandStreams.TrackOutboundRequest(this.callState);
@@ -133,10 +135,16 @@ public ref struct JsonRpcArgumentsBuilder
 			this.failed = true;
 		}
 
-		this.outOfBandStreamScope.Dispose();
-		this.asyncEnumerableScope.Dispose();
-		this.progressScope.Dispose();
-		this.marshaledObjectsScope.Dispose();
+		// The call state is recycled when this builder is disposed, so a repeated disposal must not touch it again.
+		if (this.callState?.Generation == this.callStateGeneration)
+		{
+			this.outOfBandStreamScope.Dispose();
+			this.asyncEnumerableScope.Dispose();
+			this.progressScope.Dispose();
+			this.marshaledObjectsScope.Dispose();
+			this.callState.Return();
+		}
+
 		this.buffer.Dispose();
 	}
 

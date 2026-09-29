@@ -26,6 +26,9 @@ internal sealed class RpcCallState
 	[ThreadStatic]
 	private static RpcCallState? current;
 
+	[ThreadStatic]
+	private static RpcCallState? recycled;
+
 	/// <summary>Identifies the scopes an owner has declared for a call.</summary>
 	[Flags]
 	internal enum Scopes : ushort
@@ -66,6 +69,10 @@ internal sealed class RpcCallState
 
 	/// <summary>Gets the state of the (de)serialization job running on this thread, if any.</summary>
 	internal static RpcCallState? Current => current;
+
+	/// <summary>Gets a number that changes each time this instance is recycled.</summary>
+	/// <remarks>Holders that may outlive their use of a rented instance compare this to detect that it was recycled.</remarks>
+	internal int Generation { get; private set; }
 
 	/// <summary>Gets the scopes declared for this call.</summary>
 	internal Scopes Declared { get; private set; }
@@ -112,6 +119,45 @@ internal sealed class RpcCallState
 		RpcCallState? prior = current;
 		current = callState;
 		return new(prior);
+	}
+
+	/// <summary>Gets an instance for a call whose scopes all end before the calling thread yields.</summary>
+	/// <returns>A recycled or new instance, which should be passed to <see cref="Return"/> when its scopes have ended.</returns>
+	/// <remarks>
+	/// No scope state retains a reference to the <see cref="RpcCallState"/> that created it, so an instance may be
+	/// reused once its owner has disposed every scope it declared.
+	/// Owners whose scopes span an <see langword="await"/> must not use this method.
+	/// </remarks>
+	internal static RpcCallState Rent()
+	{
+		RpcCallState? state = recycled;
+		if (state is null)
+		{
+			return new();
+		}
+
+		recycled = null;
+		return state;
+	}
+
+	/// <summary>Makes this instance available to a later <see cref="Rent"/> on this thread.</summary>
+	/// <remarks>The instance is dropped rather than recycled if any scope it carried was not ended.</remarks>
+	internal void Return()
+	{
+		this.Generation++;
+		if (this.Declared == Scopes.None
+			&& this.MarshaledObjects is null
+			&& this.InboundCall is null
+			&& this.ProgressRegistrations is null
+			&& this.ProgressInbound is null
+			&& this.OutOfBandStreamsOutbound is null
+			&& this.OutOfBandStreamsInbound is null
+			&& this.AsyncEnumerablesOutbound is null
+			&& this.AsyncEnumerablesInbound is null
+			&& this.AsyncEnumerableArgumentLifetime is null)
+		{
+			recycled = this;
+		}
 	}
 
 	/// <summary>Declares scopes for this call.</summary>
@@ -169,6 +215,18 @@ internal sealed class RpcCallState
 	/// <param name="scope">The inbound scope to test.</param>
 	/// <returns><see langword="true"/> if <paramref name="scope"/> is declared and the message is a notification.</returns>
 	internal bool IsDeclaredForNotification(Scopes scope) => this.IsDeclared(scope) && !this.HasResponse;
+
+	/// <summary>Returns a rented <see cref="RpcCallState"/> when disposed.</summary>
+	/// <param name="state">The rented state.</param>
+	/// <remarks>Declare this before the scopes that use <paramref name="state"/> so that it is disposed after them.</remarks>
+	internal readonly struct Lease(RpcCallState state) : IDisposable
+	{
+		/// <summary>Gets the rented state.</summary>
+		internal RpcCallState State => state;
+
+		/// <inheritdoc/>
+		public void Dispose() => state.Return();
+	}
 
 	/// <summary>Restores the state that was current before a (de)serialization job began.</summary>
 	/// <param name="prior">The state to restore.</param>
