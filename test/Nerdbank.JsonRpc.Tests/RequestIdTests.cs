@@ -14,6 +14,18 @@ public class RequestIdTests
 	}
 
 	[Test]
+	public void IntegerFormsCompareByValue()
+	{
+		Assert.Equal(new RequestId(5L), new RequestId(5UL));
+		Assert.Equal(new RequestId(5L).GetHashCode(), new RequestId(5UL).GetHashCode());
+		Assert.NotEqual(new RequestId(-1L), new RequestId(ulong.MaxValue));
+		Assert.NotEqual(new RequestId(0L), default);
+		Assert.NotEqual(new RequestId(0L), new RequestId("0"));
+		Assert.Equal("18446744073709551615", new RequestId(ulong.MaxValue).ToString());
+		Assert.Equal("-1", new RequestId(-1L).ToString());
+	}
+
+	[Test]
 	public void MemoryOfByteConverter()
 	{
 		RequestId id = (ReadOnlyMemory<byte>)"abc"u8.ToArray();

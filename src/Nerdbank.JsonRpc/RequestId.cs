@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.ComponentModel;
+using System.Globalization;
 using System.Text;
 using Nerdbank.MessagePack;
 
@@ -11,10 +12,23 @@ namespace Nerdbank.JsonRpc;
 [MessagePackConverter(typeof(Converter))]
 public partial struct RequestId : IEquatable<RequestId>
 {
-	private ReadOnlyMemory<byte>? utf8Value;
-	private long? numberValue;
-	private ulong? unsignedValue;
-	private string? stringCache;
+	/// <summary>The <see cref="kind"/> of a signed integer ID, whose value is in <see cref="number"/>.</summary>
+	private static readonly object SignedKind = new();
+
+	/// <summary>The <see cref="kind"/> of an unsigned integer ID too large for a signed one, whose bits are in <see cref="number"/>.</summary>
+	private static readonly object UnsignedKind = new();
+
+	/// <summary>
+	/// <see langword="null"/> for a null ID, <see cref="SignedKind"/> or <see cref="UnsignedKind"/> for an integer ID,
+	/// or a <see cref="Utf8Id"/> for a string ID.
+	/// </summary>
+	/// <remarks>
+	/// IDs are embedded in every message and keyed into the pending request tables,
+	/// so they are kept to two fields rather than one per possible representation.
+	/// </remarks>
+	private readonly object? kind;
+
+	private readonly long number;
 
 	/// <summary>
 	/// Initializes a new instance of the <see cref="RequestId"/> struct
@@ -22,9 +36,8 @@ public partial struct RequestId : IEquatable<RequestId>
 	/// </summary>
 	/// <param name="value">The string request ID.</param>
 	public RequestId(string value)
-		: this(Encoding.UTF8.GetBytes(value))
 	{
-		this.stringCache = value;
+		this.kind = new Utf8Id(Encoding.UTF8.GetBytes(value), value);
 	}
 
 	/// <summary>
@@ -33,9 +46,8 @@ public partial struct RequestId : IEquatable<RequestId>
 	/// </summary>
 	/// <param name="value">The UTF-8 encoded bytes of the string request ID.</param>
 	public RequestId(ReadOnlyMemory<byte> value)
-		: this()
 	{
-		this.utf8Value = value;
+		this.kind = new Utf8Id(value, null);
 	}
 
 	/// <summary>
@@ -44,9 +56,9 @@ public partial struct RequestId : IEquatable<RequestId>
 	/// </summary>
 	/// <param name="value">The request ID.</param>
 	public RequestId(long value)
-		: this()
 	{
-		this.numberValue = value;
+		this.kind = SignedKind;
+		this.number = value;
 	}
 
 	/// <summary>
@@ -54,31 +66,24 @@ public partial struct RequestId : IEquatable<RequestId>
 	/// </summary>
 	/// <param name="value">The integer request ID.</param>
 	public RequestId(ulong value)
-		: this()
 	{
-		if (value <= long.MaxValue)
-		{
-			this.numberValue = (long)value;
-		}
-		else
-		{
-			this.unsignedValue = value;
-		}
+		this.kind = value <= long.MaxValue ? SignedKind : UnsignedKind;
+		this.number = unchecked((long)value);
 	}
 
 	/// <summary>Gets a value indicating whether this ID is a string token.</summary>
-	internal bool IsString => this.utf8Value.HasValue;
+	internal readonly bool IsString => this.kind is Utf8Id;
 
 	/// <summary>Gets the signed integer token, when present.</summary>
-	internal long? SignedValue => this.numberValue;
+	internal readonly long? SignedValue => ReferenceEquals(this.kind, SignedKind) ? this.number : null;
 
 	/// <summary>Gets the unsigned integer token, when present.</summary>
-	internal ulong? UnsignedValue => this.unsignedValue;
+	internal readonly ulong? UnsignedValue => ReferenceEquals(this.kind, UnsignedKind) ? unchecked((ulong)this.number) : null;
 
 	/// <summary>Gets a value indicating whether this ID is explicitly null.</summary>
-	internal bool IsNull => !this.utf8Value.HasValue && !this.numberValue.HasValue && !this.unsignedValue.HasValue;
+	internal readonly bool IsNull => this.kind is null;
 
-	private readonly ReadOnlySpan<byte> Utf8Value => (this.utf8Value ?? default).Span;
+	private readonly ReadOnlySpan<byte> Utf8Value => this.kind is Utf8Id utf8 ? utf8.Value.Span : default;
 
 	public static implicit operator RequestId(ReadOnlyMemory<byte> value) => new RequestId(value);
 
@@ -86,26 +91,33 @@ public partial struct RequestId : IEquatable<RequestId>
 
 	public static implicit operator RequestId(long value) => new RequestId(value);
 
-	public override string ToString() => this.stringCache ??= this.numberValue?.ToString() ?? this.unsignedValue?.ToString() ?? (this.utf8Value.HasValue ? Encoding.UTF8.GetString(this.utf8Value.Value.Span) : "null");
+	public override readonly string ToString() => this.kind switch
+	{
+		Utf8Id utf8 => utf8.Text,
+		null => "null",
+		_ when ReferenceEquals(this.kind, SignedKind) => this.number.ToString(CultureInfo.InvariantCulture),
+		_ => unchecked((ulong)this.number).ToString(CultureInfo.InvariantCulture),
+	};
 
 	public readonly override int GetHashCode()
 	{
-		if (this.numberValue is long n)
+		if (ReferenceEquals(this.kind, SignedKind))
 		{
 			HashCode hash = default;
-			hash.Add(n);
+			hash.Add(this.number);
 			hash.Add(false);
 			return hash.ToHashCode();
 		}
-		else if (this.unsignedValue is ulong unsigned)
+		else if (ReferenceEquals(this.kind, UnsignedKind))
 		{
 			HashCode hash = default;
-			hash.Add(unsigned);
+			hash.Add(unchecked((ulong)this.number));
 			hash.Add(false);
 			return hash.ToHashCode();
 		}
-		else if (this.utf8Value is { Span: { } utf8Value })
+		else if (this.kind is Utf8Id)
 		{
+			ReadOnlySpan<byte> utf8Value = this.Utf8Value;
 			HashCode hash = default;
 			hash.Add(true);
 #if NET
@@ -127,10 +139,9 @@ public partial struct RequestId : IEquatable<RequestId>
 	public readonly override bool Equals(object? obj) => obj is RequestId other && this.Equals(other);
 
 	public readonly bool Equals(RequestId other)
-		=> this.numberValue == other.numberValue
-		&& this.unsignedValue == other.unsignedValue
-		&& this.utf8Value.HasValue == other.utf8Value.HasValue
-		&& this.Utf8Value.SequenceEqual(other.Utf8Value);
+		=> this.kind is Utf8Id
+			? other.kind is Utf8Id && this.Utf8Value.SequenceEqual(other.Utf8Value)
+			: ReferenceEquals(this.kind, other.kind) && this.number == other.number;
 
 	[EditorBrowsable(EditorBrowsableState.Never)]
 #pragma warning disable NBMsgPack031 // Exactly one of the scalar ID encodings is written.
@@ -149,17 +160,17 @@ public partial struct RequestId : IEquatable<RequestId>
 
 		public override void Write(ref MessagePackWriter writer, in RequestId value, SerializationContext context)
 		{
-			if (value.numberValue is long n)
+			if (value.SignedValue is long n)
 			{
 				writer.Write(n);
 			}
-			else if (value.unsignedValue is ulong unsigned)
+			else if (value.UnsignedValue is ulong unsigned)
 			{
 				writer.Write(unsigned);
 			}
-			else if (value.utf8Value is { Span: { } span })
+			else if (value.IsString)
 			{
-				writer.WriteString(span);
+				writer.WriteString(value.Utf8Value);
 			}
 			else
 			{
@@ -184,4 +195,14 @@ public partial struct RequestId : IEquatable<RequestId>
 	}
 
 #pragma warning restore NBMsgPack031
+
+	/// <summary>The value of a string ID.</summary>
+	/// <param name="value">The UTF-8 encoded string.</param>
+	/// <param name="text">The string, if already known.</param>
+	private sealed class Utf8Id(ReadOnlyMemory<byte> value, string? text)
+	{
+		internal ReadOnlyMemory<byte> Value => value;
+
+		internal string Text => text ??= Encoding.UTF8.GetString(value.Span);
+	}
 }
