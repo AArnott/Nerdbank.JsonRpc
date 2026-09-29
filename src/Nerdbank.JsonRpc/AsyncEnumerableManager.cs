@@ -551,7 +551,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	/// <returns>The token identifying the generator.</returns>
 	private long ReadTokenArgument(DispatchRequest dispatch)
 	{
-		(bool named, List<(string? Name, JsonRpcValue Value)> values) = dispatch.UserDataSerializer.ReadArguments(dispatch.Request);
+		(bool named, ArgumentList values) = dispatch.UserDataSerializer.ReadArguments(dispatch.Request);
 		if (named)
 		{
 			foreach ((string? name, JsonRpcValue value) in values)

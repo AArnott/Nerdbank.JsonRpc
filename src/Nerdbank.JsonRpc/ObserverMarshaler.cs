@@ -33,7 +33,7 @@ internal static class ObserverMarshaler
 		try
 		{
 			IObserver<T> observer = (IObserver<T>)dispatch.TargetInstance!;
-			(bool named, List<(string? Name, JsonRpcValue Value)> values) = dispatch.UserDataSerializer.ReadArguments(dispatch.Request);
+			(bool named, ArgumentList values) = dispatch.UserDataSerializer.ReadArguments(dispatch.Request);
 			if (named || values.Count != (method == "onCompleted" ? 0 : 1))
 			{
 				throw new FormatException($"Invalid arguments for observer method '{method}'.");

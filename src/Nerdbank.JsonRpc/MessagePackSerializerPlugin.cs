@@ -72,7 +72,7 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	}
 
 	/// <inheritdoc/>
-	internal override (bool Named, List<(string? Name, JsonRpcValue Value)> Values) ReadArguments(JsonRpcValue arguments)
+	internal override (bool Named, ArgumentList Values) ReadArguments(JsonRpcValue arguments)
 	{
 		MessagePackReader reader = new(arguments.AsOwnedMessagePack());
 		SerializationContext context = new();
@@ -83,11 +83,11 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 			_ => throw new FormatException("Parameters must be an object or array."),
 		};
 		int count = named ? reader.ReadMapHeader() : reader.ReadArrayHeader();
-		List<(string?, JsonRpcValue)> values = new(count);
+		(string? Name, JsonRpcValue Value)[] values = ArgumentList.Rent(count);
 		for (int i = 0; i < count; i++)
 		{
 			string? name = named ? reader.ReadString() : null;
-			values.Add((name, JsonRpcValue.FromOwnedMessagePack(arguments, reader.ReadRaw(context))));
+			values[i] = (name, JsonRpcValue.FromOwnedMessagePack(arguments, reader.ReadRaw(context)));
 		}
 
 		if (!reader.End)
@@ -95,7 +95,7 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 			throw new FormatException("Trailing bytes in parameters.");
 		}
 
-		return (named, values);
+		return (named, new(values, count));
 	}
 
 	internal override JsonRpcValue SerializeCancellation(RequestId id, CancellationToken cancellationToken)

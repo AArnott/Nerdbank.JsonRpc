@@ -12,13 +12,14 @@ public partial class JsonRpcRequest : JsonRpcMessage
 	[PropertyShape(Ignore = true)]
 	public JsonRpcValue Arguments { get; init; }
 
-	/// <summary>Gets the individual arguments within <see cref="Arguments"/>, if the transport split them while reading the message.</summary>
+	/// <summary>Gets or sets the individual arguments within <see cref="Arguments"/>, if the transport split them while reading the message.</summary>
 	/// <remarks>
 	/// Locating each argument requires walking every token of the params, which costs a sizable fraction of deserializing them.
 	/// A transport that must walk the params anyway to find where they end can record the arguments on that same pass.
+	/// Whoever dispatches the request may return their pooled array once the arguments are consumed, clearing this property.
 	/// </remarks>
 	[PropertyShape(Ignore = true)]
-	internal (bool Named, List<(string? Name, JsonRpcValue Value)> Values)? SplitArguments { get; init; }
+	internal (bool Named, ArgumentList Values)? SplitArguments { get; set; }
 
 	/// <summary>Gets or sets the <c>JoinableTask</c> token that correlates this request with its caller's context, if any.</summary>
 	[PropertyShape(Ignore = true)]

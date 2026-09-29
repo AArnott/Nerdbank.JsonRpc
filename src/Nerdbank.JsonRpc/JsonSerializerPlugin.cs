@@ -84,7 +84,7 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	}
 
 	/// <inheritdoc/>
-	internal override (bool Named, List<(string? Name, JsonRpcValue Value)> Values) ReadArguments(JsonRpcValue arguments)
+	internal override (bool Named, ArgumentList Values) ReadArguments(JsonRpcValue arguments)
 	{
 		// Scan rather than parse into a document, and share the arguments' buffer rather than copying each argument out of it.
 		Utf8JsonReader reader = new(RequireJson(arguments).Span);
@@ -95,7 +95,8 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 			JsonTokenType.StartArray => false,
 			_ => throw new FormatException("Parameters must be an object or array."),
 		};
-		List<(string?, JsonRpcValue)> values = new();
+		(string? Name, JsonRpcValue Value)[] values = ArgumentList.Rent(4);
+		int count = 0;
 		while (reader.Read() && reader.TokenType is not (JsonTokenType.EndObject or JsonTokenType.EndArray))
 		{
 			string? name = null;
@@ -107,13 +108,18 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 
 			int start = checked((int)reader.TokenStartIndex);
 			reader.Skip();
-			values.Add((name, arguments.Slice(start, checked((int)reader.BytesConsumed) - start)));
+			if (count == values.Length)
+			{
+				ArgumentList.Grow(ref values, count);
+			}
+
+			values[count++] = (name, arguments.Slice(start, checked((int)reader.BytesConsumed) - start));
 		}
 
 		// Reject trailing content, as parsing the whole value would.
 		reader.Read();
 
-		return (named, values);
+		return (named, new(values, count));
 	}
 
 	internal override JsonRpcValue SerializeCancellation(RequestId id, CancellationToken cancellationToken)

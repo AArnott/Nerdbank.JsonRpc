@@ -143,6 +143,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 		async ValueTask<DispatchResponse> InvokeAsync(DispatchRequest dispatch)
 		{
 			TArgumentState argState;
+			ArgumentList values = default;
 			try
 			{
 				try
@@ -151,7 +152,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 
 					if (dispatch.Request.Arguments.HasValue)
 					{
-						(bool named, List<(string? Name, JsonRpcValue Value)> values) = dispatch.UserDataSerializer.ReadArguments(dispatch.Request);
+						(bool named, values) = dispatch.UserDataSerializer.ReadArguments(dispatch.Request);
 						if (!named && values.Count > parameterSetters.Length)
 						{
 							return new DispatchResponse
@@ -220,6 +221,8 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			{
 				// Every argument has been materialized (or rejected), so the pooled request buffer is no longer needed.
 				dispatch.Request.Arguments.Release();
+				dispatch.Request.SplitArguments = null;
+				values.Return();
 			}
 
 			var target = (TDeclaringType?)dispatch.TargetInstance;

@@ -64,7 +64,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 		RequestId id = default;
 		string? methodName = null;
 		JsonRpcValue arguments = default, resultValue = default;
-		(bool Named, List<(string? Name, JsonRpcValue Value)> Values)? splitArguments = null;
+		(bool Named, ArgumentList Values)? splitArguments = null;
 		JsonRpcErrorDetails? errorDetails = null;
 		TopLevelProperties? extensions = null;
 		for (int i = 0; i < count; i++)
@@ -157,7 +157,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 	/// <param name="context">The serialization context.</param>
 	/// <param name="split">Receives the individual arguments, which share the returned value's buffer.</param>
 	/// <returns>The params, copied into a pooled buffer.</returns>
-	private static JsonRpcValue ReadParameters(ref MessagePackReader reader, SerializationContext context, out (bool Named, List<(string? Name, JsonRpcValue Value)> Values)? split)
+	private static JsonRpcValue ReadParameters(ref MessagePackReader reader, SerializationContext context, out (bool Named, ArgumentList Values)? split)
 	{
 		ReadOnlySequence<byte> sequence = reader.Sequence;
 		SequencePosition start = reader.Position;
@@ -172,7 +172,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 		long startConsumed = reader.Consumed;
 		bool named = type == MessagePackType.Map;
 		int count = named ? reader.ReadMapHeader() : reader.ReadArrayHeader();
-		List<(string? Name, JsonRpcValue Value)> values = new(count);
+		(string? Name, JsonRpcValue Value)[] values = ArgumentList.Rent(count);
 		Span<(int Offset, int Length)> ranges = count <= 16 ? stackalloc (int, int)[count] : new (int, int)[count];
 		bool valid = true;
 		for (int i = 0; i < count; i++)
@@ -198,7 +198,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 			int offset = checked((int)(reader.Consumed - startConsumed));
 			reader.Skip(context);
 			ranges[i] = (offset, checked((int)(reader.Consumed - startConsumed)) - offset);
-			values.Add((name, default));
+			values[i] = (name, default);
 		}
 
 		JsonRpcValue parameters = JsonRpcValue.FromPooledBytes(sequence.Slice(start, reader.Position), JsonRpcEncoding.MessagePack);
@@ -209,7 +209,11 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 				values[i] = (values[i].Name, parameters.Slice(ranges[i].Offset, ranges[i].Length));
 			}
 
-			split = (named, values);
+			split = (named, new(values, count));
+		}
+		else
+		{
+			new ArgumentList(values, count).Return();
 		}
 
 		return parameters;
