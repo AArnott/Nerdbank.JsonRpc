@@ -8,6 +8,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft;
@@ -755,11 +756,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private static JoinableTask<DispatchResponse> RunUnderJoinableTaskAsync(JoinableTaskFactory jtf, MethodInvoker invoker, DispatchRequest dispatchRequest, string parentToken)
 		=> jtf.RunAsync(() => invoker(dispatchRequest).AsTask(), parentToken, JoinableTaskCreationOptions.None);
 
-	private Task<JsonRpcResponse?> DispatchAsync(JsonRpcRequest request)
+	private ValueTask<JsonRpcResponse?> DispatchAsync(JsonRpcRequest request)
 	{
 		if (request.Id is null && (this.progress.TryHandleNotification(request) || this.marshaledObjects.TryHandleNotification(request)))
 		{
-			return Task.FromResult<JsonRpcResponse?>(null);
+			return new ValueTask<JsonRpcResponse?>((JsonRpcResponse?)null);
 		}
 
 		(object? Target, MethodInvoker Invoker) handler;
@@ -774,7 +775,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		else if (!this.handlers.TryGetValue(request.Method, out handler))
 		{
 			bool missingMarshaledObject = this.marshaledObjects.IsMissingHandleInvocation(request, out long missingHandle);
-			return Task.FromResult<JsonRpcResponse?>(request.Id is RequestId missingId
+			return new ValueTask<JsonRpcResponse?>(request.Id is RequestId missingId
 				? new JsonRpcError
 				{
 					Id = missingId,
@@ -824,11 +825,15 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		catch (Exception ex)
 		{
 			this.Fault(ex);
-			return Task.FromException<JsonRpcResponse?>(ex);
+			return new ValueTask<JsonRpcResponse?>(Task.FromException<JsonRpcResponse?>(ex));
 		}
 	}
 
-	private async Task<JsonRpcResponse?> DispatchCoreAsync(JsonRpcRequest request, MethodInvoker invoker, DispatchRequest dispatchRequest)
+	// Pooled because this is only ever awaited once, by ProcessRequestAsync or a batch.
+#if NET
+	[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+	private async ValueTask<JsonRpcResponse?> DispatchCoreAsync(JsonRpcRequest request, MethodInvoker invoker, DispatchRequest dispatchRequest)
 	{
 		try
 		{
@@ -948,7 +953,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			switch (message)
 			{
 				case JsonRpcRequest request:
-					requestTasks.Add(this.DispatchAsync(request));
+					requestTasks.Add(this.DispatchAsync(request).AsTask());
 					break;
 				case JsonRpcResponse response:
 					this.ProcessResponse(response);
@@ -1000,6 +1005,10 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+	// Pooled because this is only ever awaited once, by the typed response helpers.
+#if NET
+	[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
 	private async ValueTask<JsonRpcResponse> RequestAsync(JsonRpcRequest request, CancellationToken cancellationToken)
 	{
 		TaskCompletionSource<JsonRpcResponse>? responseTcs = null;

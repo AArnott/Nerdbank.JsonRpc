@@ -1,6 +1,7 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.Runtime.CompilerServices;
 using Microsoft.VisualStudio.Threading;
 using Nerdbank.MessagePack;
 using PolyType.Abstractions;
@@ -133,150 +134,155 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			},
 			ByteSpanEqualityComparer.Ordinal);
 
-		return new MethodInvoker(
-			async dispatch =>
+		return new MethodInvoker(InvokeAsync);
+
+		// Pooled because the dispatcher awaits each invocation exactly once.
+#if NET
+		[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+		async ValueTask<DispatchResponse> InvokeAsync(DispatchRequest dispatch)
+		{
+			TArgumentState argState;
+			try
 			{
-				TArgumentState argState;
 				try
 				{
-					try
+					argState = argStateCtor();
+
+					if (dispatch.Request.Arguments.HasValue)
 					{
-						argState = argStateCtor();
-
-						if (dispatch.Request.Arguments.HasValue)
-						{
-							(bool named, List<(string? Name, JsonRpcValue Value)> values) = dispatch.UserDataSerializer.ReadArguments(dispatch.Request);
-							if (!named && values.Count > parameterSetters.Length)
-							{
-								return new DispatchResponse
-								{
-									Response = dispatch.Request.Id is RequestId id
-									? new JsonRpcError { Id = id, Error = new() { Code = JsonRpcErrorCode.InvalidParams, Message = $"Expected at most {parameterSetters.Length} arguments but received {values.Count}." } }
-									: null,
-								};
-							}
-
-							for (int i = 0; i < values.Count; i++)
-							{
-								int index = i;
-								if (named)
-								{
-									StringEncoding.GetEncodedStringBytes(values[i].Name!, out ReadOnlyMemory<byte> utf8Name, out _);
-									if (!parameterNameToIndex.TryGetValue(utf8Name.Span, out IParameterShape? parameterShape))
-									{
-										return new DispatchResponse
-										{
-											Response = dispatch.Request.Id is RequestId id
-											? new JsonRpcError { Id = id, Error = new() { Code = JsonRpcErrorCode.InvalidParams, Message = $"Unknown parameter name: '{values[i].Name}'." } }
-											: null,
-										};
-									}
-
-									index = parameterShape.Position;
-								}
-
-								parameterSetters.Span[index](dispatch, values[i].Value, ref argState);
-							}
-						}
-
-						setCancellationToken?.Invoke(dispatch.CancellationToken, ref argState);
-
-						if (!argState.AreRequiredArgumentsSet)
+						(bool named, List<(string? Name, JsonRpcValue Value)> values) = dispatch.UserDataSerializer.ReadArguments(dispatch.Request);
+						if (!named && values.Count > parameterSetters.Length)
 						{
 							return new DispatchResponse
 							{
 								Response = dispatch.Request.Id is RequestId id
-									? new JsonRpcError
-									{
-										Id = id,
-										Error = new JsonRpcErrorDetails
-										{
-											Code = JsonRpcErrorCode.InvalidParams,
-											Message = "Not all required parameters were provided.",
-										},
-									}
-									: null,
+								? new JsonRpcError { Id = id, Error = new() { Code = JsonRpcErrorCode.InvalidParams, Message = $"Expected at most {parameterSetters.Length} arguments but received {values.Count}." } }
+								: null,
 							};
 						}
+
+						for (int i = 0; i < values.Count; i++)
+						{
+							int index = i;
+							if (named)
+							{
+								StringEncoding.GetEncodedStringBytes(values[i].Name!, out ReadOnlyMemory<byte> utf8Name, out _);
+								if (!parameterNameToIndex.TryGetValue(utf8Name.Span, out IParameterShape? parameterShape))
+								{
+									return new DispatchResponse
+									{
+										Response = dispatch.Request.Id is RequestId id
+										? new JsonRpcError { Id = id, Error = new() { Code = JsonRpcErrorCode.InvalidParams, Message = $"Unknown parameter name: '{values[i].Name}'." } }
+										: null,
+									};
+								}
+
+								index = parameterShape.Position;
+							}
+
+							parameterSetters.Span[index](dispatch, values[i].Value, ref argState);
+						}
 					}
-					catch (Exception ex) when (ex is not OperationCanceledException)
+
+					setCancellationToken?.Invoke(dispatch.CancellationToken, ref argState);
+
+					if (!argState.AreRequiredArgumentsSet)
 					{
-						dispatch.JsonRpc.LogApplicationError(ex);
 						return new DispatchResponse
 						{
 							Response = dispatch.Request.Id is RequestId id
-								? new JsonRpcError { Id = id, Error = new JsonRpcErrorDetails { Code = JsonRpcErrorCode.InvalidParams, Message = "Could not deserialize request parameters." } }
+								? new JsonRpcError
+								{
+									Id = id,
+									Error = new JsonRpcErrorDetails
+									{
+										Code = JsonRpcErrorCode.InvalidParams,
+										Message = "Not all required parameters were provided.",
+									},
+								}
 								: null,
 						};
 					}
 				}
-				finally
+				catch (Exception ex) when (ex is not OperationCanceledException)
 				{
-					// Every argument has been materialized (or rejected), so the pooled request buffer is no longer needed.
-					dispatch.Request.Arguments.Release();
+					dispatch.JsonRpc.LogApplicationError(ex);
+					return new DispatchResponse
+					{
+						Response = dispatch.Request.Id is RequestId id
+							? new JsonRpcError { Id = id, Error = new JsonRpcErrorDetails { Code = JsonRpcErrorCode.InvalidParams, Message = "Could not deserialize request parameters." } }
+							: null,
+					};
+				}
+			}
+			finally
+			{
+				// Every argument has been materialized (or rejected), so the pooled request buffer is no longer needed.
+				dispatch.Request.Arguments.Release();
+			}
+
+			var target = (TDeclaringType?)dispatch.TargetInstance;
+			JsonRpcResponse? response;
+			try
+			{
+				TResult result = await invoker(ref target, ref argState).ConfigureAwait(false);
+
+				if (result is IRpcEnumerable prefetchable && dispatch.Request.Id is not null)
+				{
+					// Prefetching only matters if the result will actually be serialized and sent back; a
+					// notification has no response to carry it, and an unbounded sequence could block forever.
+					await prefetchable.PrefetchAsync(dispatch.CancellationToken).ConfigureAwait(false);
 				}
 
-				var target = (TDeclaringType?)dispatch.TargetInstance;
-				JsonRpcResponse? response;
-				try
+				if (dispatch.Request.Id is RequestId id)
 				{
-					TResult result = await invoker(ref target, ref argState).ConfigureAwait(false);
-
-					if (result is IRpcEnumerable prefetchable && dispatch.Request.Id is not null)
+					response = new JsonRpcResult
 					{
-						// Prefetching only matters if the result will actually be serialized and sent back; a
-						// notification has no response to carry it, and an unbounded sequence could block forever.
-						await prefetchable.PrefetchAsync(dispatch.CancellationToken).ConfigureAwait(false);
-					}
-
-					if (dispatch.Request.Id is RequestId id)
-					{
-						response = new JsonRpcResult
-						{
-							Id = id,
-							Result = dispatch.JsonRpc.SerializeMarshaledResult(result, methodShape.ReturnType, dispatch.CallState, dispatch.JsonRpc.DisposalToken),
-						};
-					}
-					else
-					{
-						response = null;
-					}
+						Id = id,
+						Result = dispatch.JsonRpc.SerializeMarshaledResult(result, methodShape.ReturnType, dispatch.CallState, dispatch.JsonRpc.DisposalToken),
+					};
 				}
-				catch (OperationCanceledException ex) when (dispatch.CancellationToken.IsCancellationRequested && dispatch.Request.Id is RequestId id)
+				else
+				{
+					response = null;
+				}
+			}
+			catch (OperationCanceledException ex) when (dispatch.CancellationToken.IsCancellationRequested && dispatch.Request.Id is RequestId id)
+			{
+				response = new JsonRpcError
+				{
+					Id = id,
+					Error = new JsonRpcErrorDetails
+					{
+						Message = ex.Message,
+						Code = JsonRpcErrorCode.RequestCancelled,
+					},
+				};
+			}
+			catch (Exception ex)
+			{
+				dispatch.JsonRpc.LogApplicationError(ex);
+				if (dispatch.Request.Id is RequestId id)
 				{
 					response = new JsonRpcError
 					{
 						Id = id,
 						Error = new JsonRpcErrorDetails
 						{
-							Message = ex.Message,
-							Code = JsonRpcErrorCode.RequestCancelled,
+							Message = "The request could not be completed.",
+							Code = JsonRpcErrorCode.InternalError,
 						},
 					};
 				}
-				catch (Exception ex)
+				else
 				{
-					dispatch.JsonRpc.LogApplicationError(ex);
-					if (dispatch.Request.Id is RequestId id)
-					{
-						response = new JsonRpcError
-						{
-							Id = id,
-							Error = new JsonRpcErrorDetails
-							{
-								Message = "The request could not be completed.",
-								Code = JsonRpcErrorCode.InternalError,
-							},
-						};
-					}
-					else
-					{
-						response = null;
-					}
+					response = null;
 				}
+			}
 
-				return new DispatchResponse { Response = response };
-			});
+			return new DispatchResponse { Response = response };
+		}
 	}
 
 	public override object? VisitParameter<TArgumentState, TParameterType>(IParameterShape<TArgumentState, TParameterType> parameterShape, object? state = null)
