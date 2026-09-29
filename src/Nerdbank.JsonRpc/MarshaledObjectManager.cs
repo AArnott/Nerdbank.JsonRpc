@@ -379,7 +379,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 		writer.WriteEndObject();
 		writer.Flush();
-		return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.Json);
 	}
 
 	private static JsonRpcValue WriteMessagePack(long handle, int direction, bool callScopedLifetime = false, IReadOnlyList<int>? optionalInterfaceIds = null)
@@ -408,7 +408,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		}
 
 		writer.Flush();
-		return JsonRpcValue.FromMessagePack((RawMessagePack)buffer.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
 	}
 
 	private static (long Handle, int Direction, bool CallScopedLifetime, int[] OptionalInterfaceIds) ReadMarker(JsonRpcValue value)

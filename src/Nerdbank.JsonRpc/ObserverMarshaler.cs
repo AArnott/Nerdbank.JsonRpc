@@ -140,7 +140,7 @@ internal static class ObserverMarshaler
 				writer.WriteEndObject();
 				writer.WriteEndArray();
 				writer.Flush();
-				arguments = JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
+				arguments = JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.Json);
 			}
 			else
 			{
@@ -151,7 +151,7 @@ internal static class ObserverMarshaler
 				writer.Write("Message");
 				writer.Write(error.Message);
 				writer.Flush();
-				arguments = JsonRpcValue.FromMessagePack((RawMessagePack)buffer.AsReadOnlySequence.ToArray());
+				arguments = JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
 			}
 
 			this.Terminate("onError", arguments);

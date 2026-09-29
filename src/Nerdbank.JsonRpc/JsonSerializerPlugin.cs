@@ -28,7 +28,7 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 		Nerdbank.Json.JsonWriter writer = new(scratch.Sequence) { WriteIndented = this.Serializer.WriteIndented };
 		this.Serializer.Serialize(ref writer, value, shape, cancellationToken);
 		writer.Flush();
-		return JsonRpcValue.FromJson(scratch.Sequence.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromOwnedBytes(scratch.Sequence.AsReadOnlySequence.ToArray(), JsonRpcEncoding.Json);
 	}
 
 	/// <inheritdoc/>
@@ -126,7 +126,7 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 		JsonRpcJsonCodec.WriteId(writer, id);
 		writer.WriteEndObject();
 		writer.Flush();
-		return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.Json);
 	}
 
 	private static ReadOnlyMemory<byte> RequireJson(JsonRpcValue value) => value.HasValue && value.Encoding == JsonRpcEncoding.Json ? value.OwnedBytes : throw new InvalidOperationException("Expected a JSON value.");

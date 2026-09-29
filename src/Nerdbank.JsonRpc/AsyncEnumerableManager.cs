@@ -437,7 +437,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			}
 
 			Write(buffer, "}");
-			return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
+			return JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.Json);
 		}
 
 		using Sequence<byte> messagePackBuffer = new();
@@ -460,7 +460,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		}
 
 		writer.Flush();
-		return JsonRpcValue.FromMessagePack((RawMessagePack)messagePackBuffer.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromOwnedBytes(messagePackBuffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
 	}
 
 	/// <summary>Encodes a generator's response carrying a batch of values.</summary>
@@ -488,7 +488,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			}
 
 			Write(buffer, finished ? "],\"" + FinishedPropertyName + "\":true}" : "],\"" + FinishedPropertyName + "\":false}");
-			return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
+			return JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.Json);
 		}
 
 		using Sequence<byte> messagePackBuffer = new();
@@ -504,7 +504,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		writer.Write(FinishedPropertyName);
 		writer.Write(finished);
 		writer.Flush();
-		return JsonRpcValue.FromMessagePack((RawMessagePack)messagePackBuffer.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromOwnedBytes(messagePackBuffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
 	}
 
 	/// <summary>Encodes the single token argument shared by the enumerator protocol methods.</summary>
@@ -518,7 +518,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			Write(buffer, "{\"" + TokenPropertyName + "\":");
 			Write(buffer, token.ToString(CultureInfo.InvariantCulture));
 			Write(buffer, "}");
-			return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
+			return JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.Json);
 		}
 
 		using Sequence<byte> messagePackBuffer = new();
@@ -527,7 +527,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		writer.Write(TokenPropertyName);
 		writer.Write(token);
 		writer.Flush();
-		return JsonRpcValue.FromMessagePack((RawMessagePack)messagePackBuffer.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromOwnedBytes(messagePackBuffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
 	}
 
 	/// <summary>Encodes an empty value for responses that carry no data.</summary>
@@ -536,14 +536,14 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	{
 		if (owner.UserDataSerializer.Encoding == JsonRpcEncoding.Json)
 		{
-			return JsonRpcValue.FromJson("null"u8.ToArray());
+			return JsonRpcValue.FromOwnedBytes("null"u8.ToArray(), JsonRpcEncoding.Json);
 		}
 
 		using Sequence<byte> buffer = new();
 		MessagePackWriter writer = new(buffer);
 		writer.WriteNil();
 		writer.Flush();
-		return JsonRpcValue.FromMessagePack((RawMessagePack)buffer.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
 	}
 
 	/// <summary>Extracts the <c>token</c> argument from an inbound enumerator protocol request.</summary>

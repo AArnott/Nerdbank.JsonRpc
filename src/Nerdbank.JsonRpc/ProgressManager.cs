@@ -187,7 +187,7 @@ internal sealed class ProgressManager(JsonRpc owner)
 		MessagePackWriter writer = new(buffer);
 		writer.Write(token);
 		writer.Flush();
-		return JsonRpcValue.FromMessagePack((RawMessagePack)buffer.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
 	}
 
 	/// <summary>Declares that progress reporters may be received in one inbound message.</summary>
@@ -330,7 +330,7 @@ internal sealed class ProgressManager(JsonRpc owner)
 				Write(buffer, ",\"value\":");
 				Write(buffer, value.OwnedBytes.Span);
 				Write(buffer, "}");
-				return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
+				return JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.Json);
 			}
 
 			using Sequence<byte> messagePackBuffer = new();
@@ -341,7 +341,7 @@ internal sealed class ProgressManager(JsonRpc owner)
 			writer.Write("value");
 			writer.Write(value.AsOwnedMessagePack());
 			writer.Flush();
-			return JsonRpcValue.FromMessagePack((RawMessagePack)messagePackBuffer.AsReadOnlySequence.ToArray());
+			return JsonRpcValue.FromOwnedBytes(messagePackBuffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
 		}
 
 		private static void Write(IBufferWriter<byte> buffer, string value) => Write(buffer, Encoding.UTF8.GetBytes(value));

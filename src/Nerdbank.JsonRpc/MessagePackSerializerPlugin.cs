@@ -28,7 +28,7 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 		MessagePackWriter writer = new(scratch.Sequence);
 		this.Serializer.Serialize(ref writer, value, shape, cancellationToken);
 		writer.Flush();
-		return JsonRpcValue.FromMessagePack((RawMessagePack)scratch.Sequence.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromOwnedBytes(scratch.Sequence.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
 	}
 
 	/// <inheritdoc/>

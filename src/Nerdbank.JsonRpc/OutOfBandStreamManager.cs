@@ -143,7 +143,7 @@ internal sealed class OutOfBandStreamManager : IDisposable
 		MessagePackWriter writer = new(buffer);
 		writer.Write(token);
 		writer.Flush();
-		return JsonRpcValue.FromMessagePack((RawMessagePack)buffer.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
 	}
 
 	private static ulong ReadToken(JsonRpcValue token)
