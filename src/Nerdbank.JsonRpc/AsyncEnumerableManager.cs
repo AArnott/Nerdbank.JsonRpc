@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -59,13 +59,21 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	/// <param name="callState">The state shared by every converter participating in this message.</param>
 	/// <param name="argumentLifetime">The call-scoped arguments retained by returned generators.</param>
 	/// <returns>A scope to dispose when serialization completes.</returns>
-	internal OutboundScope TrackOutboundMessage(RpcCallState callState, CallScopedLifetime? argumentLifetime = null) => new(this, callState, argumentLifetime);
+	internal OutboundScope TrackOutboundMessage(RpcCallState callState, CallScopedLifetime? argumentLifetime = null)
+	{
+		callState.DeclareAsyncEnumerablesOutbound(argumentLifetime);
+		return new(callState);
+	}
 
 	/// <summary>Begins tracking an inbound message so that sequences in notifications can be rejected.</summary>
 	/// <param name="hasResponse">Whether the inbound message is a request that will receive a response.</param>
 	/// <param name="callState">The state shared by every converter participating in this message.</param>
 	/// <returns>A scope to dispose when deserialization completes.</returns>
-	internal InboundScope TrackInboundRequest(bool hasResponse, RpcCallState callState) => new(callState, hasResponse);
+	internal InboundScope TrackInboundRequest(bool hasResponse, RpcCallState callState)
+	{
+		callState.DeclareInbound(RpcCallState.Scopes.AsyncEnumerablesInbound, hasResponse);
+		return new(callState);
+	}
 
 	/// <summary>Assigns a token to a sequence being sent to the remote party and prepares to generate its values.</summary>
 	/// <typeparam name="T">The type of value produced by the sequence.</typeparam>
@@ -76,8 +84,12 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	/// <returns>The encoded value to write in place of the sequence.</returns>
 	internal JsonRpcValue Marshal<T>(IAsyncEnumerable<T> enumerable, ITypeShape<T> elementShape, JsonRpcEncoding encoding, RpcCallState? callState)
 	{
-		OutboundScope scope = callState?.AsyncEnumerablesOutbound
-			?? throw new InvalidOperationException("IAsyncEnumerable<T> values may only be sent in RPC requests and responses.");
+		if (callState?.IsDeclared(RpcCallState.Scopes.AsyncEnumerablesOutbound) is not true)
+		{
+			throw new InvalidOperationException("IAsyncEnumerable<T> values may only be sent in RPC requests and responses.");
+		}
+
+		OutboundScopeState scope = callState.AsyncEnumerablesOutbound ??= new(this);
 
 		JsonRpcEnumerableSettings settings = JsonRpcEnumerableSettings.Default;
 		IReadOnlyList<T> prefetched = Array.Empty<T>();
@@ -94,7 +106,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			token = Interlocked.Increment(ref this.nextToken);
 			Generator generator = new Generator<T>(this, token.Value, enumerable, elementShape, settings)
 			{
-				ArgumentLifetime = scope.ArgumentLifetime?.Retain(),
+				ArgumentLifetime = callState.AsyncEnumerableArgumentLifetime?.Retain(),
 			};
 			lock (this.sync)
 			{
@@ -117,7 +129,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	internal IAsyncEnumerable<T> Unmarshal<T>(JsonRpcValue value, ITypeShape<T> elementShape, RpcCallState? callState)
 #pragma warning restore VSTHRD200
 	{
-		if (callState?.AsyncEnumerablesInbound is { HasResponse: false })
+		if (callState?.IsDeclaredForNotification(RpcCallState.Scopes.AsyncEnumerablesInbound) is true)
 		{
 			throw new FormatException("IAsyncEnumerable<T> values cannot be received in notifications.");
 		}
@@ -130,9 +142,9 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		}
 
 		ConsumerEnumerable<T> consumer = new(this, token, prefetched, elementShape);
-		if (token.HasValue)
+		if (token.HasValue && callState?.IsDeclared(RpcCallState.Scopes.AsyncEnumerablesInbound) is true)
 		{
-			callState?.AsyncEnumerablesInbound?.Add(consumer.RetainCallScopedArguments);
+			(callState.AsyncEnumerablesInbound ??= new()).Add(consumer.RetainCallScopedArguments);
 		}
 
 		return consumer;
@@ -693,40 +705,57 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		}
 	}
 
-	/// <summary>Tracks the generators created while one outbound message is serialized.</summary>
-	internal sealed class OutboundScope : IDisposable
+	/// <summary>Declares that sequences may be received in one inbound message.</summary>
+	/// <remarks>State is created only when a sequence is actually received.</remarks>
+	internal readonly struct InboundScope(RpcCallState callState) : IDisposable
 	{
-		private readonly AsyncEnumerableManager manager;
-		private readonly RpcCallState callState;
-		private readonly OutboundScope? priorScope;
-		private List<long>? tokens;
-		private bool committed;
-
-		/// <summary>Initializes a new instance of the <see cref="OutboundScope"/> class.</summary>
-		/// <param name="manager">The owning manager.</param>
-		/// <param name="callState">The state shared by every converter participating in this message.</param>
-		/// <param name="argumentLifetime">The arguments retained by generators created in this scope.</param>
-		internal OutboundScope(AsyncEnumerableManager manager, RpcCallState callState, CallScopedLifetime? argumentLifetime)
+		/// <summary>Ends this scope.</summary>
+		public void Dispose()
 		{
-			this.manager = manager;
-			this.callState = callState;
-			this.ArgumentLifetime = argumentLifetime;
-			this.priorScope = callState.AsyncEnumerablesOutbound;
-			callState.AsyncEnumerablesOutbound = this;
+			callState.AsyncEnumerablesInbound = null;
+			callState.Undeclare(RpcCallState.Scopes.AsyncEnumerablesInbound);
 		}
 
-		/// <summary>Gets the arguments retained by generators created in this scope.</summary>
-		internal CallScopedLifetime? ArgumentLifetime { get; }
+		/// <summary>Transfers successful response argument ownership to its consumers.</summary>
+		/// <param name="lifetime">The call-scoped argument lifetime, if any.</param>
+		internal void RetainCallScopedArguments(CallScopedLifetime? lifetime) => callState.AsyncEnumerablesInbound?.RetainCallScopedArguments(lifetime);
+	}
 
+	/// <summary>Declares that sequences may be sent in one outbound message.</summary>
+	/// <remarks>State is created only when a sequence is actually sent.</remarks>
+	internal readonly struct OutboundScope(RpcCallState? callState) : IDisposable
+	{
 		/// <summary>Ends this scope, releasing any generators that were never committed.</summary>
 		public void Dispose()
 		{
-			this.callState.AsyncEnumerablesOutbound = this.priorScope;
+			if (callState is not null)
+			{
+				callState.AsyncEnumerablesOutbound?.Dispose();
+				callState.AsyncEnumerablesOutbound = null;
+				callState.Undeclare(RpcCallState.Scopes.AsyncEnumerablesOutbound);
+			}
+		}
+
+		/// <summary>Transfers ownership of the tracked generators to the caller.</summary>
+		/// <returns>The set of generator tokens carried by the serialized message.</returns>
+		internal TokenSet Commit() => callState?.AsyncEnumerablesOutbound?.Commit() ?? TokenSet.Empty;
+	}
+
+	/// <summary>Tracks the generators created while one outbound message is serialized.</summary>
+	/// <param name="manager">The owning manager.</param>
+	internal sealed class OutboundScopeState(AsyncEnumerableManager manager)
+	{
+		private List<long>? tokens;
+		private bool committed;
+
+		/// <summary>Releases any generators that were never committed.</summary>
+		internal void Dispose()
+		{
 			if (!this.committed && this.tokens is { } tokens)
 			{
 				foreach (long token in tokens)
 				{
-					this.manager.DisposeGeneratorAsync(token).AsTask().Forget();
+					manager.DisposeGeneratorAsync(token).AsTask().Forget();
 				}
 			}
 		}
@@ -744,29 +773,10 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		}
 	}
 
-	/// <summary>Tracks whether the message currently being deserialized may carry a sequence.</summary>
-	internal sealed class InboundScope : IDisposable
+	/// <summary>Tracks the sequence consumers created while one inbound message is deserialized.</summary>
+	internal sealed class InboundScopeState
 	{
-		private readonly RpcCallState callState;
-		private readonly InboundScope? priorScope;
 		private List<Action<CallScopedLifetime>>? consumers;
-
-		/// <summary>Initializes a new instance of the <see cref="InboundScope"/> class.</summary>
-		/// <param name="callState">The state shared by every converter participating in this message.</param>
-		/// <param name="hasResponse">Whether the inbound message will receive a response.</param>
-		internal InboundScope(RpcCallState callState, bool hasResponse)
-		{
-			this.callState = callState;
-			this.HasResponse = hasResponse;
-			this.priorScope = callState.AsyncEnumerablesInbound;
-			callState.AsyncEnumerablesInbound = this;
-		}
-
-		/// <summary>Gets a value indicating whether the inbound message will receive a response.</summary>
-		internal bool HasResponse { get; }
-
-		/// <summary>Ends this scope.</summary>
-		public void Dispose() => this.callState.AsyncEnumerablesInbound = this.priorScope;
 
 		/// <summary>Records a consumer created while decoding the message.</summary>
 		/// <param name="retain">Attaches a lease to the consumer.</param>

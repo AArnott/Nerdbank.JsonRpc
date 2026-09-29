@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -133,10 +133,10 @@ public ref struct JsonRpcArgumentsBuilder
 			this.failed = true;
 		}
 
-		this.outOfBandStreamScope?.Dispose();
-		this.asyncEnumerableScope?.Dispose();
-		this.progressScope?.Dispose();
-		this.marshaledObjectsScope?.Dispose();
+		this.outOfBandStreamScope.Dispose();
+		this.asyncEnumerableScope.Dispose();
+		this.progressScope.Dispose();
+		this.marshaledObjectsScope.Dispose();
 		this.buffer.Dispose();
 	}
 

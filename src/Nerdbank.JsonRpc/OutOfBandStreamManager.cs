@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -32,30 +32,46 @@ internal sealed class OutOfBandStreamManager : IDisposable
 		}
 	}
 
-	internal OutboundScope TrackOutboundRequest(RpcCallState callState) => new(callState);
+	internal OutboundScope TrackOutboundRequest(RpcCallState callState)
+	{
+		callState.Declare(RpcCallState.Scopes.OutOfBandStreamsOutbound);
+		return new(callState);
+	}
 
-	internal InboundScope TrackInboundRequest(bool hasResponse, RpcCallState callState) => new(this, callState, hasResponse);
+	internal InboundScope TrackInboundRequest(bool hasResponse, RpcCallState callState)
+	{
+		callState.DeclareInbound(RpcCallState.Scopes.OutOfBandStreamsInbound, hasResponse);
+		return new(callState);
+	}
 
 	internal JsonRpcValue Marshal(IDuplexPipe pipe, JsonRpcEncoding encoding, RpcCallState? callState)
 	{
-		OutboundScope scope = callState?.OutOfBandStreamsOutbound ?? throw new InvalidOperationException("Out-of-band streams may only be sent in RPC requests.");
+		if (callState?.IsDeclared(RpcCallState.Scopes.OutOfBandStreamsOutbound) is not true)
+		{
+			throw new InvalidOperationException("Out-of-band streams may only be sent in RPC requests.");
+		}
+
 		MultiplexingStream multiplexingStream = this.MultiplexingStream ?? throw new NotSupportedException("Out-of-band streams require a configured MultiplexingStream.");
 		MultiplexingStream.Channel channel = multiplexingStream.CreateChannel(new() { ExistingPipe = pipe });
-		scope.Add(channel);
+		(callState.OutOfBandStreamsOutbound ??= new()).Add(channel);
 		return CreateToken(channel.QualifiedId.Id, encoding);
 	}
 
 	internal IDuplexPipe Unmarshal(JsonRpcValue token, RpcCallState? callState)
 	{
-		InboundScope scope = callState?.OutOfBandStreamsInbound ?? throw new FormatException("Out-of-band streams may only be received in RPC request arguments.");
-		if (!scope.HasResponse)
+		if (callState?.IsDeclared(RpcCallState.Scopes.OutOfBandStreamsInbound) is not true)
+		{
+			throw new FormatException("Out-of-band streams may only be received in RPC request arguments.");
+		}
+
+		if (!callState.HasResponse)
 		{
 			throw new FormatException("Out-of-band streams cannot be received in notifications.");
 		}
 
 		MultiplexingStream multiplexingStream = this.MultiplexingStream ?? throw new NotSupportedException("Out-of-band streams require a configured MultiplexingStream.");
 		MultiplexingStream.Channel channel = multiplexingStream.AcceptChannel(ReadToken(token));
-		scope.Add(channel);
+		(callState.OutOfBandStreamsInbound ??= new(this)).Add(channel);
 		return channel;
 	}
 
@@ -145,23 +161,44 @@ internal sealed class OutOfBandStreamManager : IDisposable
 		return reader.End ? tokenValue : throw new FormatException("Out-of-band stream token must be an unsigned integer.");
 	}
 
-	internal sealed class OutboundScope : IDisposable
+	/// <summary>Declares that out-of-band streams may be received in one inbound message.</summary>
+	/// <remarks>State is created only when a stream is actually received.</remarks>
+	internal readonly struct InboundScope(RpcCallState callState) : IDisposable
 	{
-		private readonly RpcCallState callState;
-		private readonly OutboundScope? priorScope;
+		public void Dispose()
+		{
+			callState.OutOfBandStreamsInbound?.Dispose();
+			callState.OutOfBandStreamsInbound = null;
+			callState.Undeclare(RpcCallState.Scopes.OutOfBandStreamsInbound);
+		}
+
+		internal void Complete(bool successful) => callState.OutOfBandStreamsInbound?.Complete(successful);
+	}
+
+	/// <summary>Declares that out-of-band streams may be sent in one outbound message.</summary>
+	/// <remarks>State is created only when a stream is actually sent.</remarks>
+	internal readonly struct OutboundScope(RpcCallState? callState) : IDisposable
+	{
+		public void Dispose()
+		{
+			if (callState is not null)
+			{
+				callState.OutOfBandStreamsOutbound?.Dispose();
+				callState.OutOfBandStreamsOutbound = null;
+				callState.Undeclare(RpcCallState.Scopes.OutOfBandStreamsOutbound);
+			}
+		}
+
+		internal ChannelSet Commit() => callState?.OutOfBandStreamsOutbound?.Commit() ?? ChannelSet.Empty;
+	}
+
+	internal sealed class OutboundScopeState
+	{
 		private List<MultiplexingStream.Channel>? channels;
 		private bool committed;
 
-		internal OutboundScope(RpcCallState callState)
+		internal void Dispose()
 		{
-			this.callState = callState;
-			this.priorScope = callState.OutOfBandStreamsOutbound;
-			callState.OutOfBandStreamsOutbound = this;
-		}
-
-		public void Dispose()
-		{
-			this.callState.OutOfBandStreamsOutbound = this.priorScope;
 			if (!this.committed)
 			{
 				new ChannelSet(this.channels?.ToArray() ?? []).Dispose();
@@ -177,28 +214,13 @@ internal sealed class OutOfBandStreamManager : IDisposable
 		}
 	}
 
-	internal sealed class InboundScope : IDisposable
+	internal sealed class InboundScopeState(OutOfBandStreamManager manager)
 	{
-		private readonly OutOfBandStreamManager manager;
-		private readonly RpcCallState callState;
-		private readonly InboundScope? priorScope;
 		private List<MultiplexingStream.Channel>? channels;
 		private bool completed;
 
-		internal InboundScope(OutOfBandStreamManager manager, RpcCallState callState, bool hasResponse)
+		internal void Dispose()
 		{
-			this.manager = manager;
-			this.callState = callState;
-			this.HasResponse = hasResponse;
-			this.priorScope = callState.OutOfBandStreamsInbound;
-			callState.OutOfBandStreamsInbound = this;
-		}
-
-		internal bool HasResponse { get; }
-
-		public void Dispose()
-		{
-			this.callState.OutOfBandStreamsInbound = this.priorScope;
 			if (!this.completed)
 			{
 				new ChannelSet(this.channels?.ToArray() ?? []).Dispose();
@@ -213,7 +235,7 @@ internal sealed class OutOfBandStreamManager : IDisposable
 			ChannelSet set = this.channels is { Count: > 0 } channels ? new([.. channels]) : ChannelSet.Empty;
 			if (successful)
 			{
-				this.manager.TrackActiveChannels(set);
+				manager.TrackActiveChannels(set);
 			}
 			else
 			{

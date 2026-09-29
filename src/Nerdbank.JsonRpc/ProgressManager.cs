@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -18,28 +18,44 @@ internal sealed class ProgressManager(JsonRpc owner)
 	private readonly Dictionary<RequestId, RegistrationSet> requestRegistrations = [];
 	private long nextToken;
 
-	internal RegistrationScope TrackRegistrations(RpcCallState callState) => new(callState);
+	internal RegistrationScope TrackRegistrations(RpcCallState callState)
+	{
+		callState.Declare(RpcCallState.Scopes.ProgressRegistrations);
+		return new(callState);
+	}
 
 	internal JsonRpcValue Marshal<T>(IProgress<T> progress, ITypeShape<T> valueShape, JsonRpcEncoding encoding, RpcCallState? callState)
 	{
-		RegistrationScope scope = callState?.ProgressRegistrations ?? throw new InvalidOperationException("IProgress<T> values may only be sent as RPC request arguments.");
+		if (callState?.IsDeclared(RpcCallState.Scopes.ProgressRegistrations) is not true)
+		{
+			throw new InvalidOperationException("IProgress<T> values may only be sent as RPC request arguments.");
+		}
+
 		JsonRpcValue token = this.CreateToken(encoding);
-		scope.Add(token, new Contract<T>(progress, valueShape));
+		(callState.ProgressRegistrations ??= new()).Add(token, new Contract<T>(progress, valueShape));
 		return token;
 	}
 
 	internal IProgress<T> Unmarshal<T>(JsonRpcValue token, ITypeShape<T> valueShape, RpcCallState? callState)
 	{
-		InboundScope scope = callState?.ProgressInbound ?? throw new FormatException("IProgress<T> values may only be received in RPC request arguments.");
-		if (!scope.HasResponse)
+		if (callState?.IsDeclared(RpcCallState.Scopes.ProgressInbound) is not true)
+		{
+			throw new FormatException("IProgress<T> values may only be received in RPC request arguments.");
+		}
+
+		if (!callState.HasResponse)
 		{
 			throw new FormatException("IProgress<T> values cannot be received in notifications.");
 		}
 
-		return new ProgressProxy<T>(owner, token, valueShape, scope);
+		return new ProgressProxy<T>(owner, token, valueShape, callState.ProgressInbound ??= new(this));
 	}
 
-	internal InboundScope TrackInboundCall(bool hasResponse, RpcCallState callState) => new(this, callState, hasResponse);
+	internal InboundScope TrackInboundCall(bool hasResponse, RpcCallState callState)
+	{
+		callState.DeclareInbound(RpcCallState.Scopes.ProgressInbound, hasResponse);
+		return new(callState);
+	}
 
 	internal void RegisterOutboundRequest(JsonRpcRequest request)
 	{
@@ -174,29 +190,50 @@ internal sealed class ProgressManager(JsonRpc owner)
 		return JsonRpcValue.FromMessagePack((RawMessagePack)buffer.AsReadOnlySequence.ToArray());
 	}
 
-	internal sealed class RegistrationScope : IDisposable
+	/// <summary>Declares that progress reporters may be received in one inbound message.</summary>
+	/// <remarks>State is created only when a reporter is actually received.</remarks>
+	internal readonly struct InboundScope(RpcCallState callState) : IDisposable
 	{
-		private readonly RpcCallState callState;
-		private readonly RegistrationScope? priorScope;
+		public void Dispose()
+		{
+			callState.ProgressInbound?.Dispose();
+			callState.ProgressInbound = null;
+			callState.Undeclare(RpcCallState.Scopes.ProgressInbound);
+		}
+
+		internal Task CompleteAsync() => callState.ProgressInbound?.CompleteAsync() ?? Task.CompletedTask;
+	}
+
+	/// <summary>Declares that progress reporters may be sent in one outbound message.</summary>
+	/// <remarks>State is created only when a reporter is actually sent.</remarks>
+	internal readonly struct RegistrationScope(RpcCallState? callState) : IDisposable
+	{
+		public RegistrationSet Commit() => callState?.ProgressRegistrations?.Commit() ?? RegistrationSet.Empty;
+
+		public void Dispose()
+		{
+			if (callState is not null)
+			{
+				callState.ProgressRegistrations?.Dispose();
+				callState.ProgressRegistrations = null;
+				callState.Undeclare(RpcCallState.Scopes.ProgressRegistrations);
+			}
+		}
+	}
+
+	internal sealed class RegistrationScopeState
+	{
 		private List<(JsonRpcValue Token, Registration Registration)>? registrations;
 		private bool committed;
 
-		internal RegistrationScope(RpcCallState callState)
-		{
-			this.callState = callState;
-			this.priorScope = callState.ProgressRegistrations;
-			callState.ProgressRegistrations = this;
-		}
-
-		public RegistrationSet Commit()
+		internal RegistrationSet Commit()
 		{
 			this.committed = true;
 			return this.registrations is { Count: > 0 } registrations ? new([.. registrations]) : RegistrationSet.Empty;
 		}
 
-		public void Dispose()
+		internal void Dispose()
 		{
-			this.callState.ProgressRegistrations = this.priorScope;
 			if (!this.committed)
 			{
 				this.registrations?.Clear();
@@ -220,31 +257,13 @@ internal sealed class ProgressManager(JsonRpc owner)
 	}
 
 #pragma warning disable VSTHRD003 // The queue is built exclusively by this scope.
-	internal sealed class InboundScope : IDisposable
+	internal sealed class InboundScopeState(ProgressManager manager)
 	{
-		private readonly ProgressManager manager;
-		private readonly RpcCallState callState;
-		private readonly InboundScope? priorScope;
 		private readonly object sync = new();
 		private Task reportsQueued = Task.CompletedTask;
 		private bool active = true;
 
-		internal InboundScope(ProgressManager manager, RpcCallState callState, bool hasResponse)
-		{
-			this.manager = manager;
-			this.callState = callState;
-			this.HasResponse = hasResponse;
-			this.priorScope = callState.ProgressInbound;
-			callState.ProgressInbound = this;
-		}
-
-		internal bool HasResponse { get; }
-
-		public void Dispose()
-		{
-			this.callState.ProgressInbound = this.priorScope;
-			_ = this.CompleteAsync();
-		}
+		internal void Dispose() => _ = this.CompleteAsync();
 
 		internal void Report(Func<JsonRpcRequest> createNotification)
 		{
@@ -272,7 +291,7 @@ internal sealed class ProgressManager(JsonRpc owner)
 		private async Task PostAfterAsync(Task priorReport, JsonRpcRequest notification)
 		{
 			await priorReport.ConfigureAwait(false);
-			await this.manager.PostProgressAsync(notification).ConfigureAwait(false);
+			await manager.PostProgressAsync(notification).ConfigureAwait(false);
 		}
 	}
 
@@ -289,7 +308,7 @@ internal sealed class ProgressManager(JsonRpc owner)
 			=> progress.Report(serializer.Deserialize(value, valueShape, cancellationToken));
 	}
 
-	private sealed class ProgressProxy<T>(JsonRpc owner, JsonRpcValue token, ITypeShape<T> valueShape, InboundScope scope) : IProgress<T>
+	private sealed class ProgressProxy<T>(JsonRpc owner, JsonRpcValue token, ITypeShape<T> valueShape, InboundScopeState scope) : IProgress<T>
 	{
 		public void Report(T value)
 		{
