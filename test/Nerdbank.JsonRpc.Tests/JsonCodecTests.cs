@@ -159,6 +159,25 @@ public class JsonCodecTests : TestBase
 	}
 
 	[Test]
+	public async Task MalformedJsonArgumentsAreRejectedBeforeQueuing()
+	{
+		(IDuplexPipe local, IDuplexPipe remote) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcJsonChannel channel = new(local, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("local"));
+		using JsonRpc rpc = new(channel);
+		rpc.Start();
+		foreach (string malformed in new[] { "[1] {}", "[1", "{\"a\":}" })
+		{
+			JsonRpcValue arguments = JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(malformed));
+			Assert.ThrowsAny<JsonException>(() => rpc.NotifyAsync("method", arguments, this.TimeoutToken));
+			Assert.False(rpc.Completion.IsFaulted);
+		}
+
+		await using JsonRpcJsonChannel peer = new(remote, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("peer"));
+		await channel.Writer.WriteAsync(new JsonRpcRequest { Method = "method", Arguments = JsonRpcValue.FromJson("[]"u8.ToArray()) }, this.TimeoutToken);
+		Assert.Equal("method", Assert.IsType<JsonRpcRequest>(await peer.Reader.ReadAsync(this.TimeoutToken)).Method);
+	}
+
+	[Test]
 	[Arguments(JsonRpcEncoding.Json)]
 	[Arguments(JsonRpcEncoding.MessagePack)]
 	public async Task ErrorDataDistinguishesAbsentAndExplicitNull(JsonRpcEncoding encoding)

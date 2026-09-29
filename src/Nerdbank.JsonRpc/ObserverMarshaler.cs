@@ -42,7 +42,7 @@ internal static class ObserverMarshaler
 			switch (method)
 			{
 				case "onNext":
-					observer.OnNext(dispatch.UserDataSerializer.Deserialize(values[0].Value, shape, dispatch.CancellationToken));
+					observer.OnNext(dispatch.UserDataSerializer.Deserialize(values[0].Value, shape, dispatch.CallState, dispatch.CancellationToken));
 					break;
 				case "onError":
 					observer.OnError(new Exception(ReadErrorMessage(values[0].Value)));

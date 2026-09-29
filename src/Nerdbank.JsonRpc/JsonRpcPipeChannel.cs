@@ -86,6 +86,13 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 			case JsonRpcResult result:
 				result.Result.ReleaseIfSingleUse();
 				break;
+			case JsonRpcMessageBatch batch:
+				foreach (JsonRpcMessage entry in batch.Messages)
+				{
+					ReleaseSingleUsePayload(entry);
+				}
+
+				break;
 		}
 	}
 

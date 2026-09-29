@@ -53,6 +53,32 @@ public partial class PooledPayloadLifetimeTests : TestBase
 		}
 	}
 
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task BatchedSingleUseArgumentsAreReleasedAfterSending(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe local, IDuplexPipe remote) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcPipeChannel sender = Fixture.CreateChannel(local, encoding);
+		await using JsonRpcPipeChannel receiver = Fixture.CreateChannel(remote, encoding);
+		using JsonRpc rpc = new(sender);
+		rpc.Start();
+
+		JsonRpcValue arguments;
+		using (JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named: false, count: 1, this.TimeoutToken))
+		{
+			builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
+			arguments = builder.BuildForSingleUse();
+		}
+
+		using JsonRpcBatch batch = rpc.CreateBatch();
+		await batch.NotifyAsync("method", arguments, this.TimeoutToken);
+		await batch.SendAsync(this.TimeoutToken);
+		JsonRpcMessageBatch received = Assert.IsType<JsonRpcMessageBatch>(await receiver.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal("method", Assert.IsType<JsonRpcRequest>(Assert.Single(received.Messages)).Method);
+		Assert.Throws<ObjectDisposedException>(() => _ = arguments.Bytes);
+	}
+
 	private static string CreatePayload(int seed) => new((char)('a' + (seed % 26)), (seed * 37) % 3000);
 
 	private sealed class EchoService : IEchoService
@@ -87,7 +113,7 @@ public partial class PooledPayloadLifetimeTests : TestBase
 			this.ServerRpc.Dispose();
 		}
 
-		private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
+		internal static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
 			=> encoding switch
 			{
 				JsonRpcEncoding.MessagePack => new JsonRpcMessagePackChannel(pipe, NullLogger.Instance),

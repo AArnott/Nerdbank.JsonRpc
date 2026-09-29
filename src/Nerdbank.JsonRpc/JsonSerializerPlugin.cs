@@ -80,7 +80,14 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 		}
 
 		Utf8JsonReader reader = new(value.OwnedBytes.Span);
-		return reader.Read() && reader.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray;
+		if (!reader.Read() || reader.TokenType is not (JsonTokenType.StartObject or JsonTokenType.StartArray))
+		{
+			return false;
+		}
+
+		reader.Skip();
+		reader.Read();
+		return true;
 	}
 
 	/// <inheritdoc/>
