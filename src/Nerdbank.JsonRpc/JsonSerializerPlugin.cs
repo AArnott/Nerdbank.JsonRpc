@@ -67,8 +67,13 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	/// <inheritdoc/>
 	internal override bool IsParameterCollection(JsonRpcValue value)
 	{
-		using JsonDocument document = JsonDocument.Parse(RequireJson(value));
-		return document.RootElement.ValueKind is JsonValueKind.Object or JsonValueKind.Array;
+		if (!value.HasValue || value.Encoding != JsonRpcEncoding.Json)
+		{
+			throw new InvalidOperationException("Expected a JSON value.");
+		}
+
+		Utf8JsonReader reader = new(value.OwnedBytes.Span);
+		return reader.Read() && reader.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray;
 	}
 
 	/// <inheritdoc/>
