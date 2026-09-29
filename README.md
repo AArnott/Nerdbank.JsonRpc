@@ -37,13 +37,13 @@ ICalculator calculator = rpc.Attach<ICalculator>();
 int sum = await calculator.AddAsync(1, 2, CancellationToken.None);
 ```
 
-MessagePack is the default encoding. Configure a `JsonRpcJsonChannel` when your protocol uses UTF-8 JSON, with either newline-delimited or `Content-Length` framing.
+MessagePack is the default encoding. By default each MessagePack message is preceded by a 4-byte big-endian length header (compatible with StreamJsonRpc's `LengthHeaderMessageHandler`); pass `JsonRpcMessagePackFraming.SelfDelimiting` to send bare MessagePack structures instead. Configure a `JsonRpcJsonChannel` when your protocol uses UTF-8 JSON, with either newline-delimited or `Content-Length` framing.
 
 ## Features
 
 - **Strongly typed RPC:** Register server targets and issue typed requests or notifications.
 - **Generated client proxies:** Use interface-backed clients with positional or named arguments.
-- **MessagePack or JSON:** Select MessagePack or UTF-8 JSON; choose newline-delimited or `Content-Length` framing for JSON.
+- **MessagePack or JSON:** Select MessagePack or UTF-8 JSON; choose length-header or self-delimiting framing for MessagePack, and newline-delimited or `Content-Length` framing for JSON.
 - **Batching:** Send independent requests and notifications in one JSON-RPC payload.
 - **Robust protocol behavior:** Propagate cancellation and distinguish malformed protocol messages from application value failures.
 - **Deadlock mitigation:** Propagate `JoinableTaskFactory` context across processes, compatible with StreamJsonRpc.

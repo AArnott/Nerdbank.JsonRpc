@@ -72,6 +72,33 @@ public partial class MarshaledObjectManagerTests : TestBase
 	}
 
 	[Test]
+	public void DisposingArgumentsBuilderTwiceDoesNotAffectLaterBuilder()
+	{
+		(IDuplexPipe localPipe, _) = FullDuplexStream.CreatePipePair();
+		using JsonRpc rpc = new(new JsonRpcMessagePackChannel(localPipe, NullLogger.Instance));
+		ITypeShape<IDisposable> shape = TypeShapeResolver.ResolveDynamicOrThrow<IDisposable, Witness>();
+
+		JsonRpcArgumentsBuilder first = rpc.CreateArguments(named: false, count: 0, this.TimeoutToken);
+		first.Build();
+		first.Dispose();
+
+		TestDisposable disposable = new();
+		JsonRpcArgumentsBuilder second = rpc.CreateArguments(named: false, count: 1, this.TimeoutToken);
+		try
+		{
+			second.Add(null, disposable, shape);
+			first.Dispose();
+			second.Build();
+
+			Assert.False(disposable.IsDisposed);
+		}
+		finally
+		{
+			second.Dispose();
+		}
+	}
+
+	[Test]
 	public void RejectedRawBatchNotificationReleasesMarshaledArguments()
 	{
 		(IDuplexPipe localPipe, _) = FullDuplexStream.CreatePipePair();

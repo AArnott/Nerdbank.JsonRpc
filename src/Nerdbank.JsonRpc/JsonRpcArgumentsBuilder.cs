@@ -1,7 +1,8 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
+using System.ComponentModel;
 using Nerdbank.MessagePack;
 using Nerdbank.Streams;
 
@@ -11,6 +12,8 @@ namespace Nerdbank.JsonRpc;
 public ref struct JsonRpcArgumentsBuilder
 {
 	private readonly JsonRpcSerializer serializer;
+	private readonly RpcCallState callState;
+	private readonly int callStateGeneration;
 	private readonly MarshaledObjectManager.HandleScope marshaledObjectsScope;
 	private readonly ProgressManager.RegistrationScope progressScope;
 	private readonly OutOfBandStreamManager.OutboundScope outOfBandStreamScope;
@@ -18,6 +21,7 @@ public ref struct JsonRpcArgumentsBuilder
 	private readonly bool named;
 	private readonly int count;
 	private readonly CancellationToken cancellationToken;
+	private readonly ScratchSequence scratch;
 	private readonly Sequence<byte> buffer;
 	private int written;
 	private bool built;
@@ -41,15 +45,18 @@ public ref struct JsonRpcArgumentsBuilder
 		}
 
 		this.serializer = context.Serializer;
-		this.marshaledObjectsScope = context.MarshaledObjects.TrackMarshaledObjects();
-		this.progressScope = context.Progress.TrackRegistrations();
-		this.outOfBandStreamScope = context.OutOfBandStreams.TrackOutboundRequest();
-		this.asyncEnumerableScope = context.AsyncEnumerables.TrackOutboundMessage();
+		this.callState = RpcCallState.Rent();
+		this.callStateGeneration = this.callState.Generation;
+		this.marshaledObjectsScope = context.MarshaledObjects.TrackMarshaledObjects(this.callState);
+		this.progressScope = context.Progress.TrackRegistrations(this.callState);
+		this.outOfBandStreamScope = context.OutOfBandStreams.TrackOutboundRequest(this.callState);
+		this.asyncEnumerableScope = context.AsyncEnumerables.TrackOutboundMessage(this.callState);
 
 		this.named = named;
 		this.count = count;
 		this.cancellationToken = cancellationToken;
-		this.buffer = new();
+		this.scratch = ScratchSequence.Rent();
+		this.buffer = this.scratch.Sequence;
 		if (this.serializer.Encoding == JsonRpcEncoding.Json)
 		{
 			this.WriteByte(named ? (byte)'{' : (byte)'[');
@@ -103,14 +110,46 @@ public ref struct JsonRpcArgumentsBuilder
 			}
 		}
 
-		this.serializer.SerializeTo(this.buffer, value, shape, this.cancellationToken);
+		this.serializer.SerializeTo(this.buffer, value, shape, this.callState, this.cancellationToken);
 		this.written++;
 		this.failed = false;
 	}
 
 	/// <summary>Builds an owned JSON-RPC params value after every declared parameter has been added.</summary>
+	/// <returns>An encoded array or object, which may be sent any number of times.</returns>
+	public JsonRpcValue Build() => this.Build(singleUse: false);
+
+	/// <summary>Builds a JSON-RPC params value that will be sent exactly once, allowing its buffer to be recycled after transmission.</summary>
 	/// <returns>An encoded array or object.</returns>
-	public JsonRpcValue Build()
+	/// <remarks>
+	/// This method is intended for generated proxies.
+	/// The returned value must be passed to exactly one request or notification and must not be otherwise retained,
+	/// since its storage is returned to a shared pool once the transport has written it.
+	/// </remarks>
+	[EditorBrowsable(EditorBrowsableState.Never)]
+	public JsonRpcValue BuildForSingleUse() => this.Build(singleUse: true);
+
+	/// <summary>Releases buffers owned by this builder.</summary>
+	public void Dispose()
+	{
+		if (!this.built)
+		{
+			this.failed = true;
+		}
+
+		// The call state and buffer are recycled when this builder is disposed, so a repeated disposal must not touch them again.
+		if (this.callState?.Generation == this.callStateGeneration)
+		{
+			this.outOfBandStreamScope.Dispose();
+			this.asyncEnumerableScope.Dispose();
+			this.progressScope.Dispose();
+			this.marshaledObjectsScope.Dispose();
+			this.callState.Return();
+			this.scratch.Dispose();
+		}
+	}
+
+	private JsonRpcValue Build(bool singleUse)
 	{
 		this.ThrowIfUnavailable();
 		if (this.written != this.count)
@@ -124,22 +163,10 @@ public ref struct JsonRpcArgumentsBuilder
 		}
 
 		this.built = true;
-		return JsonRpcValue.FromOwnedBytes(this.buffer.AsReadOnlySequence.ToArray(), this.serializer.Encoding, this.marshaledObjectsScope.Commit()).WithProgressRegistrations(this.progressScope.Commit()).WithOutOfBandChannels(this.outOfBandStreamScope.Commit()).WithAsyncEnumerableTokens(this.asyncEnumerableScope.Commit());
-	}
-
-	/// <summary>Releases buffers owned by this builder.</summary>
-	public void Dispose()
-	{
-		if (!this.built)
-		{
-			this.failed = true;
-		}
-
-		this.outOfBandStreamScope?.Dispose();
-		this.asyncEnumerableScope?.Dispose();
-		this.progressScope?.Dispose();
-		this.marshaledObjectsScope?.Dispose();
-		this.buffer?.Dispose();
+		JsonRpcValue value = singleUse
+			? JsonRpcValue.FromPooledBytes(this.buffer.AsReadOnlySequence, this.serializer.Encoding, singleUse: true, this.marshaledObjectsScope.Commit())
+			: JsonRpcValue.FromOwnedBytes(this.buffer.AsReadOnlySequence.ToArray(), this.serializer.Encoding, this.marshaledObjectsScope.Commit());
+		return value.WithProgressRegistrations(this.progressScope.Commit()).WithOutOfBandChannels(this.outOfBandStreamScope.Commit()).WithAsyncEnumerableTokens(this.asyncEnumerableScope.Commit());
 	}
 
 	private void ThrowIfUnavailable()

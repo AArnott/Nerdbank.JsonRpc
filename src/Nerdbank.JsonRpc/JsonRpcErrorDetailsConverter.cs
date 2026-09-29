@@ -86,7 +86,7 @@ internal sealed class JsonRpcErrorDetailsConverter : MessagePackConverter<JsonRp
 		if (data is JsonRpcValue encoded)
 		{
 			writer.Write("data");
-			writer.WriteRaw(encoded.AsMessagePack().MsgPack);
+			writer.WriteRaw(encoded.AsOwnedMessagePack().MsgPack);
 		}
 	}
 }

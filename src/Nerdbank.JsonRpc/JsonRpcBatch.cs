@@ -135,11 +135,12 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
 	public ValueTask<TResult> RequestAsync<TArg, TResult>(string method, in TArg arguments, ITypeShape<TArg> argShape, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
-		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects();
-		using ProgressManager.RegistrationScope progressScope = this.owner.Progress.TrackRegistrations();
-		using OutOfBandStreamManager.OutboundScope outOfBandStreamScope = this.owner.OutOfBandStreams.TrackOutboundRequest();
-		using AsyncEnumerableManager.OutboundScope asyncEnumerableScope = this.owner.AsyncEnumerables.TrackOutboundMessage();
-		JsonRpcValue serializedArguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken);
+		RpcCallState callState = new();
+		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects(callState);
+		using ProgressManager.RegistrationScope progressScope = this.owner.Progress.TrackRegistrations(callState);
+		using OutOfBandStreamManager.OutboundScope outOfBandStreamScope = this.owner.OutOfBandStreams.TrackOutboundRequest(callState);
+		using AsyncEnumerableManager.OutboundScope asyncEnumerableScope = this.owner.AsyncEnumerables.TrackOutboundMessage(callState);
+		JsonRpcValue serializedArguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, callState, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = this.owner.GetNextRequestId(),
@@ -163,11 +164,12 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
 	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
-		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects();
-		using ProgressManager.RegistrationScope progressScope = this.owner.Progress.TrackRegistrations();
-		using OutOfBandStreamManager.OutboundScope outOfBandStreamScope = this.owner.OutOfBandStreams.TrackOutboundRequest();
-		using AsyncEnumerableManager.OutboundScope asyncEnumerableScope = this.owner.AsyncEnumerables.TrackOutboundMessage();
-		JsonRpcValue serializedArguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken);
+		RpcCallState callState = new();
+		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects(callState);
+		using ProgressManager.RegistrationScope progressScope = this.owner.Progress.TrackRegistrations(callState);
+		using OutOfBandStreamManager.OutboundScope outOfBandStreamScope = this.owner.OutOfBandStreams.TrackOutboundRequest(callState);
+		using AsyncEnumerableManager.OutboundScope asyncEnumerableScope = this.owner.AsyncEnumerables.TrackOutboundMessage(callState);
+		JsonRpcValue serializedArguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, callState, cancellationToken);
 		JsonRpcRequest request = new()
 		{
 			Id = this.owner.GetNextRequestId(),
@@ -191,10 +193,11 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
 	public ValueTask NotifyAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
-		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects();
-		using ProgressManager.RegistrationScope progressScope = this.owner.Progress.TrackRegistrations();
-		using AsyncEnumerableManager.OutboundScope asyncEnumerableScope = this.owner.AsyncEnumerables.TrackOutboundMessage();
-		JsonRpcValue serializedArguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, cancellationToken);
+		RpcCallState callState = new();
+		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects(callState);
+		using ProgressManager.RegistrationScope progressScope = this.owner.Progress.TrackRegistrations(callState);
+		using AsyncEnumerableManager.OutboundScope asyncEnumerableScope = this.owner.AsyncEnumerables.TrackOutboundMessage(callState);
+		JsonRpcValue serializedArguments = this.owner.UserDataSerializer.Serialize(arguments, argShape, callState, cancellationToken);
 		if (marshaledObjectsScope.HasMarshaledObjects)
 		{
 			throw new InvalidOperationException("Marshaled objects cannot be sent in notifications because the sender cannot know whether the receiver accepted them.");
@@ -459,12 +462,27 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 
 	private ValueTask<JsonRpcResponse> AddRequestAsync(JsonRpcRequest request, CancellationToken cancellationToken)
 	{
-		this.owner.ApplyJoinableTaskToken(request);
+		try
+		{
+			this.owner.ApplyJoinableTaskToken(request);
+		}
+		catch
+		{
+			this.owner.MarshaledObjects.ReleaseLocalObjects(request.Arguments);
+			this.owner.AsyncEnumerables.ReleaseGenerators(request.Arguments);
+			request.Arguments.ReleaseIfSingleUse();
+			throw;
+		}
+
 		TaskCompletionSource<JsonRpcResponse> responseTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 		Entry entry = new(this, request, responseTcs, cancellationToken);
 		try
 		{
 			this.AddEntry(entry);
+			if (cancellationToken.IsCancellationRequested)
+			{
+				entry.ReleaseAbandonedArguments();
+			}
 		}
 		catch
 		{
@@ -497,6 +515,10 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		try
 		{
 			this.AddEntry(entry);
+			if (cancellationToken.IsCancellationRequested)
+			{
+				entry.ReleaseAbandonedArguments();
+			}
 		}
 		catch
 		{
@@ -734,6 +756,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 
 			this.owner.owner.MarshaledObjects.ReleaseLocalObjects(this.Request.Arguments);
 			this.owner.owner.AsyncEnumerables.ReleaseGenerators(this.Request.Arguments);
+			this.Request.Arguments.ReleaseIfSingleUse();
 		}
 
 		internal void Fault(Exception ex)

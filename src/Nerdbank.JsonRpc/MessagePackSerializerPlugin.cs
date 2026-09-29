@@ -1,8 +1,9 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
 using Nerdbank.MessagePack;
+using Nerdbank.Streams;
 
 namespace Nerdbank.JsonRpc;
 
@@ -20,10 +21,23 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	public override JsonRpcEncoding Encoding => JsonRpcEncoding.MessagePack;
 
 	/// <inheritdoc/>
-	public override JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => JsonRpcValue.FromMessagePack((RawMessagePack)this.Serializer.Serialize(value, shape, cancellationToken));
+	internal override JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
+	{
+		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
+		using ScratchSequence scratch = ScratchSequence.Rent();
+		MessagePackWriter writer = new(scratch.Sequence);
+		this.Serializer.Serialize(ref writer, value, shape, cancellationToken);
+		writer.Flush();
+		return JsonRpcValue.FromOwnedBytes(scratch.Sequence.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
+	}
 
 	/// <inheritdoc/>
-	public override T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => this.Serializer.Deserialize(value.AsMessagePack(), shape, cancellationToken)!;
+	internal override T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
+	{
+		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
+		MessagePackReader reader = new(value.AsOwnedMessagePack());
+		return this.Serializer.Deserialize(ref reader, shape, cancellationToken)!;
+	}
 
 	/// <inheritdoc/>
 	internal override JsonRpcSerializer WithMarshaledObjectManager(MarshaledObjectManager manager, ProgressManager progress, OutOfBandStreamManager outOfBandStreams, AsyncEnumerableManager asyncEnumerables)
@@ -34,8 +48,13 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 		});
 
 	/// <inheritdoc/>
-	internal override void SerializeTo<T>(IBufferWriter<byte> buffer, in T value, ITypeShape<T> shape, CancellationToken cancellationToken)
-		=> this.Serializer.Serialize(buffer, value, shape, cancellationToken);
+	internal override void SerializeTo<T>(IBufferWriter<byte> buffer, in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
+	{
+		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
+		MessagePackWriter writer = new(buffer);
+		this.Serializer.Serialize(ref writer, value, shape, cancellationToken);
+		writer.Flush();
+	}
 
 	/// <inheritdoc/>
 	internal override void WriteArgumentName(IBufferWriter<byte> buffer, string name)
@@ -48,14 +67,14 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	/// <inheritdoc/>
 	internal override bool IsParameterCollection(JsonRpcValue value)
 	{
-		MessagePackType type = new MessagePackReader(value.AsMessagePack()).NextMessagePackType;
+		MessagePackType type = new MessagePackReader(value.AsOwnedMessagePack()).NextMessagePackType;
 		return type is MessagePackType.Map or MessagePackType.Array;
 	}
 
 	/// <inheritdoc/>
-	internal override (bool Named, List<(string? Name, JsonRpcValue Value)> Values) ReadArguments(JsonRpcValue arguments)
+	internal override (bool Named, ArgumentList Values) ReadArguments(JsonRpcValue arguments)
 	{
-		MessagePackReader reader = new(arguments.AsMessagePack());
+		MessagePackReader reader = new(arguments.AsOwnedMessagePack());
 		SerializationContext context = new();
 		bool named = reader.NextMessagePackType switch
 		{
@@ -64,23 +83,44 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 			_ => throw new FormatException("Parameters must be an object or array."),
 		};
 		int count = named ? reader.ReadMapHeader() : reader.ReadArrayHeader();
-		List<(string?, JsonRpcValue)> values = new(count);
-		for (int i = 0; i < count; i++)
+		long minimumBytesPerEntry = named ? 2 : 1;
+		long remainingBytes = reader.Sequence.Length - reader.Consumed;
+		if (count > JsonRpcMessageConverter.MaximumCollectionCount || count > remainingBytes / minimumBytesPerEntry)
 		{
-			string? name = named ? reader.ReadString() : null;
-			values.Add((name, JsonRpcValue.FromMessagePack(reader.ReadRaw(context))));
+			throw new FormatException("The MessagePack params contain too many entries or are truncated.");
 		}
 
-		if (!reader.End)
+		(string? Name, JsonRpcValue Value)[] values = ArgumentList.Rent(count);
+		int initialized = 0;
+		try
 		{
-			throw new FormatException("Trailing bytes in parameters.");
-		}
+			for (int i = 0; i < count; i++)
+			{
+				string? name = named ? Utf8StringCache.ReadString(ref reader) : null;
+				values[i] = (name, JsonRpcValue.FromOwnedMessagePack(arguments, reader.ReadRaw(context)));
+				initialized++;
+			}
 
-		return (named, values);
+			if (!reader.End)
+			{
+				throw new FormatException("Trailing bytes in parameters.");
+			}
+
+			return (named, new(values, count, named));
+		}
+		catch
+		{
+			new ArgumentList(values, initialized, named).Return();
+			throw;
+		}
 	}
 
 	internal override JsonRpcValue SerializeCancellation(RequestId id, CancellationToken cancellationToken)
 		=> this.Serialize(new JsonRpc.CancelRequestParams(id), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc.Default.CancelRequestParams, cancellationToken);
 
-	internal override object? DeserializeObject(JsonRpcValue value, ITypeShape shape, CancellationToken cancellationToken) => this.Serializer.DeserializeObject(value.AsMessagePack().MsgPack.ToArray(), shape, cancellationToken);
+	/// <summary>Builds the context for one (de)serialization job.</summary>
+	/// <param name="cancellationToken">A cancellation token.</param>
+	/// <returns>The starting context for the job.</returns>
+	private SerializationContext CreateStartingContext(CancellationToken cancellationToken)
+		=> this.Serializer.StartingContext with { CancellationToken = cancellationToken };
 }

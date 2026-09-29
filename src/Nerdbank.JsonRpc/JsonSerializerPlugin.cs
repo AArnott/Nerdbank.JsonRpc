@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -21,15 +21,36 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	public override JsonRpcEncoding Encoding => JsonRpcEncoding.Json;
 
 	/// <inheritdoc/>
-	public override JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, CancellationToken cancellationToken = default)
+	internal override JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
 	{
-		using Sequence<byte> buffer = new();
-		this.Serializer.Serialize(buffer, value, shape, cancellationToken);
-		return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
+		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
+		using ScratchSequence scratch = ScratchSequence.Rent();
+		Nerdbank.Json.JsonWriter writer = new(scratch.Sequence) { WriteIndented = this.Serializer.WriteIndented };
+		this.Serializer.Serialize(ref writer, value, shape, cancellationToken);
+		writer.Flush();
+		return JsonRpcValue.FromOwnedBytes(scratch.Sequence.AsReadOnlySequence.ToArray(), JsonRpcEncoding.Json);
 	}
 
 	/// <inheritdoc/>
-	public override T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => this.Serializer.Deserialize(RequireJson(value), shape, cancellationToken)!;
+	internal override T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
+	{
+		if (typeof(T) == typeof(RequestId))
+		{
+			Utf8JsonReader idReader = new(RequireJson(value).Span);
+			idReader.Read();
+			RequestId id = JsonRpcJsonCodec.ReadId(ref idReader);
+			if (idReader.Read())
+			{
+				throw new JsonException("Unexpected content after the request ID.");
+			}
+
+			return (T)(object)id;
+		}
+
+		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
+		Nerdbank.Json.JsonReader reader = new(RequireJson(value).Span);
+		return this.Serializer.Deserialize(ref reader, shape, cancellationToken)!;
+	}
 
 	/// <inheritdoc/>
 	internal override JsonRpcSerializer WithMarshaledObjectManager(MarshaledObjectManager manager, ProgressManager progress, OutOfBandStreamManager outOfBandStreams, AsyncEnumerableManager asyncEnumerables)
@@ -40,8 +61,13 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 		});
 
 	/// <inheritdoc/>
-	internal override void SerializeTo<T>(IBufferWriter<byte> buffer, in T value, ITypeShape<T> shape, CancellationToken cancellationToken)
-		=> this.Serializer.Serialize(buffer, value, shape, cancellationToken);
+	internal override void SerializeTo<T>(IBufferWriter<byte> buffer, in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
+	{
+		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
+		Nerdbank.Json.JsonWriter writer = new(buffer) { WriteIndented = this.Serializer.WriteIndented };
+		this.Serializer.Serialize(ref writer, value, shape, cancellationToken);
+		writer.Flush();
+	}
 
 	/// <inheritdoc/>
 	internal override void WriteArgumentName(IBufferWriter<byte> buffer, string name)
@@ -54,63 +80,92 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	/// <inheritdoc/>
 	internal override bool IsParameterCollection(JsonRpcValue value)
 	{
-		using JsonDocument document = JsonDocument.Parse(RequireJson(value));
-		return document.RootElement.ValueKind is JsonValueKind.Object or JsonValueKind.Array;
+		if (!value.HasValue || value.Encoding != JsonRpcEncoding.Json)
+		{
+			throw new InvalidOperationException("Expected a JSON value.");
+		}
+
+		Utf8JsonReader reader = new(value.OwnedBytes.Span);
+		if (!reader.Read() || reader.TokenType is not (JsonTokenType.StartObject or JsonTokenType.StartArray))
+		{
+			return false;
+		}
+
+		reader.Skip();
+		reader.Read();
+		return true;
 	}
 
 	/// <inheritdoc/>
-	internal override (bool Named, List<(string? Name, JsonRpcValue Value)> Values) ReadArguments(JsonRpcValue arguments)
+	internal override (bool Named, ArgumentList Values) ReadArguments(JsonRpcValue arguments)
 	{
-		using JsonDocument document = JsonDocument.Parse(RequireJson(arguments));
-		JsonElement root = document.RootElement;
-		bool named = root.ValueKind switch
+		// Scan rather than parse into a document, and share the arguments' buffer rather than copying each argument out of it.
+		Utf8JsonReader reader = new(RequireJson(arguments).Span);
+		reader.Read();
+		bool named = reader.TokenType switch
 		{
-			JsonValueKind.Object => true,
-			JsonValueKind.Array => false,
+			JsonTokenType.StartObject => true,
+			JsonTokenType.StartArray => false,
 			_ => throw new FormatException("Parameters must be an object or array."),
 		};
-		List<(string?, JsonRpcValue)> values = new();
-		if (named)
+		(string? Name, JsonRpcValue Value)[] values = ArgumentList.Rent(4);
+		int count = 0;
+		try
 		{
-			foreach (JsonProperty property in root.EnumerateObject())
+			while (reader.Read() && reader.TokenType is not (JsonTokenType.EndObject or JsonTokenType.EndArray))
 			{
-				values.Add((property.Name, JsonRpcValue.FromJson(System.Text.Encoding.UTF8.GetBytes(property.Value.GetRawText()))));
-			}
-		}
-		else
-		{
-			foreach (JsonElement element in root.EnumerateArray())
-			{
-				values.Add((null, JsonRpcValue.FromJson(System.Text.Encoding.UTF8.GetBytes(element.GetRawText()))));
-			}
-		}
+				if (count == JsonRpcMessageConverter.MaximumCollectionCount)
+				{
+					throw new FormatException("The JSON params contain too many entries.");
+				}
 
-		return (named, values);
+				string? name = null;
+				if (named)
+				{
+					name = Utf8StringCache.ReadString(ref reader);
+					reader.Read();
+				}
+
+				int start = checked((int)reader.TokenStartIndex);
+				reader.Skip();
+				if (count == values.Length)
+				{
+					ArgumentList.Grow(ref values, count);
+				}
+
+				values[count++] = (name, arguments.Slice(start, checked((int)reader.BytesConsumed) - start));
+			}
+
+			// Reject trailing content, as parsing the whole value would.
+			reader.Read();
+
+			return (named, new(values, count, named));
+		}
+		catch
+		{
+			new ArgumentList(values, count, named).Return();
+			throw;
+		}
 	}
 
 	internal override JsonRpcValue SerializeCancellation(RequestId id, CancellationToken cancellationToken)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
-		using Sequence<byte> buffer = new();
+		using Sequence<byte> buffer = new(ArrayPool<byte>.Shared);
 		using Utf8JsonWriter writer = new(buffer);
 		writer.WriteStartObject();
 		writer.WritePropertyName("id");
 		JsonRpcJsonCodec.WriteId(writer, id);
 		writer.WriteEndObject();
 		writer.Flush();
-		return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
-	}
-
-	internal override object? DeserializeObject(JsonRpcValue value, ITypeShape shape, CancellationToken cancellationToken)
-	{
-		if (shape.Type == typeof(RequestId))
-		{
-			using JsonDocument document = JsonDocument.Parse(RequireJson(value));
-			return JsonRpcJsonCodec.ReadId(document.RootElement);
-		}
-
-		return this.Serializer.DeserializeObject(RequireJson(value), shape, cancellationToken);
+		return JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.Json);
 	}
 
 	private static ReadOnlyMemory<byte> RequireJson(JsonRpcValue value) => value.HasValue && value.Encoding == JsonRpcEncoding.Json ? value.OwnedBytes : throw new InvalidOperationException("Expected a JSON value.");
+
+	/// <summary>Builds the context for one (de)serialization job.</summary>
+	/// <param name="cancellationToken">A cancellation token.</param>
+	/// <returns>The starting context for the job.</returns>
+	private Nerdbank.Json.SerializationContext CreateStartingContext(CancellationToken cancellationToken)
+		=> this.Serializer.StartingContext with { CancellationToken = cancellationToken };
 }

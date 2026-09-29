@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -13,8 +13,6 @@ internal sealed class OutOfBandStreamManager : IDisposable
 	private readonly object sync = new();
 	private readonly Dictionary<RequestId, ChannelSet> outboundChannels = [];
 	private readonly List<ChannelSet> activeChannels = [];
-	private readonly AsyncLocal<OutboundScope?> activeOutboundScope = new();
-	private readonly AsyncLocal<InboundScope?> activeInboundScope = new();
 
 	internal MultiplexingStream? MultiplexingStream { get; set; }
 
@@ -34,30 +32,46 @@ internal sealed class OutOfBandStreamManager : IDisposable
 		}
 	}
 
-	internal OutboundScope TrackOutboundRequest() => new(this);
-
-	internal InboundScope TrackInboundRequest(bool hasResponse) => new(this, hasResponse);
-
-	internal JsonRpcValue Marshal(IDuplexPipe pipe, JsonRpcEncoding encoding)
+	internal OutboundScope TrackOutboundRequest(RpcCallState callState)
 	{
-		OutboundScope scope = this.activeOutboundScope.Value ?? throw new InvalidOperationException("Out-of-band streams may only be sent in RPC requests.");
+		callState.Declare(RpcCallState.Scopes.OutOfBandStreamsOutbound);
+		return new(callState);
+	}
+
+	internal InboundScope TrackInboundRequest(bool hasResponse, RpcCallState callState)
+	{
+		callState.DeclareInbound(RpcCallState.Scopes.OutOfBandStreamsInbound, hasResponse);
+		return new(callState);
+	}
+
+	internal JsonRpcValue Marshal(IDuplexPipe pipe, JsonRpcEncoding encoding, RpcCallState? callState)
+	{
+		if (callState?.IsDeclared(RpcCallState.Scopes.OutOfBandStreamsOutbound) is not true)
+		{
+			throw new InvalidOperationException("Out-of-band streams may only be sent in RPC requests.");
+		}
+
 		MultiplexingStream multiplexingStream = this.MultiplexingStream ?? throw new NotSupportedException("Out-of-band streams require a configured MultiplexingStream.");
 		MultiplexingStream.Channel channel = multiplexingStream.CreateChannel(new() { ExistingPipe = pipe });
-		scope.Add(channel);
+		(callState.OutOfBandStreamsOutbound ??= new()).Add(channel);
 		return CreateToken(channel.QualifiedId.Id, encoding);
 	}
 
-	internal IDuplexPipe Unmarshal(JsonRpcValue token)
+	internal IDuplexPipe Unmarshal(JsonRpcValue token, RpcCallState? callState)
 	{
-		InboundScope scope = this.activeInboundScope.Value ?? throw new FormatException("Out-of-band streams may only be received in RPC request arguments.");
-		if (!scope.HasResponse)
+		if (callState?.IsDeclared(RpcCallState.Scopes.OutOfBandStreamsInbound) is not true)
+		{
+			throw new FormatException("Out-of-band streams may only be received in RPC request arguments.");
+		}
+
+		if (!callState.HasResponse)
 		{
 			throw new FormatException("Out-of-band streams cannot be received in notifications.");
 		}
 
 		MultiplexingStream multiplexingStream = this.MultiplexingStream ?? throw new NotSupportedException("Out-of-band streams require a configured MultiplexingStream.");
 		MultiplexingStream.Channel channel = multiplexingStream.AcceptChannel(ReadToken(token));
-		scope.Add(channel);
+		(callState.OutOfBandStreamsInbound ??= new(this)).Add(channel);
 		return channel;
 	}
 
@@ -129,7 +143,7 @@ internal sealed class OutOfBandStreamManager : IDisposable
 		MessagePackWriter writer = new(buffer);
 		writer.Write(token);
 		writer.Flush();
-		return JsonRpcValue.FromMessagePack((RawMessagePack)buffer.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
 	}
 
 	private static ulong ReadToken(JsonRpcValue token)
@@ -142,78 +156,86 @@ internal sealed class OutOfBandStreamManager : IDisposable
 				: throw new FormatException("Out-of-band stream token must be an unsigned integer.");
 		}
 
-		MessagePackReader reader = new(token.AsMessagePack());
+		MessagePackReader reader = new(token.AsOwnedMessagePack());
 		ulong tokenValue = reader.ReadUInt64();
 		return reader.End ? tokenValue : throw new FormatException("Out-of-band stream token must be an unsigned integer.");
 	}
 
-	internal sealed class OutboundScope : IDisposable
+	/// <summary>Declares that out-of-band streams may be received in one inbound message.</summary>
+	/// <remarks>State is created only when a stream is actually received.</remarks>
+	internal readonly struct InboundScope(RpcCallState callState) : IDisposable
 	{
-		private readonly OutOfBandStreamManager manager;
-		private readonly OutboundScope? priorScope;
-		private readonly List<MultiplexingStream.Channel> channels = [];
-		private bool committed;
-
-		internal OutboundScope(OutOfBandStreamManager manager)
-		{
-			this.manager = manager;
-			this.priorScope = manager.activeOutboundScope.Value;
-			manager.activeOutboundScope.Value = this;
-		}
-
 		public void Dispose()
 		{
-			this.manager.activeOutboundScope.Value = this.priorScope;
-			if (!this.committed)
+			callState.OutOfBandStreamsInbound?.Dispose();
+			callState.OutOfBandStreamsInbound = null;
+			callState.Undeclare(RpcCallState.Scopes.OutOfBandStreamsInbound);
+		}
+
+		internal void Complete(bool successful) => callState.OutOfBandStreamsInbound?.Complete(successful);
+	}
+
+	/// <summary>Declares that out-of-band streams may be sent in one outbound message.</summary>
+	/// <remarks>State is created only when a stream is actually sent.</remarks>
+	internal readonly struct OutboundScope(RpcCallState? callState) : IDisposable
+	{
+		public void Dispose()
+		{
+			if (callState is not null)
 			{
-				new ChannelSet([.. this.channels]).Dispose();
+				callState.OutOfBandStreamsOutbound?.Dispose();
+				callState.OutOfBandStreamsOutbound = null;
+				callState.Undeclare(RpcCallState.Scopes.OutOfBandStreamsOutbound);
 			}
 		}
 
-		internal void Add(MultiplexingStream.Channel channel) => this.channels.Add(channel);
+		internal ChannelSet Commit() => callState?.OutOfBandStreamsOutbound?.Commit() ?? ChannelSet.Empty;
+	}
+
+	internal sealed class OutboundScopeState
+	{
+		private List<MultiplexingStream.Channel>? channels;
+		private bool committed;
+
+		internal void Dispose()
+		{
+			if (!this.committed)
+			{
+				new ChannelSet(this.channels?.ToArray() ?? []).Dispose();
+			}
+		}
+
+		internal void Add(MultiplexingStream.Channel channel) => (this.channels ??= []).Add(channel);
 
 		internal ChannelSet Commit()
 		{
 			this.committed = true;
-			return new([.. this.channels]);
+			return this.channels is { Count: > 0 } channels ? new([.. channels]) : ChannelSet.Empty;
 		}
 	}
 
-	internal sealed class InboundScope : IDisposable
+	internal sealed class InboundScopeState(OutOfBandStreamManager manager)
 	{
-		private readonly OutOfBandStreamManager manager;
-		private readonly InboundScope? priorScope;
-		private readonly List<MultiplexingStream.Channel> channels = [];
+		private List<MultiplexingStream.Channel>? channels;
 		private bool completed;
 
-		internal InboundScope(OutOfBandStreamManager manager, bool hasResponse)
+		internal void Dispose()
 		{
-			this.manager = manager;
-			this.HasResponse = hasResponse;
-			this.priorScope = manager.activeInboundScope.Value;
-			manager.activeInboundScope.Value = this;
-		}
-
-		internal bool HasResponse { get; }
-
-		public void Dispose()
-		{
-			this.manager.activeInboundScope.Value = this.priorScope;
 			if (!this.completed)
 			{
-				new ChannelSet([.. this.channels]).Dispose();
+				new ChannelSet(this.channels?.ToArray() ?? []).Dispose();
 			}
 		}
 
-		internal void Add(MultiplexingStream.Channel channel) => this.channels.Add(channel);
+		internal void Add(MultiplexingStream.Channel channel) => (this.channels ??= []).Add(channel);
 
 		internal void Complete(bool successful)
 		{
 			this.completed = true;
-			ChannelSet set = new([.. this.channels]);
+			ChannelSet set = this.channels is { Count: > 0 } channels ? new([.. channels]) : ChannelSet.Empty;
 			if (successful)
 			{
-				this.manager.TrackActiveChannels(set);
+				manager.TrackActiveChannels(set);
 			}
 			else
 			{
@@ -224,6 +246,8 @@ internal sealed class OutOfBandStreamManager : IDisposable
 
 	internal sealed class ChannelSet(MultiplexingStream.Channel[] channels) : IDisposable
 	{
+		internal static readonly ChannelSet Empty = new([]);
+
 		internal bool IsEmpty => channels.Length == 0;
 
 		public void Dispose()

@@ -18,6 +18,9 @@ namespace Nerdbank.JsonRpc;
 /// </remarks>
 public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDisposable
 {
+	/// <summary>The default maximum encoded message size, in bytes.</summary>
+	internal const int DefaultMaximumMessageSize = 8 * 1024 * 1024;
+
 	private static readonly EventId MessageSent = new(1, "Message sent");
 	private static readonly EventId MessageReceived = new(2, "Message received");
 
@@ -27,6 +30,8 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	private readonly Task outboundTaskProcessor;
 	private readonly ChannelWriter<JsonRpcMessage> inboundMessageWriter;
 	private readonly ChannelReader<JsonRpcMessage> outboundMessageReader;
+	private volatile int maximumMessageSize = DefaultMaximumMessageSize;
+	private volatile bool inboundAborted;
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcPipeChannel"/> class with deferred transport startup.</summary>
 	/// <param name="pipe">The connected duplex pipe.</param>
@@ -54,6 +59,9 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	/// <summary>Gets the serializer selected by this channel for application values.</summary>
 	public abstract JsonRpcSerializer Serializer { get; }
 
+	/// <summary>Gets the configured maximum size, in bytes, of a message.</summary>
+	protected int MaximumMessageSize => this.maximumMessageSize;
+
 	protected ILogger Logger { get; }
 
 	public async ValueTask DisposeAsync()
@@ -63,11 +71,64 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 #else
 		this.disposalSource.Cancel();
 #endif
+
+		// The outbound queue is read without a cancellation token (see HandleOutboundMessagesAsync), so completing it is what wakes that reader.
+		this.Writer.TryComplete(new OperationCanceledException(this.disposalSource.Token));
 		this.StartTransport();
 
 #pragma warning disable VSTHRD003 // Avoid awaiting foreign Tasks - No main thread dependency.
 		await Task.WhenAll(this.inboundTaskProcessor, this.outboundTaskProcessor).ConfigureAwait(false);
 #pragma warning restore VSTHRD003 // Avoid awaiting foreign Tasks
+	}
+
+	/// <summary>Returns single-use pooled buffers to the pool once the message that carries them has been serialized.</summary>
+	/// <param name="message">The serialized message, whose single-use payloads must not be used again.</param>
+	internal static void ReleaseSingleUsePayload(JsonRpcMessage message)
+	{
+		switch (message)
+		{
+			case JsonRpcRequest request:
+				request.Arguments.ReleaseIfSingleUse();
+				break;
+			case JsonRpcResult result:
+				result.Result.ReleaseIfSingleUse();
+				break;
+			case JsonRpcMessageBatch batch:
+				foreach (JsonRpcMessage entry in batch.Messages)
+				{
+					ReleaseSingleUsePayload(entry);
+				}
+
+				break;
+		}
+	}
+
+	/// <summary>Gets the configured maximum encoded message size.</summary>
+	/// <returns>The maximum encoded message size in bytes.</returns>
+	internal int GetMaximumMessageSize() => this.maximumMessageSize;
+
+	/// <summary>Completes the queue of received messages so that a consumer waiting on it without a cancellation token wakes up.</summary>
+	/// <param name="cancellationToken">The canceled token that ended the consumer's interest in received messages.</param>
+	/// <remarks>
+	/// Channel readers reuse a cached wait operation only for waits that cannot be canceled, so the connection waits
+	/// without a token and calls this method instead when it stops reading.
+	/// </remarks>
+	internal void AbortInbound(CancellationToken cancellationToken)
+	{
+		this.inboundAborted = true;
+		this.inboundMessageWriter.TryComplete(new OperationCanceledException(cancellationToken));
+	}
+
+	/// <summary>Updates the configured maximum encoded message size.</summary>
+	/// <param name="value">The new positive maximum size, in bytes.</param>
+	internal void SetMaximumMessageSize(int value)
+	{
+		if (value <= 0)
+		{
+			throw new ArgumentOutOfRangeException(nameof(value), value, "A positive size is required.");
+		}
+
+		this.maximumMessageSize = value;
 	}
 
 	protected static Channel<JsonRpcMessage> CreateInboundChannel(int? capacity) => capacity is null
@@ -106,7 +167,11 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 		}
 		catch (Exception ex)
 		{
-			this.Logger.LogError(ex, "JSON-RPC inbound transport failed.");
+			if (!(ex is ChannelClosedException && this.inboundAborted))
+			{
+				this.Logger.LogError(ex, "JSON-RPC inbound transport failed.");
+			}
+
 			this.inboundMessageWriter.TryComplete(ex);
 			this.Writer.TryComplete(ex);
 #if NET
@@ -128,7 +193,9 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 #pragma warning restore VSTHRD003
 			while (!this.outboundMessageReader.Completion.IsCompleted)
 			{
-				JsonRpcMessage message = await this.outboundMessageReader.ReadAsync(cancellationToken).ConfigureAwait(false);
+				// Reading without a token lets the channel reuse its cached read operation; disposal completes the queue instead.
+				JsonRpcMessage message = await this.outboundMessageReader.ReadAsync(CancellationToken.None).ConfigureAwait(false);
+				cancellationToken.ThrowIfCancellationRequested();
 				await this.SendMessageAsync(writer, message, cancellationToken).ConfigureAwait(false);
 				await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
 				this.Logger.Log(LogLevel.Information, MessageSent, message, null, FormatLoggedMessage);

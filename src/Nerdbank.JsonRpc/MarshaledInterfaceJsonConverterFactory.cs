@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Reflection;
@@ -33,7 +33,7 @@ internal sealed class MarshaledInterfaceJsonConverterFactory(MarshaledObjectMana
 		public override T? Read(ref Nerdbank.Json.JsonReader reader, Nerdbank.Json.SerializationContext context)
 		{
 			string rawValue = reader.ReadRawValue();
-			return rawValue == "null" ? default : this.typeIsObserver ? (T)ObserverMarshaler.CreateProxy(manager, JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(rawValue)), shape) : this.typeIsProgress ? (T)ProgressMarshaler.CreateProxy(progress, JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(rawValue)), shape) : manager.UnmarshalMarshalable<T>(JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(rawValue)), shape);
+			return rawValue == "null" ? default : this.typeIsObserver ? (T)ObserverMarshaler.CreateProxy(manager, JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(rawValue)), shape, RpcCallState.Current) : this.typeIsProgress ? (T)ProgressMarshaler.CreateProxy(progress, JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(rawValue)), shape, RpcCallState.Current) : manager.UnmarshalMarshalable<T>(JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(rawValue)), shape, RpcCallState.Current);
 		}
 
 		public override void Write(ref Nerdbank.Json.JsonWriter writer, T? value, Nerdbank.Json.SerializationContext context)
@@ -44,7 +44,7 @@ internal sealed class MarshaledInterfaceJsonConverterFactory(MarshaledObjectMana
 				return;
 			}
 
-			JsonRpcValue marker = this.typeIsObserver ? ObserverMarshaler.Marshal(manager, value, shape, JsonRpcEncoding.Json) : this.typeIsProgress ? ProgressMarshaler.Marshal(progress, value, shape, JsonRpcEncoding.Json) : manager.MarshalMarshalable(value, shape, JsonRpcEncoding.Json);
+			JsonRpcValue marker = this.typeIsObserver ? ObserverMarshaler.Marshal(manager, value, shape, JsonRpcEncoding.Json, RpcCallState.Current) : this.typeIsProgress ? ProgressMarshaler.Marshal(progress, value, shape, JsonRpcEncoding.Json, RpcCallState.Current) : manager.MarshalMarshalable(value, shape, JsonRpcEncoding.Json, RpcCallState.Current);
 			writer.WriteRawValue(Encoding.UTF8.GetString(marker.OwnedBytes.Span));
 		}
 	}

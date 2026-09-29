@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -33,8 +33,6 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	private readonly object sync = new();
 	private readonly Dictionary<long, Generator> generators = [];
 	private readonly Dictionary<RequestId, List<long>> generatorsByRequest = [];
-	private readonly System.Threading.AsyncLocal<OutboundScope?> activeOutboundScope = new();
-	private readonly System.Threading.AsyncLocal<InboundScope?> activeInboundScope = new();
 	private long nextToken;
 
 	/// <summary>Gets the connection this manager serves.</summary>
@@ -58,25 +56,40 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	}
 
 	/// <summary>Begins tracking the generators created while serializing one outbound message.</summary>
+	/// <param name="callState">The state shared by every converter participating in this message.</param>
 	/// <param name="argumentLifetime">The call-scoped arguments retained by returned generators.</param>
 	/// <returns>A scope to dispose when serialization completes.</returns>
-	internal OutboundScope TrackOutboundMessage(CallScopedLifetime? argumentLifetime = null) => new(this, argumentLifetime);
+	internal OutboundScope TrackOutboundMessage(RpcCallState callState, CallScopedLifetime? argumentLifetime = null)
+	{
+		callState.DeclareAsyncEnumerablesOutbound(argumentLifetime);
+		return new(callState);
+	}
 
 	/// <summary>Begins tracking an inbound message so that sequences in notifications can be rejected.</summary>
 	/// <param name="hasResponse">Whether the inbound message is a request that will receive a response.</param>
+	/// <param name="callState">The state shared by every converter participating in this message.</param>
 	/// <returns>A scope to dispose when deserialization completes.</returns>
-	internal InboundScope TrackInboundRequest(bool hasResponse) => new(this, hasResponse);
+	internal InboundScope TrackInboundRequest(bool hasResponse, RpcCallState callState)
+	{
+		callState.DeclareInbound(RpcCallState.Scopes.AsyncEnumerablesInbound, hasResponse);
+		return new(callState);
+	}
 
 	/// <summary>Assigns a token to a sequence being sent to the remote party and prepares to generate its values.</summary>
 	/// <typeparam name="T">The type of value produced by the sequence.</typeparam>
 	/// <param name="enumerable">The sequence to transmit.</param>
 	/// <param name="elementShape">The type shape describing <typeparamref name="T"/>.</param>
 	/// <param name="encoding">The wire encoding to produce.</param>
+	/// <param name="callState">The state shared by every converter participating in this message.</param>
 	/// <returns>The encoded value to write in place of the sequence.</returns>
-	internal JsonRpcValue Marshal<T>(IAsyncEnumerable<T> enumerable, ITypeShape<T> elementShape, JsonRpcEncoding encoding)
+	internal JsonRpcValue Marshal<T>(IAsyncEnumerable<T> enumerable, ITypeShape<T> elementShape, JsonRpcEncoding encoding, RpcCallState? callState)
 	{
-		OutboundScope scope = this.activeOutboundScope.Value
-			?? throw new InvalidOperationException("IAsyncEnumerable<T> values may only be sent in RPC requests and responses.");
+		if (callState?.IsDeclared(RpcCallState.Scopes.AsyncEnumerablesOutbound) is not true)
+		{
+			throw new InvalidOperationException("IAsyncEnumerable<T> values may only be sent in RPC requests and responses.");
+		}
+
+		OutboundScopeState scope = callState.AsyncEnumerablesOutbound ??= new(this);
 
 		JsonRpcEnumerableSettings settings = JsonRpcEnumerableSettings.Default;
 		IReadOnlyList<T> prefetched = Array.Empty<T>();
@@ -93,7 +106,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			token = Interlocked.Increment(ref this.nextToken);
 			Generator generator = new Generator<T>(this, token.Value, enumerable, elementShape, settings)
 			{
-				ArgumentLifetime = scope.ArgumentLifetime?.Retain(),
+				ArgumentLifetime = callState.AsyncEnumerableArgumentLifetime?.Retain(),
 			};
 			lock (this.sync)
 			{
@@ -103,19 +116,20 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			scope.Add(token.Value);
 		}
 
-		return this.WriteOriginatingValue(token, prefetched, elementShape, encoding);
+		return this.WriteOriginatingValue(token, prefetched, elementShape, encoding, callState);
 	}
 
 	/// <summary>Creates a local sequence that pulls its values from a remote generator.</summary>
 	/// <typeparam name="T">The type of value produced by the sequence.</typeparam>
 	/// <param name="value">The encoded value carrying the token and any values that rode along with it.</param>
 	/// <param name="elementShape">The type shape describing <typeparamref name="T"/>.</param>
+	/// <param name="callState">The state shared by every converter participating in this message.</param>
 	/// <returns>A sequence that may be enumerated exactly once.</returns>
 #pragma warning disable VSTHRD200 // This method returns a sequence, not an awaitable.
-	internal IAsyncEnumerable<T> Unmarshal<T>(JsonRpcValue value, ITypeShape<T> elementShape)
+	internal IAsyncEnumerable<T> Unmarshal<T>(JsonRpcValue value, ITypeShape<T> elementShape, RpcCallState? callState)
 #pragma warning restore VSTHRD200
 	{
-		if (this.activeInboundScope.Value is { HasResponse: false })
+		if (callState?.IsDeclaredForNotification(RpcCallState.Scopes.AsyncEnumerablesInbound) is true)
 		{
 			throw new FormatException("IAsyncEnumerable<T> values cannot be received in notifications.");
 		}
@@ -124,13 +138,13 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		List<T> prefetched = new(rawValues.Count);
 		foreach (JsonRpcValue rawValue in rawValues)
 		{
-			prefetched.Add(owner.UserDataSerializer.Deserialize(rawValue, elementShape, owner.DisposalToken));
+			prefetched.Add(owner.UserDataSerializer.Deserialize(rawValue, elementShape, callState, owner.DisposalToken));
 		}
 
 		ConsumerEnumerable<T> consumer = new(this, token, prefetched, elementShape);
-		if (token.HasValue)
+		if (token.HasValue && callState?.IsDeclared(RpcCallState.Scopes.AsyncEnumerablesInbound) is true)
 		{
-			this.activeInboundScope.Value?.Add(consumer.RetainCallScopedArguments);
+			(callState.AsyncEnumerablesInbound ??= new()).Add(consumer.RetainCallScopedArguments);
 		}
 
 		return consumer;
@@ -155,7 +169,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	/// <param name="id">The ID of the completed request.</param>
 	internal void CompleteOutboundRequest(RequestId id)
 	{
-		List<Generator> released = [];
+		List<Generator> released;
 		lock (this.sync)
 		{
 			if (!this.generatorsByRequest.TryGetValue(id, out List<long>? tokens))
@@ -164,6 +178,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			}
 
 			this.generatorsByRequest.Remove(id);
+			released = new(tokens.Count);
 			foreach (long token in tokens)
 			{
 				if (this.generators.TryGetValue(token, out Generator? generator))
@@ -239,7 +254,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 				: throw new FormatException("An enumerator token must be an integer.");
 		}
 
-		MessagePackReader reader = new(value.AsMessagePack());
+		MessagePackReader reader = new(value.AsOwnedMessagePack());
 		return reader.ReadInt64();
 	}
 
@@ -278,7 +293,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			return (token, values);
 		}
 
-		MessagePackReader reader = new(value.AsMessagePack());
+		MessagePackReader reader = new(value.AsOwnedMessagePack());
 		SerializationContext context = new();
 		int count = reader.ReadMapHeader();
 		for (int i = 0; i < count; i++)
@@ -341,7 +356,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			return (values, finished);
 		}
 
-		MessagePackReader reader = new(value.AsMessagePack());
+		MessagePackReader reader = new(value.AsOwnedMessagePack());
 		SerializationContext context = new();
 		int count = reader.ReadMapHeader();
 		for (int i = 0; i < count; i++)
@@ -389,8 +404,9 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	/// <param name="values">The values to include in this message.</param>
 	/// <param name="elementShape">The type shape describing <typeparamref name="T"/>.</param>
 	/// <param name="encoding">The wire encoding to produce.</param>
+	/// <param name="callState">The state shared by every converter participating in this message.</param>
 	/// <returns>The encoded value.</returns>
-	private JsonRpcValue WriteOriginatingValue<T>(long? token, IReadOnlyList<T> values, ITypeShape<T> elementShape, JsonRpcEncoding encoding)
+	private JsonRpcValue WriteOriginatingValue<T>(long? token, IReadOnlyList<T> values, ITypeShape<T> elementShape, JsonRpcEncoding encoding, RpcCallState? callState)
 	{
 		if (encoding == JsonRpcEncoding.Json)
 		{
@@ -414,14 +430,14 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 						Write(buffer, ",");
 					}
 
-					Write(buffer, owner.UserDataSerializer.Serialize(values[i], elementShape, owner.DisposalToken).OwnedBytes.Span);
+					Write(buffer, owner.UserDataSerializer.Serialize(values[i], elementShape, callState, owner.DisposalToken).OwnedBytes.Span);
 				}
 
 				Write(buffer, "]");
 			}
 
 			Write(buffer, "}");
-			return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
+			return JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.Json);
 		}
 
 		using Sequence<byte> messagePackBuffer = new();
@@ -439,12 +455,12 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			writer.WriteArrayHeader(values.Count);
 			foreach (T value in values)
 			{
-				writer.Write(owner.UserDataSerializer.Serialize(value, elementShape, owner.DisposalToken).AsMessagePack());
+				writer.Write(owner.UserDataSerializer.Serialize(value, elementShape, callState, owner.DisposalToken).AsOwnedMessagePack());
 			}
 		}
 
 		writer.Flush();
-		return JsonRpcValue.FromMessagePack((RawMessagePack)messagePackBuffer.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromOwnedBytes(messagePackBuffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
 	}
 
 	/// <summary>Encodes a generator's response carrying a batch of values.</summary>
@@ -453,8 +469,9 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	/// <param name="finished">Whether the sequence has ended.</param>
 	/// <param name="elementShape">The type shape describing <typeparamref name="T"/>.</param>
 	/// <param name="encoding">The wire encoding to produce.</param>
+	/// <param name="callState">The state shared by every converter participating in this message.</param>
 	/// <returns>The encoded response value.</returns>
-	private JsonRpcValue WriteResultValue<T>(IReadOnlyList<T> values, bool finished, ITypeShape<T> elementShape, JsonRpcEncoding encoding)
+	private JsonRpcValue WriteResultValue<T>(IReadOnlyList<T> values, bool finished, ITypeShape<T> elementShape, JsonRpcEncoding encoding, RpcCallState? callState)
 	{
 		if (encoding == JsonRpcEncoding.Json)
 		{
@@ -467,11 +484,11 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 					Write(buffer, ",");
 				}
 
-				Write(buffer, owner.UserDataSerializer.Serialize(values[i], elementShape, owner.DisposalToken).OwnedBytes.Span);
+				Write(buffer, owner.UserDataSerializer.Serialize(values[i], elementShape, callState, owner.DisposalToken).OwnedBytes.Span);
 			}
 
 			Write(buffer, finished ? "],\"" + FinishedPropertyName + "\":true}" : "],\"" + FinishedPropertyName + "\":false}");
-			return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
+			return JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.Json);
 		}
 
 		using Sequence<byte> messagePackBuffer = new();
@@ -481,13 +498,13 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		writer.WriteArrayHeader(values.Count);
 		foreach (T value in values)
 		{
-			writer.Write(owner.UserDataSerializer.Serialize(value, elementShape, owner.DisposalToken).AsMessagePack());
+			writer.Write(owner.UserDataSerializer.Serialize(value, elementShape, callState, owner.DisposalToken).AsOwnedMessagePack());
 		}
 
 		writer.Write(FinishedPropertyName);
 		writer.Write(finished);
 		writer.Flush();
-		return JsonRpcValue.FromMessagePack((RawMessagePack)messagePackBuffer.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromOwnedBytes(messagePackBuffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
 	}
 
 	/// <summary>Encodes the single token argument shared by the enumerator protocol methods.</summary>
@@ -501,7 +518,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			Write(buffer, "{\"" + TokenPropertyName + "\":");
 			Write(buffer, token.ToString(CultureInfo.InvariantCulture));
 			Write(buffer, "}");
-			return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
+			return JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.Json);
 		}
 
 		using Sequence<byte> messagePackBuffer = new();
@@ -510,7 +527,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		writer.Write(TokenPropertyName);
 		writer.Write(token);
 		writer.Flush();
-		return JsonRpcValue.FromMessagePack((RawMessagePack)messagePackBuffer.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromOwnedBytes(messagePackBuffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
 	}
 
 	/// <summary>Encodes an empty value for responses that carry no data.</summary>
@@ -519,14 +536,14 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	{
 		if (owner.UserDataSerializer.Encoding == JsonRpcEncoding.Json)
 		{
-			return JsonRpcValue.FromJson("null"u8.ToArray());
+			return JsonRpcValue.FromOwnedBytes("null"u8.ToArray(), JsonRpcEncoding.Json);
 		}
 
 		using Sequence<byte> buffer = new();
 		MessagePackWriter writer = new(buffer);
 		writer.WriteNil();
 		writer.Flush();
-		return JsonRpcValue.FromMessagePack((RawMessagePack)buffer.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
 	}
 
 	/// <summary>Extracts the <c>token</c> argument from an inbound enumerator protocol request.</summary>
@@ -534,7 +551,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	/// <returns>The token identifying the generator.</returns>
 	private long ReadTokenArgument(DispatchRequest dispatch)
 	{
-		(bool named, List<(string? Name, JsonRpcValue Value)> values) = dispatch.UserDataSerializer.ReadArguments(dispatch.Request.Arguments);
+		(bool named, ArgumentList values) = dispatch.UserDataSerializer.ReadArguments(dispatch.Request);
 		if (named)
 		{
 			foreach ((string? name, JsonRpcValue value) in values)
@@ -579,11 +596,12 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			}
 
 			JsonRpcValue result;
-			using (OutboundScope nestedScope = this.TrackOutboundMessage(generator.ArgumentLifetime))
+			RpcCallState nestedCallState = new();
+			using (OutboundScope nestedScope = this.TrackOutboundMessage(nestedCallState, generator.ArgumentLifetime))
 			{
 				try
 				{
-					result = await generator.GetNextValuesAsync(dispatch.CancellationToken).ConfigureAwait(false);
+					result = await generator.GetNextValuesAsync(nestedCallState, dispatch.CancellationToken).ConfigureAwait(false);
 				}
 				catch
 				{
@@ -674,7 +692,8 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		{
 			if (waitForCompletion)
 			{
-				await owner.RequestRawAsync(AbortMethod, this.CreateTokenArguments(token), CancellationToken.None).ConfigureAwait(false);
+				JsonRpcValue response = await owner.RequestRawAsync(AbortMethod, this.CreateTokenArguments(token), CancellationToken.None).ConfigureAwait(false);
+				response.Release();
 			}
 			else
 			{
@@ -688,89 +707,90 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		}
 	}
 
-	/// <summary>Tracks the generators created while one outbound message is serialized.</summary>
-	internal sealed class OutboundScope : IDisposable
+	/// <summary>Declares that sequences may be received in one inbound message.</summary>
+	/// <remarks>State is created only when a sequence is actually received.</remarks>
+	internal readonly struct InboundScope(RpcCallState callState) : IDisposable
 	{
-		private readonly AsyncEnumerableManager manager;
-		private readonly OutboundScope? priorScope;
-		private readonly List<long> tokens = [];
-		private bool committed;
-
-		/// <summary>Initializes a new instance of the <see cref="OutboundScope"/> class.</summary>
-		/// <param name="manager">The owning manager.</param>
-		/// <param name="argumentLifetime">The arguments retained by generators created in this scope.</param>
-		internal OutboundScope(AsyncEnumerableManager manager, CallScopedLifetime? argumentLifetime)
+		/// <summary>Ends this scope.</summary>
+		public void Dispose()
 		{
-			this.manager = manager;
-			this.ArgumentLifetime = argumentLifetime;
-			this.priorScope = manager.activeOutboundScope.Value;
-			manager.activeOutboundScope.Value = this;
+			callState.AsyncEnumerablesInbound = null;
+			callState.Undeclare(RpcCallState.Scopes.AsyncEnumerablesInbound);
 		}
 
-		/// <summary>Gets the arguments retained by generators created in this scope.</summary>
-		internal CallScopedLifetime? ArgumentLifetime { get; }
+		/// <summary>Transfers successful response argument ownership to its consumers.</summary>
+		/// <param name="lifetime">The call-scoped argument lifetime, if any.</param>
+		internal void RetainCallScopedArguments(CallScopedLifetime? lifetime) => callState.AsyncEnumerablesInbound?.RetainCallScopedArguments(lifetime);
+	}
 
+	/// <summary>Declares that sequences may be sent in one outbound message.</summary>
+	/// <remarks>State is created only when a sequence is actually sent.</remarks>
+	internal readonly struct OutboundScope(RpcCallState? callState) : IDisposable
+	{
 		/// <summary>Ends this scope, releasing any generators that were never committed.</summary>
 		public void Dispose()
 		{
-			this.manager.activeOutboundScope.Value = this.priorScope;
-			if (!this.committed)
+			if (callState is not null)
 			{
-				foreach (long token in this.tokens)
+				callState.AsyncEnumerablesOutbound?.Dispose();
+				callState.AsyncEnumerablesOutbound = null;
+				callState.Undeclare(RpcCallState.Scopes.AsyncEnumerablesOutbound);
+			}
+		}
+
+		/// <summary>Transfers ownership of the tracked generators to the caller.</summary>
+		/// <returns>The set of generator tokens carried by the serialized message.</returns>
+		internal TokenSet Commit() => callState?.AsyncEnumerablesOutbound?.Commit() ?? TokenSet.Empty;
+	}
+
+	/// <summary>Tracks the generators created while one outbound message is serialized.</summary>
+	/// <param name="manager">The owning manager.</param>
+	internal sealed class OutboundScopeState(AsyncEnumerableManager manager)
+	{
+		private List<long>? tokens;
+		private bool committed;
+
+		/// <summary>Releases any generators that were never committed.</summary>
+		internal void Dispose()
+		{
+			if (!this.committed && this.tokens is { } tokens)
+			{
+				foreach (long token in tokens)
 				{
-					this.manager.DisposeGeneratorAsync(token).AsTask().Forget();
+					manager.DisposeGeneratorAsync(token).AsTask().Forget();
 				}
 			}
 		}
 
 		/// <summary>Records a generator created while serializing this message.</summary>
 		/// <param name="token">The token identifying the generator.</param>
-		internal void Add(long token) => this.tokens.Add(token);
+		internal void Add(long token) => (this.tokens ??= []).Add(token);
 
 		/// <summary>Transfers ownership of the tracked generators to the caller.</summary>
 		/// <returns>The set of generator tokens carried by the serialized message.</returns>
 		internal TokenSet Commit()
 		{
 			this.committed = true;
-			return new([.. this.tokens]);
+			return this.tokens is { Count: > 0 } tokens ? new([.. tokens]) : TokenSet.Empty;
 		}
 	}
 
-	/// <summary>Tracks whether the message currently being deserialized may carry a sequence.</summary>
-	internal sealed class InboundScope : IDisposable
+	/// <summary>Tracks the sequence consumers created while one inbound message is deserialized.</summary>
+	internal sealed class InboundScopeState
 	{
-		private readonly AsyncEnumerableManager manager;
-		private readonly InboundScope? priorScope;
-		private readonly List<Action<CallScopedLifetime>> consumers = [];
-
-		/// <summary>Initializes a new instance of the <see cref="InboundScope"/> class.</summary>
-		/// <param name="manager">The owning manager.</param>
-		/// <param name="hasResponse">Whether the inbound message will receive a response.</param>
-		internal InboundScope(AsyncEnumerableManager manager, bool hasResponse)
-		{
-			this.manager = manager;
-			this.HasResponse = hasResponse;
-			this.priorScope = manager.activeInboundScope.Value;
-			manager.activeInboundScope.Value = this;
-		}
-
-		/// <summary>Gets a value indicating whether the inbound message will receive a response.</summary>
-		internal bool HasResponse { get; }
-
-		/// <summary>Ends this scope.</summary>
-		public void Dispose() => this.manager.activeInboundScope.Value = this.priorScope;
+		private List<Action<CallScopedLifetime>>? consumers;
 
 		/// <summary>Records a consumer created while decoding the message.</summary>
 		/// <param name="retain">Attaches a lease to the consumer.</param>
-		internal void Add(Action<CallScopedLifetime> retain) => this.consumers.Add(retain);
+		internal void Add(Action<CallScopedLifetime> retain) => (this.consumers ??= []).Add(retain);
 
 		/// <summary>Transfers successful response argument ownership to its consumers.</summary>
 		/// <param name="lifetime">The call-scoped argument lifetime, if any.</param>
 		internal void RetainCallScopedArguments(CallScopedLifetime? lifetime)
 		{
-			if (lifetime is not null)
+			if (lifetime is not null && this.consumers is { } consumers)
 			{
-				foreach (Action<CallScopedLifetime> retain in this.consumers)
+				foreach (Action<CallScopedLifetime> retain in consumers)
 				{
 					retain(lifetime);
 				}
@@ -782,6 +802,8 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	/// <param name="tokens">The tokens.</param>
 	internal sealed class TokenSet(long[] tokens)
 	{
+		internal static readonly TokenSet Empty = new([]);
+
 		/// <summary>Gets the tokens.</summary>
 		internal IReadOnlyList<long> Tokens => tokens;
 
@@ -796,9 +818,10 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		internal CallScopedLifetime? ArgumentLifetime { get; set; }
 
 		/// <summary>Produces the next batch of values.</summary>
+		/// <param name="callState">The state shared by every converter participating in the response message.</param>
 		/// <param name="cancellationToken">A token to cancel value production.</param>
 		/// <returns>The encoded response carrying the batch.</returns>
-		internal abstract ValueTask<JsonRpcValue> GetNextValuesAsync(CancellationToken cancellationToken);
+		internal abstract ValueTask<JsonRpcValue> GetNextValuesAsync(RpcCallState? callState, CancellationToken cancellationToken);
 
 		/// <summary>Releases the underlying state machine.</summary>
 		/// <returns>A task that completes when the state machine has been released.</returns>
@@ -841,7 +864,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		}
 
 		/// <inheritdoc/>
-		internal override async ValueTask<JsonRpcValue> GetNextValuesAsync(CancellationToken cancellationToken)
+		internal override async ValueTask<JsonRpcValue> GetNextValuesAsync(RpcCallState? callState, CancellationToken cancellationToken)
 		{
 			using CancellationTokenRegistration registration = cancellationToken.Register(static state => ((CancellationTokenSource)state!).Cancel(), this.cancellationSource);
 			CancellationToken generatorToken = this.cancellationSource.Token;
@@ -885,7 +908,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 				}
 			}
 
-			JsonRpcValue result = this.manager.WriteResultValue(results, finished, this.elementShape, this.manager.Owner.UserDataSerializer.Encoding);
+			JsonRpcValue result = this.manager.WriteResultValue(results, finished, this.elementShape, this.manager.Owner.UserDataSerializer.Encoding, callState);
 			if (finished)
 			{
 				// The consumer is told not to ask again, so it will never send an abort message for this sequence.
@@ -1079,27 +1102,35 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 					}
 
 					JsonRpcValue response = await this.manager.RequestNextValuesAsync(activeToken, this.cancellationToken).ConfigureAwait(false);
-					(List<JsonRpcValue> values, bool finished) = ReadResultValue(response);
-					this.generatorFinished = finished;
-					using (InboundScope inboundScope = this.manager.TrackInboundRequest(hasResponse: true))
+					try
 					{
-						foreach (JsonRpcValue value in values)
+						(List<JsonRpcValue> values, bool finished) = ReadResultValue(response);
+						this.generatorFinished = finished;
+						using (RpcCallState.Lease callStateLease = new(RpcCallState.Rent()))
+						using (InboundScope inboundScope = this.manager.TrackInboundRequest(hasResponse: true, callStateLease.State))
 						{
-							this.cached.Enqueue(this.manager.Owner.UserDataSerializer.Deserialize(value, this.elementShape, this.cancellationToken));
+							foreach (JsonRpcValue value in values)
+							{
+								this.cached.Enqueue(this.manager.Owner.UserDataSerializer.Deserialize(value, this.elementShape, callStateLease.State, this.cancellationToken));
+							}
+
+							inboundScope.RetainCallScopedArguments(this.argumentLifetime);
 						}
 
-						inboundScope.RetainCallScopedArguments(this.argumentLifetime);
-					}
+						if (finished)
+						{
+							Interlocked.Exchange(ref this.argumentLifetime, null)?.Dispose();
+						}
 
-					if (finished)
-					{
-						Interlocked.Exchange(ref this.argumentLifetime, null)?.Dispose();
+						if (this.cached.Count == 0)
+						{
+							this.Current = default!;
+							return false;
+						}
 					}
-
-					if (this.cached.Count == 0)
+					finally
 					{
-						this.Current = default!;
-						return false;
+						response.Release();
 					}
 				}
 			}

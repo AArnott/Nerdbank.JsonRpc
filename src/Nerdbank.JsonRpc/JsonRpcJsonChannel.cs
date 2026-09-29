@@ -1,11 +1,14 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
+using System.Buffers.Text;
 using System.IO.Pipelines;
 using System.Net;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Nerdbank.Streams;
 
 namespace Nerdbank.JsonRpc;
 
@@ -22,9 +25,14 @@ public enum JsonRpcJsonFraming
 /// <summary>Encodes JSON-RPC messages as UTF-8 JSON with explicit framing.</summary>
 public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 {
-	private const int MaximumFrameSize = 8 * 1024 * 1024;
 	private const int MaximumHeaderSize = 8192;
 	private readonly JsonRpcJsonFraming framing;
+
+	/// <summary>The buffer that each outbound frame is encoded into, reused because messages are sent one at a time.</summary>
+	private readonly Sequence<byte> sendBuffer = new(ArrayPool<byte>.Shared);
+
+	/// <summary>The writer that encodes outbound frames into <see cref="sendBuffer"/>.</summary>
+	private Utf8JsonWriter? sendWriter;
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcJsonChannel"/> class.</summary>
 	/// <param name="pipe">The connected pipe.</param>
@@ -82,7 +90,7 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 					yield break;
 				}
 
-				if (buffer.Length > MaximumFrameSize + MaximumHeaderSize)
+				if ((long)buffer.Length > (long)this.MaximumMessageSize + MaximumHeaderSize)
 				{
 					throw new ProtocolViolationException("JSON-RPC frame exceeds the size limit.");
 				}
@@ -97,21 +105,43 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 	{
 		cancellationToken.ThrowIfCancellationRequested();
 		this.Serializer.ValidateMessage(message);
-		byte[] payload = JsonRpcJsonCodec.Write(message);
-		if (payload.Length > MaximumFrameSize)
+		Sequence<byte> payload = this.sendBuffer;
+		try
 		{
-			throw new ProtocolViolationException("JSON-RPC frame exceeds the size limit.");
-		}
+			if (this.sendWriter is null)
+			{
+				this.sendWriter = new(payload);
+			}
+			else
+			{
+				this.sendWriter.Reset(payload);
+			}
 
-		if (this.framing == JsonRpcJsonFraming.ContentLength)
-		{
-			writer.Write(System.Text.Encoding.ASCII.GetBytes($"Content-Length: {payload.Length}\r\n\r\n"));
-		}
+			JsonRpcJsonCodec.Write(this.sendWriter, message);
+			ReleaseSingleUsePayload(message);
+			if (payload.Length > this.MaximumMessageSize)
+			{
+				throw new ProtocolViolationException("JSON-RPC frame exceeds the size limit.");
+			}
 
-		writer.Write(payload);
-		if (this.framing == JsonRpcJsonFraming.NewlineDelimited)
+			if (this.framing == JsonRpcJsonFraming.ContentLength)
+			{
+				WriteContentLengthHeader(writer, (int)payload.Length);
+			}
+
+			foreach (ReadOnlyMemory<byte> segment in payload.AsReadOnlySequence)
+			{
+				writer.Write(segment.Span);
+			}
+
+			if (this.framing == JsonRpcJsonFraming.NewlineDelimited)
+			{
+				writer.Write("\n"u8);
+			}
+		}
+		finally
 		{
-			writer.Write(new byte[] { (byte)'\n' });
+			payload.Reset();
 		}
 
 		return default;
@@ -132,6 +162,17 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 		return CreateInboundChannel(capacity);
 	}
 
+	private static void WriteContentLengthHeader(IBufferWriter<byte> writer, int length)
+	{
+		ReadOnlySpan<byte> prefix = "Content-Length: "u8;
+		ReadOnlySpan<byte> suffix = "\r\n\r\n"u8;
+		Span<byte> header = writer.GetSpan(prefix.Length + 10 + suffix.Length);
+		prefix.CopyTo(header);
+		Utf8Formatter.TryFormat(length, header.Slice(prefix.Length), out int digits);
+		suffix.CopyTo(header.Slice(prefix.Length + digits));
+		writer.Advance(prefix.Length + digits + suffix.Length);
+	}
+
 	private bool TryReadFrame(ReadOnlySequence<byte> buffer, out byte[]? payload, out SequencePosition consumed)
 	{
 		payload = null;
@@ -145,12 +186,12 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 			}
 
 			ReadOnlySequence<byte> record = buffer.Slice(0, newline.Value);
-			if (!record.IsEmpty && record.Slice(record.Length - 1, 1).ToArray()[0] == (byte)'\r')
+			if (!record.IsEmpty && record.Slice(record.Length - 1, 1).First.Span[0] == (byte)'\r')
 			{
 				record = record.Slice(0, record.Length - 1);
 			}
 
-			if (record.IsEmpty || record.Length > MaximumFrameSize)
+			if (record.IsEmpty || record.Length > this.MaximumMessageSize)
 			{
 				throw new ProtocolViolationException("Invalid or oversized JSON-RPC line.");
 			}
@@ -192,7 +233,7 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 
 			if (line.Substring(0, separator).Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
 			{
-				if (length.HasValue || !int.TryParse(line.Substring(separator + 1).Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int parsed) || parsed <= 0 || parsed > MaximumFrameSize)
+				if (length.HasValue || !int.TryParse(line.Substring(separator + 1).Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int parsed) || parsed <= 0 || parsed > this.MaximumMessageSize)
 				{
 					throw new ProtocolViolationException("Invalid JSON-RPC Content-Length header.");
 				}

@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO;
@@ -16,7 +16,7 @@ internal sealed class OutOfBandStreamMessagePackConverterFactory(OutOfBandStream
 	private abstract class Converter<T>(OutOfBandStreamManager manager) : MessagePackConverter<T>
 	{
 		public override T? Read(ref MessagePackReader reader, SerializationContext context)
-			=> reader.TryReadNil() ? default : this.FromPipe(manager.Unmarshal(JsonRpcValue.FromMessagePack(reader.ReadRaw(context))));
+			=> reader.TryReadNil() ? default : this.FromPipe(manager.Unmarshal(JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), RpcCallState.Current));
 
 		public override void Write(ref MessagePackWriter writer, in T? value, SerializationContext context)
 		{
@@ -26,7 +26,7 @@ internal sealed class OutOfBandStreamMessagePackConverterFactory(OutOfBandStream
 				return;
 			}
 
-			writer.Write(manager.Marshal(this.ToPipe(value), JsonRpcEncoding.MessagePack).AsMessagePack());
+			writer.Write(manager.Marshal(this.ToPipe(value), JsonRpcEncoding.MessagePack, RpcCallState.Current).AsOwnedMessagePack());
 		}
 
 		protected abstract IDuplexPipe ToPipe(T value);

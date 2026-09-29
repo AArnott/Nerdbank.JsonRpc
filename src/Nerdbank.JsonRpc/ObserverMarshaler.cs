@@ -11,11 +11,11 @@ namespace Nerdbank.JsonRpc;
 
 internal static class ObserverMarshaler
 {
-	internal static JsonRpcValue Marshal<T>(MarshaledObjectManager manager, T observer, ITypeShape<T> shape, JsonRpcEncoding encoding)
-		=> ((ObserverContract)GetObserverContract(shape)).Marshal(manager, observer!, encoding);
+	internal static JsonRpcValue Marshal<T>(MarshaledObjectManager manager, T observer, ITypeShape<T> shape, JsonRpcEncoding encoding, RpcCallState? callState)
+		=> ((ObserverContract)GetObserverContract(shape)).Marshal(manager, observer!, encoding, callState);
 
-	internal static object CreateProxy<T>(MarshaledObjectManager manager, JsonRpcValue marker, ITypeShape<T> shape)
-		=> ((ObserverContract)GetObserverContract(shape)).Unmarshal(manager, marker);
+	internal static object CreateProxy<T>(MarshaledObjectManager manager, JsonRpcValue marker, ITypeShape<T> shape, RpcCallState? callState)
+		=> ((ObserverContract)GetObserverContract(shape)).Unmarshal(manager, marker, callState);
 
 	internal static TargetRegistration CreateRegistration<T>(ITypeShape<T> valueShape)
 	{
@@ -33,7 +33,7 @@ internal static class ObserverMarshaler
 		try
 		{
 			IObserver<T> observer = (IObserver<T>)dispatch.TargetInstance!;
-			(bool named, List<(string? Name, JsonRpcValue Value)> values) = dispatch.UserDataSerializer.ReadArguments(dispatch.Request.Arguments);
+			(bool named, ArgumentList values) = dispatch.UserDataSerializer.ReadArguments(dispatch.Request);
 			if (named || values.Count != (method == "onCompleted" ? 0 : 1))
 			{
 				throw new FormatException($"Invalid arguments for observer method '{method}'.");
@@ -42,7 +42,7 @@ internal static class ObserverMarshaler
 			switch (method)
 			{
 				case "onNext":
-					observer.OnNext(dispatch.UserDataSerializer.Deserialize(values[0].Value, shape, dispatch.CancellationToken));
+					observer.OnNext(dispatch.UserDataSerializer.Deserialize(values[0].Value, shape, dispatch.CallState, dispatch.CancellationToken));
 					break;
 				case "onError":
 					observer.OnError(new Exception(ReadErrorMessage(values[0].Value)));
@@ -82,7 +82,7 @@ internal static class ObserverMarshaler
 			throw new FormatException("Observer error message is missing.");
 		}
 
-		MessagePackReader reader = new(value.AsMessagePack());
+		MessagePackReader reader = new(value.AsOwnedMessagePack());
 		SerializationContext context = new();
 		int count = reader.ReadMapHeader();
 		for (int i = 0; i < count; i++)
@@ -140,7 +140,7 @@ internal static class ObserverMarshaler
 				writer.WriteEndObject();
 				writer.WriteEndArray();
 				writer.Flush();
-				arguments = JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
+				arguments = JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.Json);
 			}
 			else
 			{
@@ -151,7 +151,7 @@ internal static class ObserverMarshaler
 				writer.Write("Message");
 				writer.Write(error.Message);
 				writer.Flush();
-				arguments = JsonRpcValue.FromMessagePack((RawMessagePack)buffer.AsReadOnlySequence.ToArray());
+				arguments = JsonRpcValue.FromOwnedBytes(buffer.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
 			}
 
 			this.Terminate("onError", arguments);
@@ -198,18 +198,18 @@ internal static class ObserverMarshaler
 
 	private abstract class ObserverContract
 	{
-		public abstract JsonRpcValue Marshal(MarshaledObjectManager manager, object observer, JsonRpcEncoding encoding);
+		public abstract JsonRpcValue Marshal(MarshaledObjectManager manager, object observer, JsonRpcEncoding encoding, RpcCallState? callState);
 
-		public abstract object Unmarshal(MarshaledObjectManager manager, JsonRpcValue marker);
+		public abstract object Unmarshal(MarshaledObjectManager manager, JsonRpcValue marker, RpcCallState? callState);
 	}
 
 	private sealed class Contract<T>(ITypeShape<T> valueShape) : ObserverContract
 	{
-		public override JsonRpcValue Marshal(MarshaledObjectManager manager, object observer, JsonRpcEncoding encoding)
-			=> manager.MarshalObserver((IObserver<T>)observer, valueShape, encoding);
+		public override JsonRpcValue Marshal(MarshaledObjectManager manager, object observer, JsonRpcEncoding encoding, RpcCallState? callState)
+			=> manager.MarshalObserver((IObserver<T>)observer, valueShape, encoding, callState);
 
-		public override object Unmarshal(MarshaledObjectManager manager, JsonRpcValue marker)
-			=> manager.UnmarshalObserver(marker, valueShape);
+		public override object Unmarshal(MarshaledObjectManager manager, JsonRpcValue marker, RpcCallState? callState)
+			=> manager.UnmarshalObserver(marker, valueShape, callState);
 	}
 
 	private sealed class ObserverShapeFunc : ITypeShapeFunc

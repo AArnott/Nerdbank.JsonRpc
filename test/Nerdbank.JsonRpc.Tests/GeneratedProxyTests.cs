@@ -230,6 +230,21 @@ public class GeneratedProxyTests
 		await Assert.ThrowsAsync<InvalidOperationException>(() => rpc.NotifyAsync("notify", remoteCounter, ShapeProvider.Default.IRemoteCounter, CancellationToken.None).AsTask());
 		using JsonRpcBatch batch = rpc.CreateBatch();
 		Assert.Throws<InvalidOperationException>(() => batch.NotifyAsync("notify", remoteCounter, ShapeProvider.Default.IRemoteCounter, CancellationToken.None));
+
+		JsonRpcValue forwardedArguments;
+		using (JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named: false, count: 1, CancellationToken.None))
+		{
+			builder.Add(null, remoteCounter, ShapeProvider.Default.IRemoteCounter);
+			forwardedArguments = builder.Build();
+		}
+
+		await Assert.ThrowsAsync<InvalidOperationException>(() => rpc.NotifyAsync("notify", forwardedArguments, CancellationToken.None).AsTask());
+		using (JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named: false, count: 1, CancellationToken.None))
+		{
+			builder.Add(null, remoteCounter, ShapeProvider.Default.IRemoteCounter);
+			JsonRpcValue batchedArguments = builder.Build();
+			Assert.Throws<InvalidOperationException>(() => batch.NotifyAsync("notify", batchedArguments, CancellationToken.None));
+		}
 	}
 
 	[Test]

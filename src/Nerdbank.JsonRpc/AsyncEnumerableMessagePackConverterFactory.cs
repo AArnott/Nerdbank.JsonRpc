@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using Nerdbank.MessagePack;
@@ -29,7 +29,7 @@ internal sealed class AsyncEnumerableMessagePackConverterFactory(AsyncEnumerable
 	{
 		/// <inheritdoc/>
 		public override T? Read(ref MessagePackReader reader, SerializationContext context)
-			=> reader.TryReadNil() ? default : (T)AsyncEnumerableMarshaler.Unmarshal(manager, JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape);
+			=> reader.TryReadNil() ? default : (T)AsyncEnumerableMarshaler.Unmarshal(manager, JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape, RpcCallState.Current);
 
 		/// <inheritdoc/>
 		public override void Write(ref MessagePackWriter writer, in T? value, SerializationContext context)
@@ -40,7 +40,7 @@ internal sealed class AsyncEnumerableMessagePackConverterFactory(AsyncEnumerable
 				return;
 			}
 
-			writer.Write(AsyncEnumerableMarshaler.Marshal(manager, value, shape, JsonRpcEncoding.MessagePack).AsMessagePack());
+			writer.Write(AsyncEnumerableMarshaler.Marshal(manager, value, shape, JsonRpcEncoding.MessagePack, RpcCallState.Current).AsOwnedMessagePack());
 		}
 	}
 }
