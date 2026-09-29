@@ -281,9 +281,7 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
 		await using JsonRpcMessagePackChannel channel = CreateChannel(local, JsonRpcMessagePackFraming.SelfDelimiting);
-		byte[] oversized = new byte[(8 * 1024 * 1024) + 1];
-		oversized[0] = 0xdb;
-		System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(oversized.AsSpan(1), (8 * 1024 * 1024) + 1);
+		byte[] oversized = EncodeRequest(new string('m', (8 * 1024 * 1024) + 1), 1);
 		peer.Output.Write(oversized);
 		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(async () => await peer.Output.FlushAsync(this.TimeoutToken));
 	}

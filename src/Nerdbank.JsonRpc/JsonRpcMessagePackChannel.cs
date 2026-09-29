@@ -232,6 +232,11 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 			return false;
 		}
 
+		if (messageBytes.Length > MaximumFrameSize)
+		{
+			throw new ProtocolViolationException("MessagePack frame exceeds the size limit.");
+		}
+
 		try
 		{
 			message = this.messagePackSerializer.Deserialize<JsonRpcMessagePackEnvelope>(messageBytes, cancellationToken).Message;
