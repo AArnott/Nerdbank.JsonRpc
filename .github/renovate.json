@@ -1,6 +1,10 @@
 {
 	"$schema": "https://docs.renovatebot.com/renovate-schema.json",
-	"extends": ["config:best-practices","helpers:pinGitHubActionDigestsToSemver"],
+	"extends": [
+		"config:best-practices",
+		"helpers:pinGitHubActionDigestsToSemver",
+		"github>microsoft/vs-renovate-presets:dotnet_packages_LTS"
+	],
 	"labels": ["dependencies"],
 	"packageRules": [
 		{
@@ -28,10 +32,6 @@
 			"matchDatasources": ["dotnet-version", "docker"],
 			"matchDepNames": ["dotnet-sdk", "mcr.microsoft.com/dotnet/sdk"],
 			"groupName": "Dockerfile and global.json updates"
-		},
-		{
-			"matchPackageNames": ["*"],
-			"allowedVersions": "!/-g[a-f0-9]+$/"
 		}
 	]
 }
