@@ -26,7 +26,7 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
 		using ScratchSequence scratch = ScratchSequence.Rent();
 		MessagePackWriter writer = new(scratch.Sequence);
-		this.Serializer.Serialize(ref writer, value, shape, this.CreateStartingContext(cancellationToken));
+		this.Serializer.Serialize(ref writer, value, shape, cancellationToken);
 		writer.Flush();
 		return JsonRpcValue.FromMessagePack((RawMessagePack)scratch.Sequence.AsReadOnlySequence.ToArray());
 	}
@@ -36,7 +36,7 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	{
 		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
 		MessagePackReader reader = new(value.AsOwnedMessagePack());
-		return this.Serializer.Deserialize(ref reader, shape, this.CreateStartingContext(cancellationToken))!;
+		return this.Serializer.Deserialize(ref reader, shape, cancellationToken)!;
 	}
 
 	/// <inheritdoc/>
@@ -52,7 +52,7 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	{
 		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
 		MessagePackWriter writer = new(buffer);
-		this.Serializer.Serialize(ref writer, value, shape, this.CreateStartingContext(cancellationToken));
+		this.Serializer.Serialize(ref writer, value, shape, cancellationToken);
 		writer.Flush();
 	}
 
@@ -105,7 +105,7 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	{
 		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
 		MessagePackReader reader = new(value.OwnedBytes);
-		return this.Serializer.DeserializeObject(ref reader, shape, this.CreateStartingContext(cancellationToken));
+		return this.Serializer.DeserializeObject(ref reader, shape, cancellationToken);
 	}
 
 	/// <summary>Builds the context for one (de)serialization job.</summary>

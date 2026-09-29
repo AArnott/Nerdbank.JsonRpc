@@ -26,7 +26,7 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
 		using ScratchSequence scratch = ScratchSequence.Rent();
 		Nerdbank.Json.JsonWriter writer = new(scratch.Sequence) { WriteIndented = this.Serializer.WriteIndented };
-		this.Serializer.Serialize(ref writer, value, shape, this.CreateStartingContext(cancellationToken));
+		this.Serializer.Serialize(ref writer, value, shape, cancellationToken);
 		writer.Flush();
 		return JsonRpcValue.FromJson(scratch.Sequence.AsReadOnlySequence.ToArray());
 	}
@@ -36,7 +36,7 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	{
 		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
 		Nerdbank.Json.JsonReader reader = new(RequireJson(value).Span);
-		return this.Serializer.Deserialize(ref reader, shape, this.CreateStartingContext(cancellationToken))!;
+		return this.Serializer.Deserialize(ref reader, shape, cancellationToken)!;
 	}
 
 	/// <inheritdoc/>
@@ -52,7 +52,7 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	{
 		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
 		Nerdbank.Json.JsonWriter writer = new(buffer) { WriteIndented = this.Serializer.WriteIndented };
-		this.Serializer.Serialize(ref writer, value, shape, this.CreateStartingContext(cancellationToken));
+		this.Serializer.Serialize(ref writer, value, shape, cancellationToken);
 		writer.Flush();
 	}
 
@@ -129,7 +129,7 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 
 		Nerdbank.Json.JsonReader reader = new(RequireJson(value).Span);
 		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
-		return this.Serializer.DeserializeObject(ref reader, shape, this.CreateStartingContext(cancellationToken));
+		return this.Serializer.DeserializeObject(ref reader, shape, cancellationToken);
 	}
 
 	private static ReadOnlyMemory<byte> RequireJson(JsonRpcValue value) => value.HasValue && value.Encoding == JsonRpcEncoding.Json ? value.OwnedBytes : throw new InvalidOperationException("Expected a JSON value.");
