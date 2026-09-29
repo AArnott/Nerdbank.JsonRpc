@@ -169,7 +169,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	/// <param name="id">The ID of the completed request.</param>
 	internal void CompleteOutboundRequest(RequestId id)
 	{
-		List<Generator> released = [];
+		List<Generator> released;
 		lock (this.sync)
 		{
 			if (!this.generatorsByRequest.TryGetValue(id, out List<long>? tokens))
@@ -178,6 +178,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			}
 
 			this.generatorsByRequest.Remove(id);
+			released = new(tokens.Count);
 			foreach (long token in tokens)
 			{
 				if (this.generators.TryGetValue(token, out Generator? generator))
