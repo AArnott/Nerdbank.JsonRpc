@@ -23,6 +23,9 @@ namespace Nerdbank.JsonRpc;
 /// </remarks>
 internal sealed class RpcCallState
 {
+	/// <summary>The scopes that apply to the message being read.</summary>
+	private const Scopes InboundScopes = Scopes.InboundCall | Scopes.ProgressInbound | Scopes.OutOfBandStreamsInbound | Scopes.AsyncEnumerablesInbound;
+
 	[ThreadStatic]
 	private static RpcCallState? current;
 
@@ -178,8 +181,7 @@ internal sealed class RpcCallState
 	/// <param name="hasResponse">Whether the message being read will receive a response.</param>
 	internal void DeclareInbound(Scopes scope, bool hasResponse)
 	{
-		const Scopes Inbound = Scopes.InboundCall | Scopes.ProgressInbound | Scopes.OutOfBandStreamsInbound | Scopes.AsyncEnumerablesInbound;
-		if ((this.Declared & Inbound) != 0 && this.HasResponse != hasResponse)
+		if ((this.Declared & InboundScopes) != 0 && this.HasResponse != hasResponse)
 		{
 			throw new InvalidOperationException("Inbound scopes for the same call disagree on whether it receives a response.");
 		}
@@ -200,6 +202,13 @@ internal sealed class RpcCallState
 	internal void Undeclare(Scopes scopes)
 	{
 		this.Declared &= ~scopes;
+
+		// HasResponse qualifies the inbound scopes, so it ends with the last of them. Leaving it behind would keep Return from recycling this instance.
+		if ((this.Declared & InboundScopes) == 0)
+		{
+			this.Declared &= ~Scopes.HasResponse;
+		}
+
 		if ((scopes & Scopes.AsyncEnumerablesOutbound) != 0)
 		{
 			this.AsyncEnumerableArgumentLifetime = null;
