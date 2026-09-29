@@ -36,8 +36,9 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	{
 		if (typeof(T) == typeof(RequestId))
 		{
-			using JsonDocument document = JsonDocument.Parse(RequireJson(value));
-			return (T)(object)JsonRpcJsonCodec.ReadId(document.RootElement);
+			Utf8JsonReader idReader = new(RequireJson(value).Span);
+			idReader.Read();
+			return (T)(object)JsonRpcJsonCodec.ReadId(ref idReader);
 		}
 
 		using RpcCallState.Frame frame = RpcCallState.Enter(callState);

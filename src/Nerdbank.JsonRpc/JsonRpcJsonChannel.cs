@@ -187,7 +187,7 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 			}
 
 			ReadOnlySequence<byte> record = buffer.Slice(0, newline.Value);
-			if (!record.IsEmpty && record.Slice(record.Length - 1, 1).ToArray()[0] == (byte)'\r')
+			if (!record.IsEmpty && record.Slice(record.Length - 1, 1).First.Span[0] == (byte)'\r')
 			{
 				record = record.Slice(0, record.Length - 1);
 			}

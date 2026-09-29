@@ -130,6 +130,13 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	/// <returns>The owned value.</returns>
 	internal static JsonRpcValue FromOwnedBytes(byte[] bytes, JsonRpcEncoding encoding, MarshaledObjectManager.HandleSet? marshaledHandles = null) => new JsonRpcValue(bytes, encoding).WithMarshaledHandles(marshaledHandles);
 
+	/// <summary>Retains a JSON value within a received frame without copying it.</summary>
+	/// <param name="frame">The exclusively owned frame, which is never recycled.</param>
+	/// <param name="offset">The offset of the value within the frame.</param>
+	/// <param name="length">The length of the value.</param>
+	/// <returns>A value that shares the frame's buffer.</returns>
+	internal static JsonRpcValue FromJsonFrame(byte[] frame, int offset, int length) => CreateSlice(frame, JsonRpcEncoding.Json, offset, length);
+
 	/// <summary>Copies an encoded value into a pooled buffer.</summary>
 	/// <param name="bytes">The encoded bytes.</param>
 	/// <param name="encoding">The wire encoding.</param>

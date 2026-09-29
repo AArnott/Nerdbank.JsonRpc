@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -525,6 +525,15 @@ public class JsonCodecTests : TestBase
 	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"jsonrpc\":\"2.0\",\"method\":\"echo\"}")]
 	[Arguments(JsonRpcJsonFraming.ContentLength, "{\"jsonrpc\":\"2.0\",\"id\":1e0,\"method\":\"echo\"}")]
 	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "[{\"jsonrpc\":\"2.0\",\"method\":\"echo\"},42]")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "[]")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\"} x")]
+	[Arguments(JsonRpcJsonFraming.ContentLength, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\"}{}")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"1.0\",\"method\":\"echo\"}")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":2,\"method\":\"echo\"}")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"method\":5}")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"id\":{}}")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":1.5,\"message\":\"m\"}}")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":1}}")]
 	public async Task InvalidJsonEnvelopeFaultsTransport(JsonRpcJsonFraming framing, string json)
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
@@ -542,6 +551,32 @@ public class JsonCodecTests : TestBase
 
 		await peer.Output.FlushAsync(this.TimeoutToken);
 		await Assert.ThrowsAnyAsync<Exception>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
+	}
+
+	[Test]
+	public async Task ReceivedValuesPreserveTheirRawJson()
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcJsonChannel channel = new(local, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("local"));
+		peer.Output.Write(Encoding.UTF8.GetBytes(
+			"{\"json\\u0072pc\":\"2.0\",\"m\\u0065thod\":\"echo\",\"params\":[1, \"two\", {\"x\":null}],\"id\":7,\"ext\":{\"ignored\":[1]}}\n" +
+			"{\"jsonrpc\":\"2.0\",\"id\":8,\"result\":{\"a\": [1,2]}}\n" +
+			"{\"jsonrpc\":\"2.0\",\"id\":9,\"error\":{\"extra\":[{}],\"code\":-1,\"data\":{\"x\":1},\"message\":\"m\"}}\n"));
+		await peer.Output.FlushAsync(this.TimeoutToken);
+
+		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await channel.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal("echo", request.Method);
+		Assert.Equal(new RequestId(7), request.Id);
+		Assert.Equal("[1, \"two\", {\"x\":null}]", Encoding.UTF8.GetString(request.Arguments.Bytes.ToArray()));
+
+		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await channel.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal(new RequestId(8), result.Id);
+		Assert.Equal("{\"a\": [1,2]}", Encoding.UTF8.GetString(result.Result.Bytes.ToArray()));
+
+		JsonRpcError error = Assert.IsType<JsonRpcError>(await channel.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal(-1, error.Error.Code);
+		Assert.Equal("m", error.Error.Message);
+		Assert.Equal("{\"x\":1}", Encoding.UTF8.GetString(error.Error.Data!.Value.Bytes.ToArray()));
 	}
 
 	[Test]
