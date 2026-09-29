@@ -21,6 +21,7 @@ public ref struct JsonRpcArgumentsBuilder
 	private readonly bool named;
 	private readonly int count;
 	private readonly CancellationToken cancellationToken;
+	private readonly ScratchSequence scratch;
 	private readonly Sequence<byte> buffer;
 	private int written;
 	private bool built;
@@ -54,7 +55,8 @@ public ref struct JsonRpcArgumentsBuilder
 		this.named = named;
 		this.count = count;
 		this.cancellationToken = cancellationToken;
-		this.buffer = new(ArrayPool<byte>.Shared);
+		this.scratch = ScratchSequence.Rent();
+		this.buffer = this.scratch.Sequence;
 		if (this.serializer.Encoding == JsonRpcEncoding.Json)
 		{
 			this.WriteByte(named ? (byte)'{' : (byte)'[');
@@ -135,7 +137,7 @@ public ref struct JsonRpcArgumentsBuilder
 			this.failed = true;
 		}
 
-		// The call state is recycled when this builder is disposed, so a repeated disposal must not touch it again.
+		// The call state and buffer are recycled when this builder is disposed, so a repeated disposal must not touch them again.
 		if (this.callState?.Generation == this.callStateGeneration)
 		{
 			this.outOfBandStreamScope.Dispose();
@@ -143,9 +145,8 @@ public ref struct JsonRpcArgumentsBuilder
 			this.progressScope.Dispose();
 			this.marshaledObjectsScope.Dispose();
 			this.callState.Return();
+			this.scratch.Dispose();
 		}
-
-		this.buffer.Dispose();
 	}
 
 	private JsonRpcValue Build(bool singleUse)
