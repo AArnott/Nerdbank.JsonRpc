@@ -12,6 +12,7 @@ namespace Nerdbank.JsonRpc;
 public ref struct JsonRpcArgumentsBuilder
 {
 	private readonly JsonRpcSerializer serializer;
+	private readonly RpcCallState callState;
 	private readonly MarshaledObjectManager.HandleScope marshaledObjectsScope;
 	private readonly ProgressManager.RegistrationScope progressScope;
 	private readonly OutOfBandStreamManager.OutboundScope outOfBandStreamScope;
@@ -42,10 +43,11 @@ public ref struct JsonRpcArgumentsBuilder
 		}
 
 		this.serializer = context.Serializer;
-		this.marshaledObjectsScope = context.MarshaledObjects.TrackMarshaledObjects();
-		this.progressScope = context.Progress.TrackRegistrations();
-		this.outOfBandStreamScope = context.OutOfBandStreams.TrackOutboundRequest();
-		this.asyncEnumerableScope = context.AsyncEnumerables.TrackOutboundMessage();
+		this.callState = new();
+		this.marshaledObjectsScope = context.MarshaledObjects.TrackMarshaledObjects(this.callState);
+		this.progressScope = context.Progress.TrackRegistrations(this.callState);
+		this.outOfBandStreamScope = context.OutOfBandStreams.TrackOutboundRequest(this.callState);
+		this.asyncEnumerableScope = context.AsyncEnumerables.TrackOutboundMessage(this.callState);
 
 		this.named = named;
 		this.count = count;
@@ -104,7 +106,7 @@ public ref struct JsonRpcArgumentsBuilder
 			}
 		}
 
-		this.serializer.SerializeTo(this.buffer, value, shape, this.cancellationToken);
+		this.serializer.SerializeTo(this.buffer, value, shape, this.callState, this.cancellationToken);
 		this.written++;
 		this.failed = false;
 	}

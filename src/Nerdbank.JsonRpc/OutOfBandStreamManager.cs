@@ -13,8 +13,6 @@ internal sealed class OutOfBandStreamManager : IDisposable
 	private readonly object sync = new();
 	private readonly Dictionary<RequestId, ChannelSet> outboundChannels = [];
 	private readonly List<ChannelSet> activeChannels = [];
-	private readonly AsyncLocal<OutboundScope?> activeOutboundScope = new();
-	private readonly AsyncLocal<InboundScope?> activeInboundScope = new();
 
 	internal MultiplexingStream? MultiplexingStream { get; set; }
 
@@ -34,22 +32,22 @@ internal sealed class OutOfBandStreamManager : IDisposable
 		}
 	}
 
-	internal OutboundScope TrackOutboundRequest() => new(this);
+	internal OutboundScope TrackOutboundRequest(RpcCallState callState) => new(callState);
 
-	internal InboundScope TrackInboundRequest(bool hasResponse) => new(this, hasResponse);
+	internal InboundScope TrackInboundRequest(bool hasResponse, RpcCallState callState) => new(this, callState, hasResponse);
 
-	internal JsonRpcValue Marshal(IDuplexPipe pipe, JsonRpcEncoding encoding)
+	internal JsonRpcValue Marshal(IDuplexPipe pipe, JsonRpcEncoding encoding, RpcCallState? callState)
 	{
-		OutboundScope scope = this.activeOutboundScope.Value ?? throw new InvalidOperationException("Out-of-band streams may only be sent in RPC requests.");
+		OutboundScope scope = callState?.OutOfBandStreamsOutbound ?? throw new InvalidOperationException("Out-of-band streams may only be sent in RPC requests.");
 		MultiplexingStream multiplexingStream = this.MultiplexingStream ?? throw new NotSupportedException("Out-of-band streams require a configured MultiplexingStream.");
 		MultiplexingStream.Channel channel = multiplexingStream.CreateChannel(new() { ExistingPipe = pipe });
 		scope.Add(channel);
 		return CreateToken(channel.QualifiedId.Id, encoding);
 	}
 
-	internal IDuplexPipe Unmarshal(JsonRpcValue token)
+	internal IDuplexPipe Unmarshal(JsonRpcValue token, RpcCallState? callState)
 	{
-		InboundScope scope = this.activeInboundScope.Value ?? throw new FormatException("Out-of-band streams may only be received in RPC request arguments.");
+		InboundScope scope = callState?.OutOfBandStreamsInbound ?? throw new FormatException("Out-of-band streams may only be received in RPC request arguments.");
 		if (!scope.HasResponse)
 		{
 			throw new FormatException("Out-of-band streams cannot be received in notifications.");
@@ -149,21 +147,21 @@ internal sealed class OutOfBandStreamManager : IDisposable
 
 	internal sealed class OutboundScope : IDisposable
 	{
-		private readonly OutOfBandStreamManager manager;
+		private readonly RpcCallState callState;
 		private readonly OutboundScope? priorScope;
 		private List<MultiplexingStream.Channel>? channels;
 		private bool committed;
 
-		internal OutboundScope(OutOfBandStreamManager manager)
+		internal OutboundScope(RpcCallState callState)
 		{
-			this.manager = manager;
-			this.priorScope = manager.activeOutboundScope.Value;
-			manager.activeOutboundScope.Value = this;
+			this.callState = callState;
+			this.priorScope = callState.OutOfBandStreamsOutbound;
+			callState.OutOfBandStreamsOutbound = this;
 		}
 
 		public void Dispose()
 		{
-			this.manager.activeOutboundScope.Value = this.priorScope;
+			this.callState.OutOfBandStreamsOutbound = this.priorScope;
 			if (!this.committed)
 			{
 				new ChannelSet(this.channels?.ToArray() ?? []).Dispose();
@@ -182,23 +180,25 @@ internal sealed class OutOfBandStreamManager : IDisposable
 	internal sealed class InboundScope : IDisposable
 	{
 		private readonly OutOfBandStreamManager manager;
+		private readonly RpcCallState callState;
 		private readonly InboundScope? priorScope;
 		private List<MultiplexingStream.Channel>? channels;
 		private bool completed;
 
-		internal InboundScope(OutOfBandStreamManager manager, bool hasResponse)
+		internal InboundScope(OutOfBandStreamManager manager, RpcCallState callState, bool hasResponse)
 		{
 			this.manager = manager;
+			this.callState = callState;
 			this.HasResponse = hasResponse;
-			this.priorScope = manager.activeInboundScope.Value;
-			manager.activeInboundScope.Value = this;
+			this.priorScope = callState.OutOfBandStreamsInbound;
+			callState.OutOfBandStreamsInbound = this;
 		}
 
 		internal bool HasResponse { get; }
 
 		public void Dispose()
 		{
-			this.manager.activeInboundScope.Value = this.priorScope;
+			this.callState.OutOfBandStreamsInbound = this.priorScope;
 			if (!this.completed)
 			{
 				new ChannelSet(this.channels?.ToArray() ?? []).Dispose();

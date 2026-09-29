@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using Nerdbank.MessagePack;
+using Nerdbank.Streams;
 
 namespace Nerdbank.JsonRpc;
 
@@ -20,10 +21,21 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	public override JsonRpcEncoding Encoding => JsonRpcEncoding.MessagePack;
 
 	/// <inheritdoc/>
-	public override JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => JsonRpcValue.FromMessagePack((RawMessagePack)this.Serializer.Serialize(value, shape, cancellationToken));
+	internal override JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
+	{
+		using Sequence<byte> buffer = new(ArrayPool<byte>.Shared);
+		MessagePackWriter writer = new(buffer);
+		this.Serializer.Serialize(ref writer, value, shape, this.CreateStartingContext(callState, cancellationToken));
+		writer.Flush();
+		return JsonRpcValue.FromMessagePack((RawMessagePack)buffer.AsReadOnlySequence.ToArray());
+	}
 
 	/// <inheritdoc/>
-	public override T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => this.Serializer.Deserialize(value.AsOwnedMessagePack(), shape, cancellationToken)!;
+	internal override T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
+	{
+		MessagePackReader reader = new(value.AsOwnedMessagePack());
+		return this.Serializer.Deserialize(ref reader, shape, this.CreateStartingContext(callState, cancellationToken))!;
+	}
 
 	/// <inheritdoc/>
 	internal override JsonRpcSerializer WithMarshaledObjectManager(MarshaledObjectManager manager, ProgressManager progress, OutOfBandStreamManager outOfBandStreams, AsyncEnumerableManager asyncEnumerables)
@@ -34,8 +46,12 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 		});
 
 	/// <inheritdoc/>
-	internal override void SerializeTo<T>(IBufferWriter<byte> buffer, in T value, ITypeShape<T> shape, CancellationToken cancellationToken)
-		=> this.Serializer.Serialize(buffer, value, shape, cancellationToken);
+	internal override void SerializeTo<T>(IBufferWriter<byte> buffer, in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
+	{
+		MessagePackWriter writer = new(buffer);
+		this.Serializer.Serialize(ref writer, value, shape, this.CreateStartingContext(callState, cancellationToken));
+		writer.Flush();
+	}
 
 	/// <inheritdoc/>
 	internal override void WriteArgumentName(IBufferWriter<byte> buffer, string name)
@@ -82,5 +98,24 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	internal override JsonRpcValue SerializeCancellation(RequestId id, CancellationToken cancellationToken)
 		=> this.Serialize(new JsonRpc.CancelRequestParams(id), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc.Default.CancelRequestParams, cancellationToken);
 
-	internal override object? DeserializeObject(JsonRpcValue value, ITypeShape shape, CancellationToken cancellationToken) => this.Serializer.DeserializeObject(value.OwnedBytes, shape, cancellationToken);
+	internal override object? DeserializeObject(JsonRpcValue value, ITypeShape shape, RpcCallState? callState, CancellationToken cancellationToken)
+	{
+		MessagePackReader reader = new(value.OwnedBytes);
+		return this.Serializer.DeserializeObject(ref reader, shape, this.CreateStartingContext(callState, cancellationToken));
+	}
+
+	/// <summary>Builds the context for one (de)serialization job, publishing the call scopes to converters.</summary>
+	/// <param name="callState">The scopes that converters for marshaled values require, if any.</param>
+	/// <param name="cancellationToken">A cancellation token.</param>
+	/// <returns>The starting context for the job.</returns>
+	private SerializationContext CreateStartingContext(RpcCallState? callState, CancellationToken cancellationToken)
+	{
+		SerializationContext context = this.Serializer.StartingContext with { CancellationToken = cancellationToken };
+		if (callState is not null)
+		{
+			context[RpcCallState.ContextKey] = callState;
+		}
+
+		return context;
+	}
 }

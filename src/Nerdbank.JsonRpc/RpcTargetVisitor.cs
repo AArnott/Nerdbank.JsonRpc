@@ -234,7 +234,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 						response = new JsonRpcResult
 						{
 							Id = id,
-							Result = dispatch.JsonRpc.SerializeMarshaledResult(result, methodShape.ReturnType, dispatch.JsonRpc.DisposalToken),
+							Result = dispatch.JsonRpc.SerializeMarshaledResult(result, methodShape.ReturnType, dispatch.CallState, dispatch.JsonRpc.DisposalToken),
 						};
 					}
 					else
@@ -290,7 +290,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 
 		return new ParameterSetter<TArgumentState>((DispatchRequest request, JsonRpcValue argument, ref TArgumentState argState) =>
 		{
-			TParameterType value = (TParameterType)request.UserDataSerializer.DeserializeObject(argument, parameterShape.ParameterType, request.CancellationToken)!;
+			TParameterType value = (TParameterType)request.UserDataSerializer.DeserializeObject(argument, parameterShape.ParameterType, request.CallState, request.CancellationToken)!;
 			setter(ref argState, value);
 		});
 	}

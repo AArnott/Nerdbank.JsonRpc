@@ -24,24 +24,19 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	private readonly Dictionary<object, LocalObjectLease> localLeases = new(ReferenceEqualityComparer<object>.Instance);
 	private readonly Dictionary<long, List<WeakReference<CallScopedHandle>>> remoteProxies = [];
 	private readonly HashSet<long> revokedRemoteHandles = [];
-	private readonly AsyncLocal<HandleScope?> activeScope = new();
-	private readonly AsyncLocal<InboundCallScope?> activeInboundCall = new();
 	private long nextHandle;
 
-	/// <summary>Gets the lifetime of call-scoped proxies received by the active call.</summary>
-	internal CallScopedLifetime? InboundCallLifetime => this.activeInboundCall.Value?.Lifetime;
-
-	internal JsonRpcValue Marshal(IDisposable value, JsonRpcEncoding encoding)
+	internal JsonRpcValue Marshal(IDisposable value, JsonRpcEncoding encoding, RpcCallState? callState)
 	{
 		if (value is null)
 		{
 			throw new ArgumentNullException(nameof(value));
 		}
 
-		return this.Marshal(value, registration: null, callScopedLifetime: false, encoding: encoding);
+		return this.Marshal(value, registration: null, callScopedLifetime: false, encoding: encoding, callState: callState);
 	}
 
-	internal JsonRpcValue MarshalMarshalable<T>(T value, ITypeShape<T> shape, JsonRpcEncoding encoding)
+	internal JsonRpcValue MarshalMarshalable<T>(T value, ITypeShape<T> shape, JsonRpcEncoding encoding, RpcCallState? callState)
 	{
 		if (value is null)
 		{
@@ -75,10 +70,10 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			}
 		}
 
-		return this.Marshal(target, registration, attribute.CallScopedLifetime, encoding, optionalRegistrations: optionalRegistrations);
+		return this.Marshal(target, registration, attribute.CallScopedLifetime, encoding, callState: callState, optionalRegistrations: optionalRegistrations);
 	}
 
-	internal IDisposable Unmarshal(JsonRpcValue value)
+	internal IDisposable Unmarshal(JsonRpcValue value, RpcCallState? callState)
 	{
 		(long handle, int direction, bool callScopedLifetime, int[] optionalInterfaceIds) = ReadMarker(value);
 		if (callScopedLifetime)
@@ -99,15 +94,15 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new InvalidOperationException($"Marshaled object handle {handle} is not available.");
 		}
 
-		if (this.activeInboundCall.Value is { HasResponse: false })
+		if (callState?.InboundCall is { HasResponse: false })
 		{
 			throw new FormatException("Marshaled objects cannot be received in notifications.");
 		}
 
-		return new RemoteDisposable(this, handle, this.RegisterIncomingProxy(handle, callScopedLifetime: false));
+		return new RemoteDisposable(this, handle, this.RegisterIncomingProxy(handle, callScopedLifetime: false, callState));
 	}
 
-	internal T UnmarshalMarshalable<T>(JsonRpcValue value, ITypeShape<T> shape)
+	internal T UnmarshalMarshalable<T>(JsonRpcValue value, ITypeShape<T> shape, RpcCallState? callState)
 	{
 		(long handle, int direction, bool callScopedLifetime, int[] optionalInterfaceIds) = ReadMarker(value);
 		RpcMarshalableAttribute attribute = shape.Type.GetCustomAttribute<RpcMarshalableAttribute>()
@@ -117,7 +112,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new FormatException($"The marshaled lifetime does not match the {nameof(RpcMarshalableAttribute)} on '{shape.Type}'.");
 		}
 
-		if (this.activeInboundCall.Value is { HasResponse: false })
+		if (callState?.InboundCall is { HasResponse: false })
 		{
 			throw new FormatException("Marshaled objects cannot be received in notifications.");
 		}
@@ -135,7 +130,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new InvalidOperationException($"Marshaled object handle {handle} is not available or does not implement '{shape.Type}'.");
 		}
 
-		CallScopedHandle callScopedHandle = this.RegisterIncomingProxy(handle, callScopedLifetime);
+		CallScopedHandle callScopedHandle = this.RegisterIncomingProxy(handle, callScopedLifetime, callState);
 		HashSet<int> advertisedInterfaces = [.. optionalInterfaceIds];
 		HashSet<int> knownAdvertisedInterfaces = [.. shape.Type.GetCustomAttributes<RpcMarshalableOptionalInterfaceAttribute>()
 			.Where(attribute => advertisedInterfaces.Contains(attribute.InterfaceId))
@@ -153,13 +148,13 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		return (T)proxy;
 	}
 
-	internal JsonRpcValue MarshalObserver<T>(IObserver<T> observer, ITypeShape<T> valueShape, JsonRpcEncoding encoding)
+	internal JsonRpcValue MarshalObserver<T>(IObserver<T> observer, ITypeShape<T> valueShape, JsonRpcEncoding encoding, RpcCallState? callState)
 	{
 		TargetRegistration registration = ObserverMarshaler.CreateRegistration(valueShape);
-		return this.Marshal(observer, registration, callScopedLifetime: false, encoding, disposeTarget: false);
+		return this.Marshal(observer, registration, callScopedLifetime: false, encoding, callState, disposeTarget: false);
 	}
 
-	internal IObserver<T> UnmarshalObserver<T>(JsonRpcValue value, ITypeShape<T> valueShape)
+	internal IObserver<T> UnmarshalObserver<T>(JsonRpcValue value, ITypeShape<T> valueShape, RpcCallState? callState)
 	{
 		(long handle, int direction, bool callScopedLifetime, int[] optionalInterfaceIds) = ReadMarker(value);
 		if (callScopedLifetime)
@@ -167,7 +162,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new FormatException("IObserver<T> requires an explicit lifetime.");
 		}
 
-		if (this.activeInboundCall.Value is { HasResponse: false })
+		if (callState?.InboundCall is { HasResponse: false })
 		{
 			throw new FormatException("Marshaled observers cannot be received in notifications.");
 		}
@@ -185,7 +180,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new InvalidOperationException($"Marshaled observer handle {handle} is not available.");
 		}
 
-		CallScopedHandle state = this.RegisterIncomingProxy(handle, callScopedLifetime: false);
+		CallScopedHandle state = this.RegisterIncomingProxy(handle, callScopedLifetime: false, callState);
 		IObserver<T> proxy = new ObserverMarshaler.Proxy<T>(owner, this, handle, valueShape, state);
 		RemoteHandles.Add(proxy, new(this, handle, false, state));
 		return proxy;
@@ -296,9 +291,9 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		}
 	}
 
-	internal HandleScope TrackMarshaledObjects(bool allowCallScopedLifetime = true) => new(this, allowCallScopedLifetime);
+	internal HandleScope TrackMarshaledObjects(RpcCallState callState, bool allowCallScopedLifetime = true) => new(this, callState, allowCallScopedLifetime);
 
-	internal InboundCallScope TrackInboundCall(bool hasResponse) => new(this, hasResponse);
+	internal InboundCallScope TrackInboundCall(bool hasResponse, RpcCallState callState) => new(callState, hasResponse);
 
 	internal void ReleaseLocalObjects(JsonRpcValue value) => value.MarshaledHandles?.ReleaseAll();
 
@@ -552,9 +547,9 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			? WriteJson(handle, direction, callScopedLifetime, optionalInterfaceIds)
 			: WriteMessagePack(handle, direction, callScopedLifetime, optionalInterfaceIds);
 
-	private JsonRpcValue Marshal(object value, TargetRegistration? registration, bool callScopedLifetime, JsonRpcEncoding encoding, bool disposeTarget = true, IReadOnlyList<(int InterfaceId, TargetRegistration Registration)>? optionalRegistrations = null)
+	private JsonRpcValue Marshal(object value, TargetRegistration? registration, bool callScopedLifetime, JsonRpcEncoding encoding, RpcCallState? callState, bool disposeTarget = true, IReadOnlyList<(int InterfaceId, TargetRegistration Registration)>? optionalRegistrations = null)
 	{
-		if (callScopedLifetime && this.activeScope.Value is not { AllowCallScopedLifetime: true })
+		if (callScopedLifetime && callState?.MarshaledObjects is not { AllowCallScopedLifetime: true })
 		{
 			throw new InvalidOperationException("Call-scoped marshalable objects may only be sent in RPC request arguments, not in return values.");
 		}
@@ -567,7 +562,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			}
 
 			remoteState.ThrowIfExpired();
-			this.activeScope.Value?.MarkMarshaledObject();
+			callState?.MarshaledObjects?.MarkMarshaledObject();
 			return WriteMarker(remoteHandle, direction: 0, callScopedLifetime: callScopedLifetime, encoding: encoding);
 		}
 
@@ -584,7 +579,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 				throw new InvalidOperationException("A marshaled proxy cannot be serialized under an interface with a different lifetime setting.");
 			}
 
-			this.activeScope.Value?.MarkMarshaledObject();
+			callState?.MarshaledObjects?.MarkMarshaledObject();
 			return WriteMarker(remoteObject.Handle, direction: 0, callScopedLifetime: callScopedLifetime, encoding: encoding);
 		}
 
@@ -620,12 +615,12 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			this.localObjects.Add(handle, marshaledObject);
 		}
 
-		this.activeScope.Value?.Add(handle, callScopedLifetime);
+		callState?.MarshaledObjects?.Add(handle, callScopedLifetime);
 
 		return WriteMarker(handle, direction: 1, callScopedLifetime: callScopedLifetime, encoding: encoding, optionalRegistrations?.Select(static registration => registration.InterfaceId).ToArray());
 	}
 
-	private CallScopedHandle RegisterIncomingProxy(long remoteHandle, bool callScopedLifetime)
+	private CallScopedHandle RegisterIncomingProxy(long remoteHandle, bool callScopedLifetime, RpcCallState? callState)
 	{
 		CallScopedHandle handle = new() { IsCallScoped = callScopedLifetime };
 		lock (this.sync)
@@ -647,7 +642,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			}
 		}
 
-		if (this.activeInboundCall.Value is InboundCallScope scope)
+		if (callState?.InboundCall is InboundCallScope scope)
 		{
 			if (!scope.HasResponse)
 			{
@@ -711,17 +706,19 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	internal sealed class HandleScope : IDisposable
 	{
 		private readonly MarshaledObjectManager manager;
+		private readonly RpcCallState callState;
 		private readonly HandleScope? priorScope;
 		private List<(long Handle, bool CallScopedLifetime)>? handles;
 		private int marshaledObjectCount;
 		private bool committed;
 
-		internal HandleScope(MarshaledObjectManager manager, bool allowCallScopedLifetime)
+		internal HandleScope(MarshaledObjectManager manager, RpcCallState callState, bool allowCallScopedLifetime)
 		{
 			this.manager = manager;
+			this.callState = callState;
 			this.AllowCallScopedLifetime = allowCallScopedLifetime;
-			this.priorScope = manager.activeScope.Value;
-			manager.activeScope.Value = this;
+			this.priorScope = callState.MarshaledObjects;
+			callState.MarshaledObjects = this;
 		}
 
 		internal bool AllowCallScopedLifetime { get; }
@@ -730,7 +727,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 		public void Dispose()
 		{
-			this.manager.activeScope.Value = this.priorScope;
+			this.callState.MarshaledObjects = this.priorScope;
 			if (!this.committed && this.handles is { } handles)
 			{
 				foreach ((long handle, _) in handles)
@@ -821,17 +818,17 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 	internal sealed class InboundCallScope : IDisposable
 	{
-		private readonly MarshaledObjectManager manager;
+		private readonly RpcCallState callState;
 		private readonly InboundCallScope? priorScope;
 		private List<(CallScopedHandle Handle, bool CallScopedLifetime)>? proxies;
 		private bool succeeded;
 
-		internal InboundCallScope(MarshaledObjectManager manager, bool hasResponse)
+		internal InboundCallScope(RpcCallState callState, bool hasResponse)
 		{
-			this.manager = manager;
+			this.callState = callState;
 			this.HasResponse = hasResponse;
-			this.priorScope = manager.activeInboundCall.Value;
-			manager.activeInboundCall.Value = this;
+			this.priorScope = callState.InboundCall;
+			callState.InboundCall = this;
 		}
 
 		internal bool HasResponse { get; }
@@ -841,7 +838,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 		public void Dispose()
 		{
-			this.manager.activeInboundCall.Value = this.priorScope;
+			this.callState.InboundCall = this.priorScope;
 			if (!this.succeeded && this.proxies is { } proxies)
 			{
 				foreach ((CallScopedHandle handle, _) in proxies)

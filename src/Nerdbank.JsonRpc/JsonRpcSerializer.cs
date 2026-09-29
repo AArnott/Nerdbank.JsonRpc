@@ -31,7 +31,7 @@ public abstract class JsonRpcSerializer
 	/// <param name="shape">The type shape.</param>
 	/// <param name="cancellationToken">A cancellation token.</param>
 	/// <returns>An owned encoded value.</returns>
-	public abstract JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, CancellationToken cancellationToken = default);
+	public JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => this.Serialize(value, shape, callState: null, cancellationToken);
 
 	/// <summary>Deserializes a typed value with its type shape.</summary>
 	/// <typeparam name="T">The result type.</typeparam>
@@ -39,7 +39,25 @@ public abstract class JsonRpcSerializer
 	/// <param name="shape">The result shape.</param>
 	/// <param name="cancellationToken">A cancellation token.</param>
 	/// <returns>The deserialized value.</returns>
-	public abstract T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, CancellationToken cancellationToken = default);
+	public T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => this.Deserialize(value, shape, callState: null, cancellationToken);
+
+	/// <summary>Serializes a typed value with the scopes that apply to one RPC message.</summary>
+	/// <typeparam name="T">The type of the value.</typeparam>
+	/// <param name="value">The value.</param>
+	/// <param name="shape">The type shape.</param>
+	/// <param name="callState">The scopes that converters for marshaled values require, if any.</param>
+	/// <param name="cancellationToken">A cancellation token.</param>
+	/// <returns>An owned encoded value.</returns>
+	internal abstract JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken);
+
+	/// <summary>Deserializes a typed value with the scopes that apply to one RPC message.</summary>
+	/// <typeparam name="T">The result type.</typeparam>
+	/// <param name="value">An encoded value.</param>
+	/// <param name="shape">The result shape.</param>
+	/// <param name="callState">The scopes that converters for marshaled values require, if any.</param>
+	/// <param name="cancellationToken">A cancellation token.</param>
+	/// <returns>The deserialized value.</returns>
+	internal abstract T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken);
 
 	/// <summary>Creates a serializer configured to marshal disposable values for one RPC connection.</summary>
 	/// <param name="manager">The connection's marshaled-object manager.</param>
@@ -54,8 +72,9 @@ public abstract class JsonRpcSerializer
 	/// <param name="buffer">The output buffer.</param>
 	/// <param name="value">The parameter value.</param>
 	/// <param name="shape">The parameter type shape.</param>
+	/// <param name="callState">The scopes that converters for marshaled values require, if any.</param>
 	/// <param name="cancellationToken">A cancellation token.</param>
-	internal abstract void SerializeTo<T>(IBufferWriter<byte> buffer, in T value, ITypeShape<T> shape, CancellationToken cancellationToken);
+	internal abstract void SerializeTo<T>(IBufferWriter<byte> buffer, in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken);
 
 	/// <summary>Writes an encoded argument name into an existing buffer.</summary>
 	/// <param name="buffer">The output buffer.</param>
@@ -134,9 +153,10 @@ public abstract class JsonRpcSerializer
 	/// <summary>Decodes an application parameter with its runtime shape.</summary>
 	/// <param name="value">The encoded application value.</param>
 	/// <param name="shape">The application type shape.</param>
+	/// <param name="callState">The scopes that converters for marshaled values require, if any.</param>
 	/// <param name="cancellationToken">A cancellation token.</param>
 	/// <returns>The deserialized application value.</returns>
-	internal abstract object? DeserializeObject(JsonRpcValue value, ITypeShape shape, CancellationToken cancellationToken);
+	internal abstract object? DeserializeObject(JsonRpcValue value, ITypeShape shape, RpcCallState? callState, CancellationToken cancellationToken);
 
 	private void ValidateValue(JsonRpcValue value)
 	{

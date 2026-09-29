@@ -31,7 +31,7 @@ internal sealed class MarshaledInterfaceMessagePackConverterFactory(MarshaledObj
 		private readonly bool typeIsProgress = typeof(T).IsGenericType && typeof(T).GetGenericTypeDefinition() == typeof(IProgress<>);
 
 		public override T? Read(ref MessagePackReader reader, SerializationContext context)
-			=> reader.TryReadNil() ? default : this.typeIsObserver ? (T)ObserverMarshaler.CreateProxy(manager, JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape) : this.typeIsProgress ? (T)ProgressMarshaler.CreateProxy(progress, JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape) : manager.UnmarshalMarshalable<T>(JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape);
+			=> reader.TryReadNil() ? default : this.typeIsObserver ? (T)ObserverMarshaler.CreateProxy(manager, JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape, RpcCallState.From(context)) : this.typeIsProgress ? (T)ProgressMarshaler.CreateProxy(progress, JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape, RpcCallState.From(context)) : manager.UnmarshalMarshalable<T>(JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape, RpcCallState.From(context));
 
 		public override void Write(ref MessagePackWriter writer, in T? value, SerializationContext context)
 		{
@@ -41,7 +41,7 @@ internal sealed class MarshaledInterfaceMessagePackConverterFactory(MarshaledObj
 				return;
 			}
 
-			JsonRpcValue marker = this.typeIsObserver ? ObserverMarshaler.Marshal(manager, value, shape, JsonRpcEncoding.MessagePack) : this.typeIsProgress ? ProgressMarshaler.Marshal(progress, value, shape, JsonRpcEncoding.MessagePack) : manager.MarshalMarshalable(value, shape, JsonRpcEncoding.MessagePack);
+			JsonRpcValue marker = this.typeIsObserver ? ObserverMarshaler.Marshal(manager, value, shape, JsonRpcEncoding.MessagePack, RpcCallState.From(context)) : this.typeIsProgress ? ProgressMarshaler.Marshal(progress, value, shape, JsonRpcEncoding.MessagePack, RpcCallState.From(context)) : manager.MarshalMarshalable(value, shape, JsonRpcEncoding.MessagePack, RpcCallState.From(context));
 			writer.Write(marker.AsOwnedMessagePack());
 		}
 	}

@@ -21,15 +21,21 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	public override JsonRpcEncoding Encoding => JsonRpcEncoding.Json;
 
 	/// <inheritdoc/>
-	public override JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, CancellationToken cancellationToken = default)
+	internal override JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
 	{
 		using Sequence<byte> buffer = new(ArrayPool<byte>.Shared);
-		this.Serializer.Serialize(buffer, value, shape, cancellationToken);
+		Nerdbank.Json.JsonWriter writer = new(buffer) { WriteIndented = this.Serializer.WriteIndented };
+		this.Serializer.Serialize(ref writer, value, shape, this.CreateStartingContext(callState, cancellationToken));
+		writer.Flush();
 		return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
 	}
 
 	/// <inheritdoc/>
-	public override T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => this.Serializer.Deserialize(RequireJson(value), shape, cancellationToken)!;
+	internal override T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
+	{
+		Nerdbank.Json.JsonReader reader = new(RequireJson(value).Span);
+		return this.Serializer.Deserialize(ref reader, shape, this.CreateStartingContext(callState, cancellationToken))!;
+	}
 
 	/// <inheritdoc/>
 	internal override JsonRpcSerializer WithMarshaledObjectManager(MarshaledObjectManager manager, ProgressManager progress, OutOfBandStreamManager outOfBandStreams, AsyncEnumerableManager asyncEnumerables)
@@ -40,8 +46,12 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 		});
 
 	/// <inheritdoc/>
-	internal override void SerializeTo<T>(IBufferWriter<byte> buffer, in T value, ITypeShape<T> shape, CancellationToken cancellationToken)
-		=> this.Serializer.Serialize(buffer, value, shape, cancellationToken);
+	internal override void SerializeTo<T>(IBufferWriter<byte> buffer, in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
+	{
+		Nerdbank.Json.JsonWriter writer = new(buffer) { WriteIndented = this.Serializer.WriteIndented };
+		this.Serializer.Serialize(ref writer, value, shape, this.CreateStartingContext(callState, cancellationToken));
+		writer.Flush();
+	}
 
 	/// <inheritdoc/>
 	internal override void WriteArgumentName(IBufferWriter<byte> buffer, string name)
@@ -101,7 +111,7 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 		return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
 	}
 
-	internal override object? DeserializeObject(JsonRpcValue value, ITypeShape shape, CancellationToken cancellationToken)
+	internal override object? DeserializeObject(JsonRpcValue value, ITypeShape shape, RpcCallState? callState, CancellationToken cancellationToken)
 	{
 		if (shape.Type == typeof(RequestId))
 		{
@@ -109,8 +119,24 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 			return JsonRpcJsonCodec.ReadId(document.RootElement);
 		}
 
-		return this.Serializer.DeserializeObject(RequireJson(value), shape, cancellationToken);
+		Nerdbank.Json.JsonReader reader = new(RequireJson(value).Span);
+		return this.Serializer.DeserializeObject(ref reader, shape, this.CreateStartingContext(callState, cancellationToken));
 	}
 
 	private static ReadOnlyMemory<byte> RequireJson(JsonRpcValue value) => value.HasValue && value.Encoding == JsonRpcEncoding.Json ? value.OwnedBytes : throw new InvalidOperationException("Expected a JSON value.");
+
+	/// <summary>Builds the context for one (de)serialization job, publishing the call scopes to converters.</summary>
+	/// <param name="callState">The scopes that converters for marshaled values require, if any.</param>
+	/// <param name="cancellationToken">A cancellation token.</param>
+	/// <returns>The starting context for the job.</returns>
+	private Nerdbank.Json.SerializationContext CreateStartingContext(RpcCallState? callState, CancellationToken cancellationToken)
+	{
+		Nerdbank.Json.SerializationContext context = this.Serializer.StartingContext with { CancellationToken = cancellationToken };
+		if (callState is not null)
+		{
+			context[RpcCallState.ContextKey] = callState;
+		}
+
+		return context;
+	}
 }

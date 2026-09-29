@@ -18,7 +18,7 @@ internal sealed class OutOfBandStreamJsonConverterFactory(OutOfBandStreamManager
 		public override T? Read(ref Nerdbank.Json.JsonReader reader, Nerdbank.Json.SerializationContext context)
 		{
 			string raw = reader.ReadRawValue();
-			return raw == "null" ? default : this.FromPipe(manager.Unmarshal(JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(raw))));
+			return raw == "null" ? default : this.FromPipe(manager.Unmarshal(JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(raw)), RpcCallState.From(context)));
 		}
 
 		public override void Write(ref Nerdbank.Json.JsonWriter writer, T? value, Nerdbank.Json.SerializationContext context)
@@ -29,7 +29,7 @@ internal sealed class OutOfBandStreamJsonConverterFactory(OutOfBandStreamManager
 				return;
 			}
 
-			JsonRpcValue token = manager.Marshal(this.ToPipe(value), JsonRpcEncoding.Json);
+			JsonRpcValue token = manager.Marshal(this.ToPipe(value), JsonRpcEncoding.Json, RpcCallState.From(context));
 			writer.WriteRawValue(Encoding.UTF8.GetString(token.OwnedBytes.Span));
 		}
 

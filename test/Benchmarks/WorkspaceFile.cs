@@ -1,10 +1,13 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using MessagePack;
 using PolyType;
 
 namespace Benchmarks;
+
+// Benchmark payload shapes keep their property defaults off the wire contract so encoded sizes stay comparable across serializers.
+#pragma warning disable NBMsgPack110
 
 /// <summary>A single file entry within a deterministic workspace graph used to benchmark large-argument round trips.</summary>
 [MessagePackObject(keyAsPropertyName: true)]
@@ -23,3 +26,4 @@ public partial class WorkspaceFile
 	/// <summary>Gets or sets the tags associated with the file.</summary>
 	public List<string> Tags { get; set; } = new();
 }
+#pragma warning restore NBMsgPack110

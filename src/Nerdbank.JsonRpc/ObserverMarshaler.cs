@@ -11,11 +11,11 @@ namespace Nerdbank.JsonRpc;
 
 internal static class ObserverMarshaler
 {
-	internal static JsonRpcValue Marshal<T>(MarshaledObjectManager manager, T observer, ITypeShape<T> shape, JsonRpcEncoding encoding)
-		=> ((ObserverContract)GetObserverContract(shape)).Marshal(manager, observer!, encoding);
+	internal static JsonRpcValue Marshal<T>(MarshaledObjectManager manager, T observer, ITypeShape<T> shape, JsonRpcEncoding encoding, RpcCallState? callState)
+		=> ((ObserverContract)GetObserverContract(shape)).Marshal(manager, observer!, encoding, callState);
 
-	internal static object CreateProxy<T>(MarshaledObjectManager manager, JsonRpcValue marker, ITypeShape<T> shape)
-		=> ((ObserverContract)GetObserverContract(shape)).Unmarshal(manager, marker);
+	internal static object CreateProxy<T>(MarshaledObjectManager manager, JsonRpcValue marker, ITypeShape<T> shape, RpcCallState? callState)
+		=> ((ObserverContract)GetObserverContract(shape)).Unmarshal(manager, marker, callState);
 
 	internal static TargetRegistration CreateRegistration<T>(ITypeShape<T> valueShape)
 	{
@@ -198,18 +198,18 @@ internal static class ObserverMarshaler
 
 	private abstract class ObserverContract
 	{
-		public abstract JsonRpcValue Marshal(MarshaledObjectManager manager, object observer, JsonRpcEncoding encoding);
+		public abstract JsonRpcValue Marshal(MarshaledObjectManager manager, object observer, JsonRpcEncoding encoding, RpcCallState? callState);
 
-		public abstract object Unmarshal(MarshaledObjectManager manager, JsonRpcValue marker);
+		public abstract object Unmarshal(MarshaledObjectManager manager, JsonRpcValue marker, RpcCallState? callState);
 	}
 
 	private sealed class Contract<T>(ITypeShape<T> valueShape) : ObserverContract
 	{
-		public override JsonRpcValue Marshal(MarshaledObjectManager manager, object observer, JsonRpcEncoding encoding)
-			=> manager.MarshalObserver((IObserver<T>)observer, valueShape, encoding);
+		public override JsonRpcValue Marshal(MarshaledObjectManager manager, object observer, JsonRpcEncoding encoding, RpcCallState? callState)
+			=> manager.MarshalObserver((IObserver<T>)observer, valueShape, encoding, callState);
 
-		public override object Unmarshal(MarshaledObjectManager manager, JsonRpcValue marker)
-			=> manager.UnmarshalObserver(marker, valueShape);
+		public override object Unmarshal(MarshaledObjectManager manager, JsonRpcValue marker, RpcCallState? callState)
+			=> manager.UnmarshalObserver(marker, valueShape, callState);
 	}
 
 	private sealed class ObserverShapeFunc : ITypeShapeFunc

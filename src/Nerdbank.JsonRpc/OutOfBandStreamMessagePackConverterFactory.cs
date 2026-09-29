@@ -16,7 +16,7 @@ internal sealed class OutOfBandStreamMessagePackConverterFactory(OutOfBandStream
 	private abstract class Converter<T>(OutOfBandStreamManager manager) : MessagePackConverter<T>
 	{
 		public override T? Read(ref MessagePackReader reader, SerializationContext context)
-			=> reader.TryReadNil() ? default : this.FromPipe(manager.Unmarshal(JsonRpcValue.FromMessagePack(reader.ReadRaw(context))));
+			=> reader.TryReadNil() ? default : this.FromPipe(manager.Unmarshal(JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), RpcCallState.From(context)));
 
 		public override void Write(ref MessagePackWriter writer, in T? value, SerializationContext context)
 		{
@@ -26,7 +26,7 @@ internal sealed class OutOfBandStreamMessagePackConverterFactory(OutOfBandStream
 				return;
 			}
 
-			writer.Write(manager.Marshal(this.ToPipe(value), JsonRpcEncoding.MessagePack).AsOwnedMessagePack());
+			writer.Write(manager.Marshal(this.ToPipe(value), JsonRpcEncoding.MessagePack, RpcCallState.From(context)).AsOwnedMessagePack());
 		}
 
 		protected abstract IDuplexPipe ToPipe(T value);

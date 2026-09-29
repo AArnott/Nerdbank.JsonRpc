@@ -16,23 +16,21 @@ internal sealed class ProgressManager(JsonRpc owner)
 	private readonly object sync = new();
 	private readonly Dictionary<JsonRpcValue, Registration> registrations = [];
 	private readonly Dictionary<RequestId, RegistrationSet> requestRegistrations = [];
-	private readonly AsyncLocal<RegistrationScope?> activeRegistrationScope = new();
-	private readonly AsyncLocal<InboundScope?> activeInboundScope = new();
 	private long nextToken;
 
-	internal RegistrationScope TrackRegistrations() => new(this);
+	internal RegistrationScope TrackRegistrations(RpcCallState callState) => new(callState);
 
-	internal JsonRpcValue Marshal<T>(IProgress<T> progress, ITypeShape<T> valueShape, JsonRpcEncoding encoding)
+	internal JsonRpcValue Marshal<T>(IProgress<T> progress, ITypeShape<T> valueShape, JsonRpcEncoding encoding, RpcCallState? callState)
 	{
-		RegistrationScope scope = this.activeRegistrationScope.Value ?? throw new InvalidOperationException("IProgress<T> values may only be sent as RPC request arguments.");
+		RegistrationScope scope = callState?.ProgressRegistrations ?? throw new InvalidOperationException("IProgress<T> values may only be sent as RPC request arguments.");
 		JsonRpcValue token = this.CreateToken(encoding);
 		scope.Add(token, new Contract<T>(progress, valueShape));
 		return token;
 	}
 
-	internal IProgress<T> Unmarshal<T>(JsonRpcValue token, ITypeShape<T> valueShape)
+	internal IProgress<T> Unmarshal<T>(JsonRpcValue token, ITypeShape<T> valueShape, RpcCallState? callState)
 	{
-		InboundScope scope = this.activeInboundScope.Value ?? throw new FormatException("IProgress<T> values may only be received in RPC request arguments.");
+		InboundScope scope = callState?.ProgressInbound ?? throw new FormatException("IProgress<T> values may only be received in RPC request arguments.");
 		if (!scope.HasResponse)
 		{
 			throw new FormatException("IProgress<T> values cannot be received in notifications.");
@@ -41,7 +39,7 @@ internal sealed class ProgressManager(JsonRpc owner)
 		return new ProgressProxy<T>(owner, token, valueShape, scope);
 	}
 
-	internal InboundScope TrackInboundCall(bool hasResponse) => new(this, hasResponse);
+	internal InboundScope TrackInboundCall(bool hasResponse, RpcCallState callState) => new(this, callState, hasResponse);
 
 	internal void RegisterOutboundRequest(JsonRpcRequest request)
 	{
@@ -178,16 +176,16 @@ internal sealed class ProgressManager(JsonRpc owner)
 
 	internal sealed class RegistrationScope : IDisposable
 	{
-		private readonly ProgressManager manager;
+		private readonly RpcCallState callState;
 		private readonly RegistrationScope? priorScope;
 		private List<(JsonRpcValue Token, Registration Registration)>? registrations;
 		private bool committed;
 
-		internal RegistrationScope(ProgressManager manager)
+		internal RegistrationScope(RpcCallState callState)
 		{
-			this.manager = manager;
-			this.priorScope = manager.activeRegistrationScope.Value;
-			manager.activeRegistrationScope.Value = this;
+			this.callState = callState;
+			this.priorScope = callState.ProgressRegistrations;
+			callState.ProgressRegistrations = this;
 		}
 
 		public RegistrationSet Commit()
@@ -198,7 +196,7 @@ internal sealed class ProgressManager(JsonRpc owner)
 
 		public void Dispose()
 		{
-			this.manager.activeRegistrationScope.Value = this.priorScope;
+			this.callState.ProgressRegistrations = this.priorScope;
 			if (!this.committed)
 			{
 				this.registrations?.Clear();
@@ -225,24 +223,26 @@ internal sealed class ProgressManager(JsonRpc owner)
 	internal sealed class InboundScope : IDisposable
 	{
 		private readonly ProgressManager manager;
+		private readonly RpcCallState callState;
 		private readonly InboundScope? priorScope;
 		private readonly object sync = new();
 		private Task reportsQueued = Task.CompletedTask;
 		private bool active = true;
 
-		internal InboundScope(ProgressManager manager, bool hasResponse)
+		internal InboundScope(ProgressManager manager, RpcCallState callState, bool hasResponse)
 		{
 			this.manager = manager;
+			this.callState = callState;
 			this.HasResponse = hasResponse;
-			this.priorScope = manager.activeInboundScope.Value;
-			manager.activeInboundScope.Value = this;
+			this.priorScope = callState.ProgressInbound;
+			callState.ProgressInbound = this;
 		}
 
 		internal bool HasResponse { get; }
 
 		public void Dispose()
 		{
-			this.manager.activeInboundScope.Value = this.priorScope;
+			this.callState.ProgressInbound = this.priorScope;
 			_ = this.CompleteAsync();
 		}
 

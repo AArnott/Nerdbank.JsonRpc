@@ -8,7 +8,7 @@ namespace Nerdbank.JsonRpc;
 internal sealed class MarshaledDisposableMessagePackConverter(MarshaledObjectManager manager) : MessagePackConverter<IDisposable>
 {
 	public override IDisposable? Read(ref MessagePackReader reader, SerializationContext context)
-		=> reader.TryReadNil() ? null : manager.Unmarshal(JsonRpcValue.FromMessagePack(reader.ReadRaw(context)));
+		=> reader.TryReadNil() ? null : manager.Unmarshal(JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), RpcCallState.From(context));
 
 	public override void Write(ref MessagePackWriter writer, in IDisposable? value, SerializationContext context)
 	{
@@ -18,6 +18,6 @@ internal sealed class MarshaledDisposableMessagePackConverter(MarshaledObjectMan
 			return;
 		}
 
-		writer.Write(manager.Marshal(value, JsonRpcEncoding.MessagePack).AsOwnedMessagePack());
+		writer.Write(manager.Marshal(value, JsonRpcEncoding.MessagePack, RpcCallState.From(context)).AsOwnedMessagePack());
 	}
 }

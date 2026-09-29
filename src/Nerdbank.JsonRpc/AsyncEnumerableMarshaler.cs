@@ -15,8 +15,9 @@ internal static class AsyncEnumerableMarshaler
 	/// <param name="shape">The shape of the <see cref="IAsyncEnumerable{T}"/> type.</param>
 	/// <param name="encoding">The wire encoding to produce.</param>
 	/// <returns>The encoded value to write in place of the sequence.</returns>
-	internal static JsonRpcValue Marshal<T>(AsyncEnumerableManager manager, T enumerable, ITypeShape<T> shape, JsonRpcEncoding encoding)
-		=> GetContract(shape).Marshal(manager, enumerable!, encoding);
+	/// <param name="callState">The scopes that apply to the message being written.</param>
+	internal static JsonRpcValue Marshal<T>(AsyncEnumerableManager manager, T enumerable, ITypeShape<T> shape, JsonRpcEncoding encoding, RpcCallState? callState)
+		=> GetContract(shape).Marshal(manager, enumerable!, encoding, callState);
 
 	/// <summary>Creates a local sequence that pulls its values from a remote generator.</summary>
 	/// <typeparam name="T">The <see cref="IAsyncEnumerable{T}"/> type being unmarshaled.</typeparam>
@@ -24,8 +25,9 @@ internal static class AsyncEnumerableMarshaler
 	/// <param name="value">The encoded value carrying the token and any values that rode along with it.</param>
 	/// <param name="shape">The shape of the <see cref="IAsyncEnumerable{T}"/> type.</param>
 	/// <returns>The sequence.</returns>
-	internal static object Unmarshal<T>(AsyncEnumerableManager manager, JsonRpcValue value, ITypeShape<T> shape)
-		=> GetContract(shape).Unmarshal(manager, value);
+	/// <param name="callState">The scopes that apply to the message being read.</param>
+	internal static object Unmarshal<T>(AsyncEnumerableManager manager, JsonRpcValue value, ITypeShape<T> shape, RpcCallState? callState)
+		=> GetContract(shape).Unmarshal(manager, value, callState);
 
 	/// <summary>Tests whether a type is exactly <see cref="IAsyncEnumerable{T}"/>.</summary>
 	/// <param name="type">The candidate type.</param>
@@ -52,14 +54,16 @@ internal static class AsyncEnumerableMarshaler
 		/// <param name="manager">The manager that tracks generators.</param>
 		/// <param name="enumerable">The sequence.</param>
 		/// <param name="encoding">The wire encoding.</param>
+		/// <param name="callState">The scopes that apply to the message being written.</param>
 		/// <returns>The encoded value.</returns>
-		internal abstract JsonRpcValue Marshal(AsyncEnumerableManager manager, object enumerable, JsonRpcEncoding encoding);
+		internal abstract JsonRpcValue Marshal(AsyncEnumerableManager manager, object enumerable, JsonRpcEncoding encoding, RpcCallState? callState);
 
 		/// <summary>Creates a local sequence backed by a remote generator.</summary>
 		/// <param name="manager">The manager that tracks generators.</param>
 		/// <param name="value">The encoded value.</param>
+		/// <param name="callState">The scopes that apply to the message being read.</param>
 		/// <returns>The sequence.</returns>
-		internal abstract object Unmarshal(AsyncEnumerableManager manager, JsonRpcValue value);
+		internal abstract object Unmarshal(AsyncEnumerableManager manager, JsonRpcValue value, RpcCallState? callState);
 	}
 
 	/// <summary>A contract bound to a particular element type.</summary>
@@ -68,12 +72,12 @@ internal static class AsyncEnumerableMarshaler
 	private sealed class Contract<TElement>(ITypeShape<TElement> elementShape) : EnumerableContract
 	{
 		/// <inheritdoc/>
-		internal override JsonRpcValue Marshal(AsyncEnumerableManager manager, object enumerable, JsonRpcEncoding encoding)
-			=> manager.Marshal((IAsyncEnumerable<TElement>)enumerable, elementShape, encoding);
+		internal override JsonRpcValue Marshal(AsyncEnumerableManager manager, object enumerable, JsonRpcEncoding encoding, RpcCallState? callState)
+			=> manager.Marshal((IAsyncEnumerable<TElement>)enumerable, elementShape, encoding, callState);
 
 		/// <inheritdoc/>
-		internal override object Unmarshal(AsyncEnumerableManager manager, JsonRpcValue value)
-			=> manager.Unmarshal(value, elementShape);
+		internal override object Unmarshal(AsyncEnumerableManager manager, JsonRpcValue value, RpcCallState? callState)
+			=> manager.Unmarshal(value, elementShape, callState);
 	}
 
 	/// <summary>Re-enters a generic context for the element type.</summary>

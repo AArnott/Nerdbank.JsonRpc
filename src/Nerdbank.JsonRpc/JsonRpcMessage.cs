@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 namespace Nerdbank.JsonRpc;
@@ -19,8 +19,11 @@ public abstract partial class JsonRpcMessage
 	[PropertyShape(Ignore = true)]
 	public bool HasId { get; private set; }
 
+	// The default value is deliberately not declared to the serializer: the JSON-RPC envelope must always carry this property.
+#pragma warning disable NBMsgPack110
 	[PropertyShape(IsRequired = true, Name = "jsonrpc")]
 	public string Version { get; init; } = "2.0";
+#pragma warning restore NBMsgPack110
 
 	/// <summary>Gets or sets the extension properties carried at the top level of this message's envelope, if any.</summary>
 	[PropertyShape(Ignore = true)]

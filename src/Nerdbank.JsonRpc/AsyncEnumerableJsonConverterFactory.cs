@@ -31,7 +31,7 @@ internal sealed class AsyncEnumerableJsonConverterFactory(AsyncEnumerableManager
 		public override T? Read(ref Nerdbank.Json.JsonReader reader, Nerdbank.Json.SerializationContext context)
 		{
 			string raw = reader.ReadRawValue();
-			return raw == "null" ? default : (T)AsyncEnumerableMarshaler.Unmarshal(manager, JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(raw)), shape);
+			return raw == "null" ? default : (T)AsyncEnumerableMarshaler.Unmarshal(manager, JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(raw)), shape, RpcCallState.From(context));
 		}
 
 		/// <inheritdoc/>
@@ -43,7 +43,7 @@ internal sealed class AsyncEnumerableJsonConverterFactory(AsyncEnumerableManager
 				return;
 			}
 
-			JsonRpcValue encoded = AsyncEnumerableMarshaler.Marshal(manager, value, shape, JsonRpcEncoding.Json);
+			JsonRpcValue encoded = AsyncEnumerableMarshaler.Marshal(manager, value, shape, JsonRpcEncoding.Json, RpcCallState.From(context));
 			writer.WriteRawValue(Encoding.UTF8.GetString(encoded.OwnedBytes.Span));
 		}
 	}
