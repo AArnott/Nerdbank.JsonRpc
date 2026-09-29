@@ -83,6 +83,13 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 			_ => throw new FormatException("Parameters must be an object or array."),
 		};
 		int count = named ? reader.ReadMapHeader() : reader.ReadArrayHeader();
+		long minimumBytesPerEntry = named ? 2 : 1;
+		long remainingBytes = reader.Sequence.Length - reader.Consumed;
+		if (count > JsonRpcMessageConverter.MaximumCollectionCount || count > remainingBytes / minimumBytesPerEntry)
+		{
+			throw new FormatException("The MessagePack params contain too many entries or are truncated.");
+		}
+
 		(string? Name, JsonRpcValue Value)[] values = ArgumentList.Rent(count);
 		int initialized = 0;
 		try

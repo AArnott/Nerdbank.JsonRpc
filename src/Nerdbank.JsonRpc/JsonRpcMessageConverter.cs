@@ -20,6 +20,9 @@ internal readonly partial struct JsonRpcMessagePackEnvelope(JsonRpcMessage messa
 #pragma warning disable NBMsgPack031 // This discriminating converter conditionally reads exactly one MessagePack structure.
 internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePackEnvelope>
 {
+	/// <summary>The maximum number of entries accepted in one MessagePack batch or parameter collection.</summary>
+	internal const int MaximumCollectionCount = 65_536;
+
 	private static readonly JsonRpcErrorDetailsConverter ErrorConverter = new();
 
 	public override JsonRpcMessagePackEnvelope Read(ref MessagePackReader reader, SerializationContext context)
@@ -38,6 +41,11 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 	private static JsonRpcMessage ReadBatch(ref MessagePackReader reader, SerializationContext context)
 	{
 		int count = reader.ReadArrayHeader();
+		if (count > MaximumCollectionCount || count > reader.Sequence.Length - reader.Consumed)
+		{
+			throw new ProtocolViolationException("The JSON-RPC batch contains too many entries or is truncated.");
+		}
+
 		if (count == 0)
 		{
 			throw new ProtocolViolationException("A JSON-RPC batch must not be empty.");
@@ -203,6 +211,13 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 		long startConsumed = reader.Consumed;
 		bool named = type == MessagePackType.Map;
 		int count = named ? reader.ReadMapHeader() : reader.ReadArrayHeader();
+		long minimumBytesPerEntry = named ? 2 : 1;
+		long remainingBytes = sequence.Length - reader.Consumed;
+		if (count > MaximumCollectionCount || count > remainingBytes / minimumBytesPerEntry)
+		{
+			throw new ProtocolViolationException("The JSON-RPC params contain too many entries or are truncated.");
+		}
+
 		(string? Name, JsonRpcValue Value)[] values = ArgumentList.Rent(count);
 		try
 		{

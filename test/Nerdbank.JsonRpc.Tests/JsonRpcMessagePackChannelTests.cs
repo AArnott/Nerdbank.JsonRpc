@@ -277,6 +277,57 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 	}
 
 	[Test]
+	public async Task ExcessiveBatchCountFaultsTransport()
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcMessagePackChannel channel = CreateChannel(local, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader);
+		const int excessiveCount = 65_537;
+		Nerdbank.Streams.Sequence<byte> sequence = new();
+		Nerdbank.MessagePack.MessagePackWriter writer = new(sequence);
+		writer.WriteArrayHeader(excessiveCount);
+		for (int i = 0; i < excessiveCount; i++)
+		{
+			writer.WriteMapHeader(0);
+		}
+
+		writer.Flush();
+		peer.Output.Write(Frame(sequence.AsReadOnlySequence.ToArray(), JsonRpcMessagePackFraming.BigEndianInt32LengthHeader));
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(async () => await peer.Output.FlushAsync(this.TimeoutToken));
+	}
+
+	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task ExcessiveParameterCountFaultsTransport(bool named)
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcMessagePackChannel channel = CreateChannel(local, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader);
+		const int excessiveCount = 65_537;
+		byte[] message = EncodeRawRequest("method", (ref Nerdbank.MessagePack.MessagePackWriter writer) =>
+		{
+			if (named)
+			{
+				writer.WriteMapHeader(excessiveCount);
+				for (int i = 0; i < excessiveCount; i++)
+				{
+					writer.WriteNil();
+					writer.WriteNil();
+				}
+			}
+			else
+			{
+				writer.WriteArrayHeader(excessiveCount);
+				for (int i = 0; i < excessiveCount; i++)
+				{
+					writer.WriteNil();
+				}
+			}
+		});
+		peer.Output.Write(Frame(message, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader));
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(async () => await peer.Output.FlushAsync(this.TimeoutToken));
+	}
+
+	[Test]
 	public async Task OversizedSelfDelimitingFrameFaultsTransport()
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
