@@ -148,7 +148,7 @@ public abstract class JsonRpcSerializer
 	/// <param name="request">The request whose arguments to read.</param>
 	/// <returns>Whether the arguments are named, and the arguments themselves.</returns>
 	internal (bool Named, ArgumentList Values) ReadArguments(JsonRpcRequest request)
-		=> request.SplitArguments ?? this.ReadArguments(request.Arguments);
+		=> request.SplitArguments is { IsDefault: false } split ? (split.Named, split) : this.ReadArguments(request.Arguments);
 
 	/// <summary>Encodes a cancellation notification using the protocol ID token.</summary>
 	/// <param name="id">The ID to cancel.</param>

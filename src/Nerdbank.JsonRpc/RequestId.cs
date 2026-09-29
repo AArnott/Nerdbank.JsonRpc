@@ -18,6 +18,9 @@ public partial struct RequestId : IEquatable<RequestId>
 	/// <summary>The <see cref="kind"/> of an unsigned integer ID too large for a signed one, whose bits are in <see cref="number"/>.</summary>
 	private static readonly object UnsignedKind = new();
 
+	/// <summary>The <see cref="kind"/> of <see cref="Absent"/>.</summary>
+	private static readonly object AbsentKind = new();
+
 	/// <summary>
 	/// <see langword="null"/> for a null ID, <see cref="SignedKind"/> or <see cref="UnsignedKind"/> for an integer ID,
 	/// or a <see cref="Utf8Id"/> for a string ID.
@@ -70,6 +73,29 @@ public partial struct RequestId : IEquatable<RequestId>
 		this.kind = value <= long.MaxValue ? SignedKind : UnsignedKind;
 		this.number = unchecked((long)value);
 	}
+
+	/// <summary>
+	/// Initializes a new instance of the <see cref="RequestId"/> struct with a raw representation.
+	/// </summary>
+	/// <param name="kind">The <see cref="kind"/>.</param>
+	/// <param name="number">The <see cref="number"/>.</param>
+	private RequestId(object kind, long number)
+	{
+		this.kind = kind;
+		this.number = number;
+	}
+
+	/// <summary>
+	/// Gets a placeholder that stands for no ID at all, distinct from every ID a message can carry (including a null one).
+	/// </summary>
+	/// <remarks>
+	/// Messages store this instead of a <see cref="Nullable{T}"/>, which would add a flag and padding to every message.
+	/// It must never escape to callers, who observe an absent ID as <see langword="null"/>.
+	/// </remarks>
+	internal static RequestId Absent => new(AbsentKind, 0);
+
+	/// <summary>Gets a value indicating whether this is the <see cref="Absent"/> placeholder.</summary>
+	internal readonly bool IsAbsent => ReferenceEquals(this.kind, AbsentKind);
 
 	/// <summary>Gets a value indicating whether this ID is a string token.</summary>
 	internal readonly bool IsString => this.kind is Utf8Id;

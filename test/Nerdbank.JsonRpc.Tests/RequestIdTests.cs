@@ -14,6 +14,26 @@ public class RequestIdTests
 	}
 
 	[Test]
+	public void MessageIdDistinguishesAbsentFromNull()
+	{
+		JsonRpcRequest notification = new() { Method = "m" };
+		Assert.False(notification.HasId);
+		Assert.Null(notification.Id);
+
+		JsonRpcRequest explicitlyAbsent = new() { Method = "m", Id = null };
+		Assert.False(explicitlyAbsent.HasId);
+		Assert.Null(explicitlyAbsent.Id);
+
+		JsonRpcRequest nullId = new() { Method = "m", Id = default(RequestId) };
+		Assert.True(nullId.HasId);
+		Assert.Equal(default(RequestId), nullId.Id);
+
+		JsonRpcResult result = new() { Id = new RequestId(4) };
+		Assert.True(result.HasId);
+		Assert.Equal(new RequestId(4), result.Id);
+	}
+
+	[Test]
 	public void IntegerFormsCompareByValue()
 	{
 		Assert.Equal(new RequestId(5L), new RequestId(5UL));

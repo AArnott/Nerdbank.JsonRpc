@@ -13,14 +13,22 @@ internal readonly struct ArgumentList
 	/// <summary>Initializes a new instance of the <see cref="ArgumentList"/> struct.</summary>
 	/// <param name="array">An array from <see cref="Rent"/>.</param>
 	/// <param name="count">The number of initialized arguments in <paramref name="array"/>.</param>
-	internal ArgumentList((string? Name, JsonRpcValue Value)[] array, int count)
+	/// <param name="named">Whether the arguments were supplied by name.</param>
+	internal ArgumentList((string? Name, JsonRpcValue Value)[] array, int count, bool named)
 	{
 		this.array = array;
 		this.Count = count;
+		this.Named = named;
 	}
 
 	/// <summary>Gets the number of arguments.</summary>
 	internal int Count { get; }
+
+	/// <summary>Gets a value indicating whether the arguments were supplied by name.</summary>
+	internal bool Named { get; }
+
+	/// <summary>Gets a value indicating whether this is the <see langword="default"/> value, which represents no argument list at all.</summary>
+	internal bool IsDefault => this.array is null;
 
 	/// <summary>Gets an argument.</summary>
 	/// <param name="index">The position of the argument.</param>
@@ -43,7 +51,7 @@ internal readonly struct ArgumentList
 	{
 		(string? Name, JsonRpcValue Value)[] larger = Rent(Math.Max(4, array.Length * 2));
 		Array.Copy(array, larger, count);
-		new ArgumentList(array, count).Return();
+		new ArgumentList(array, count, named: false).Return();
 		array = larger;
 	}
 

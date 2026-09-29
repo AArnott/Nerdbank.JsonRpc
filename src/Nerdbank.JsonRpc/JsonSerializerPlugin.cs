@@ -119,7 +119,7 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 		// Reject trailing content, as parsing the whole value would.
 		reader.Read();
 
-		return (named, new(values, count));
+		return (named, new(values, count, named));
 	}
 
 	internal override JsonRpcValue SerializeCancellation(RequestId id, CancellationToken cancellationToken)

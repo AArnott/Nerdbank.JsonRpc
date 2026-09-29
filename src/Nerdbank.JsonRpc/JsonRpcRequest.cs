@@ -19,7 +19,7 @@ public partial class JsonRpcRequest : JsonRpcMessage
 	/// Whoever dispatches the request may return their pooled array once the arguments are consumed, clearing this property.
 	/// </remarks>
 	[PropertyShape(Ignore = true)]
-	internal (bool Named, ArgumentList Values)? SplitArguments { get; set; }
+	internal ArgumentList SplitArguments { get; set; }
 
 	/// <summary>Gets or sets the <c>JoinableTask</c> token that correlates this request with its caller's context, if any.</summary>
 	[PropertyShape(Ignore = true)]

@@ -6,18 +6,18 @@ namespace Nerdbank.JsonRpc;
 [GenerateShape]
 public abstract partial class JsonRpcMessage
 {
-	private RequestId? id;
+	private RequestId id = RequestId.Absent;
 
 	[PropertyShape(Name = "id")]
 	public RequestId? Id
 	{
-		get => this.id;
+		get => this.id.IsAbsent ? (RequestId?)null : this.id;
 		init => this.SetReceivedId(value);
 	}
 
 	/// <summary>Gets a value indicating whether an ID was supplied, including an explicit nil ID.</summary>
 	[PropertyShape(Ignore = true)]
-	public bool HasId { get; private set; }
+	public bool HasId => !this.id.IsAbsent;
 
 	// The default value is deliberately not declared to the serializer: the JSON-RPC envelope must always carry this property.
 #pragma warning disable NBMsgPack110
@@ -49,9 +49,5 @@ public abstract partial class JsonRpcMessage
 		return false;
 	}
 
-	internal void SetReceivedId(RequestId? id)
-	{
-		this.id = id;
-		this.HasId = id.HasValue;
-	}
+	internal void SetReceivedId(RequestId? id) => this.id = id ?? RequestId.Absent;
 }

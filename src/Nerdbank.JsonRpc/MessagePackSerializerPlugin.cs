@@ -95,7 +95,7 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 			throw new FormatException("Trailing bytes in parameters.");
 		}
 
-		return (named, new(values, count));
+		return (named, new(values, count, named));
 	}
 
 	internal override JsonRpcValue SerializeCancellation(RequestId id, CancellationToken cancellationToken)

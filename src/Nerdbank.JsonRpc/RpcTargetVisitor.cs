@@ -221,7 +221,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			{
 				// Every argument has been materialized (or rejected), so the pooled request buffer is no longer needed.
 				dispatch.Request.Arguments.Release();
-				dispatch.Request.SplitArguments = null;
+				dispatch.Request.SplitArguments = default;
 				values.Return();
 			}
 

@@ -64,7 +64,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 		RequestId id = default;
 		string? methodName = null;
 		JsonRpcValue arguments = default, resultValue = default;
-		(bool Named, ArgumentList Values)? splitArguments = null;
+		ArgumentList splitArguments = default;
 		JsonRpcErrorDetails? errorDetails = null;
 		TopLevelProperties? extensions = null;
 		for (int i = 0; i < count; i++)
@@ -157,11 +157,11 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 	/// <param name="context">The serialization context.</param>
 	/// <param name="split">Receives the individual arguments, which share the returned value's buffer.</param>
 	/// <returns>The params, copied into a pooled buffer.</returns>
-	private static JsonRpcValue ReadParameters(ref MessagePackReader reader, SerializationContext context, out (bool Named, ArgumentList Values)? split)
+	private static JsonRpcValue ReadParameters(ref MessagePackReader reader, SerializationContext context, out ArgumentList split)
 	{
 		ReadOnlySequence<byte> sequence = reader.Sequence;
 		SequencePosition start = reader.Position;
-		split = null;
+		split = default;
 		MessagePackType type = reader.NextMessagePackType;
 		if (type is not (MessagePackType.Map or MessagePackType.Array))
 		{
@@ -209,11 +209,11 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 				values[i] = (values[i].Name, parameters.Slice(ranges[i].Offset, ranges[i].Length));
 			}
 
-			split = (named, new(values, count));
+			split = new(values, count, named);
 		}
 		else
 		{
-			new ArgumentList(values, count).Return();
+			new ArgumentList(values, count, named).Return();
 		}
 
 		return parameters;
