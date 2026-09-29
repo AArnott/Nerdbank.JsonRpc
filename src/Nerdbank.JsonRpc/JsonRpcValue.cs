@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Nerdbank.MessagePack;
 
@@ -26,15 +27,31 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	/// <remarks>These are held out of line so that the many values without them stay small.</remarks>
 	private readonly Attachments? attachments;
 
+	/// <summary>The offset of this value within <see cref="storage"/>, with the encoding in the sign bit.</summary>
+	/// <remarks>Packing the encoding here keeps slices from growing the struct beyond its unsliced size.</remarks>
+	private readonly int offsetAndEncoding;
+
+	/// <summary>The length of this value within <see cref="storage"/>, or 0 if this value spans all of it.</summary>
+	/// <remarks>Encoded values are never empty, so 0 is free to mean "not a slice".</remarks>
+	private readonly int sliceLength;
+
 	private JsonRpcValue(object storage, JsonRpcEncoding encoding, Attachments? attachments = null)
+		: this(storage, encoding, offset: 0, sliceLength: 0, attachments)
 	{
+	}
+
+	private JsonRpcValue(object storage, JsonRpcEncoding encoding, int offset, int sliceLength, Attachments? attachments)
+	{
+		Debug.Assert(encoding is JsonRpcEncoding.MessagePack or JsonRpcEncoding.Json, "Only two encodings fit in the sign bit.");
+		Debug.Assert(offset >= 0 && sliceLength >= 0, "Offsets and lengths are non-negative.");
 		this.storage = storage;
-		this.Encoding = encoding;
 		this.attachments = attachments;
+		this.offsetAndEncoding = offset | (encoding == JsonRpcEncoding.Json ? int.MinValue : 0);
+		this.sliceLength = sliceLength;
 	}
 
 	/// <summary>Gets the encoding of this value.</summary>
-	public JsonRpcEncoding Encoding { get; }
+	public JsonRpcEncoding Encoding => this.offsetAndEncoding < 0 ? JsonRpcEncoding.Json : JsonRpcEncoding.MessagePack;
 
 	/// <summary>Gets a value indicating whether this value is present.</summary>
 	public bool HasValue => this.storage is not null;
@@ -43,7 +60,9 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	public ReadOnlyMemory<byte> Bytes => this.storage is null ? default : this.OwnedBytes.ToArray();
 
 	/// <summary>Gets the internally owned bytes without copying.</summary>
-	internal ReadOnlyMemory<byte> OwnedBytes => this.storage is null ? ReadOnlyMemory<byte>.Empty : GetMemory(this.storage);
+	internal ReadOnlyMemory<byte> OwnedBytes => this.storage is null ? ReadOnlyMemory<byte>.Empty
+		: this.IsSlice ? GetMemory(this.storage).Slice(this.Offset, this.sliceLength)
+		: GetMemory(this.storage);
 
 	internal MarshaledObjectManager.HandleSet? MarshaledHandles => this.attachments?.MarshaledHandles;
 
@@ -52,6 +71,12 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	internal OutOfBandStreamManager.ChannelSet? OutOfBandChannels => this.attachments?.OutOfBandChannels;
 
 	internal AsyncEnumerableManager.TokenSet? AsyncEnumerableTokens => this.attachments?.AsyncEnumerableTokens;
+
+	/// <summary>Gets a value indicating whether this value shares a buffer owned by another value.</summary>
+	/// <remarks>The memory is resolved from the owner on each access so that use after the owner is released fails rather than reading recycled data.</remarks>
+	private bool IsSlice => this.sliceLength != 0;
+
+	private int Offset => this.offsetAndEncoding & int.MaxValue;
 
 	/// <summary>Converts a MessagePack raw value into a tagged value.</summary>
 	/// <param name="value">The raw value.</param>
@@ -137,13 +162,13 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	internal static JsonRpcValue FromOwnedMessagePack(JsonRpcValue owner, RawMessagePack value)
 	{
 		ReadOnlySequence<byte> sequence = value.MsgPack;
-		object root = owner.storage is OwnedSlice parent ? parent.Owner : owner.storage!;
+		object root = owner.storage!;
 		if (sequence.IsSingleSegment
 			&& MemoryMarshal.TryGetArray(sequence.First, out ArraySegment<byte> slice)
 			&& MemoryMarshal.TryGetArray(GetMemory(root), out ArraySegment<byte> whole)
 			&& ReferenceEquals(slice.Array, whole.Array))
 		{
-			return new(new OwnedSlice(root, slice.Offset - whole.Offset, slice.Count), JsonRpcEncoding.MessagePack);
+			return CreateSlice(root, JsonRpcEncoding.MessagePack, slice.Offset - whole.Offset, slice.Count);
 		}
 
 		return new(sequence.ToArray(), JsonRpcEncoding.MessagePack);
@@ -153,11 +178,7 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	/// <param name="offset">The offset of the range within this value.</param>
 	/// <param name="length">The length of the range.</param>
 	/// <returns>A value that shares this value's backing buffer.</returns>
-	internal JsonRpcValue Slice(int offset, int length)
-	{
-		(object root, int baseOffset) = this.storage is OwnedSlice parent ? (parent.Owner, parent.Offset) : (this.storage!, 0);
-		return new(new OwnedSlice(root, baseOffset + offset, length), this.Encoding);
-	}
+	internal JsonRpcValue Slice(int offset, int length) => CreateSlice(this.storage!, this.Encoding, this.Offset + offset, length);
 
 	/// <summary>Returns the internally owned MessagePack bytes without copying.</summary>
 	/// <returns>The internally owned MessagePack value.</returns>
@@ -184,14 +205,20 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	/// <summary>Returns a pooled buffer that backs this value to the pool.</summary>
 	/// <remarks>
 	/// Only the exclusive owner of a value may call this, and only after every use of the value (and any slice of it) is complete.
-	/// Values that are not backed by a pooled buffer are unaffected.
+	/// Values that are not backed by a pooled buffer, including slices of one, are unaffected.
 	/// </remarks>
-	internal void Release() => (this.storage as PooledByteBuffer)?.Release();
+	internal void Release()
+	{
+		if (!this.IsSlice)
+		{
+			(this.storage as PooledByteBuffer)?.Release();
+		}
+	}
 
 	/// <summary>Returns the pooled buffer that backs this value to the pool if it was created for a single transmission.</summary>
 	internal void ReleaseIfSingleUse()
 	{
-		if (this.storage is PooledByteBuffer { IsSingleUse: true } pooled)
+		if (!this.IsSlice && this.storage is PooledByteBuffer { IsSingleUse: true } pooled)
 		{
 			pooled.Release();
 		}
@@ -201,9 +228,17 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	{
 		byte[] bytes => bytes,
 		PooledByteBuffer pooled => pooled.Memory,
-		OwnedSlice slice => slice.Memory,
 		_ => ReadOnlyMemory<byte>.Empty,
 	};
+
+	/// <summary>Creates a value that shares a range of another value's buffer.</summary>
+	/// <param name="root">The <see cref="byte"/> array or <see cref="PooledByteBuffer"/> that owns the bytes.</param>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="offset">The offset of the range within the owner's memory.</param>
+	/// <param name="length">The length of the range.</param>
+	/// <returns>The sliced value.</returns>
+	private static JsonRpcValue CreateSlice(object root, JsonRpcEncoding encoding, int offset, int length)
+		=> length == 0 ? new(Array.Empty<byte>(), encoding) : new(root, encoding, offset, length, attachments: null);
 
 	/// <summary>Creates a copy of this value with one attached resource replaced.</summary>
 	/// <typeparam name="T">The type of the attached resource.</typeparam>
@@ -220,7 +255,7 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 		}
 
 		Attachments updated = set(this.attachments ?? Attachments.None, value);
-		return new(this.storage!, this.Encoding, updated.IsEmpty ? null : updated);
+		return new(this.storage!, this.Encoding, this.Offset, this.sliceLength, updated.IsEmpty ? null : updated);
 	}
 
 	/// <summary>The resources owned by an encoded value.</summary>
@@ -237,19 +272,5 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 		internal AsyncEnumerableManager.TokenSet? AsyncEnumerableTokens { get; init; }
 
 		internal bool IsEmpty => this.MarshaledHandles is null && this.ProgressRegistrations is null && this.OutOfBandChannels is null && this.AsyncEnumerableTokens is null;
-	}
-
-	/// <summary>A slice of a buffer owned by another value.</summary>
-	/// <param name="owner">The <see cref="byte"/> array or <see cref="PooledByteBuffer"/> that owns the bytes.</param>
-	/// <param name="offset">The offset of the slice within the owner's memory.</param>
-	/// <param name="length">The length of the slice.</param>
-	/// <remarks>The memory is resolved from the owner on each access so that use after the owner is released fails rather than reading recycled data.</remarks>
-	private sealed class OwnedSlice(object owner, int offset, int length)
-	{
-		internal object Owner { get; } = owner;
-
-		internal int Offset => offset;
-
-		internal ReadOnlyMemory<byte> Memory => GetMemory(this.Owner).Slice(offset, length);
 	}
 }
