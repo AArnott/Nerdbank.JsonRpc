@@ -466,7 +466,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			subscription.Dispose();
 		}
 
-		this.disposalSource.Cancel();
+		this.StopReading();
 		lock (this.connectionSync)
 		{
 			this.completionSource.TrySetCanceled();
@@ -1091,8 +1091,10 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	{
 		try
 		{
-			while (await inbound.WaitToReadAsync(this.DisposalToken).ConfigureAwait(false))
+			// Waiting without a token lets the channel reuse its cached wait operation; StopReading completes the channel instead.
+			while (await inbound.WaitToReadAsync(CancellationToken.None).ConfigureAwait(false))
 			{
+				this.DisposalToken.ThrowIfCancellationRequested();
 				while (inbound.TryRead(out JsonRpcMessage? message))
 				{
 					this.ProcessIncomingMessage(message);
@@ -1147,7 +1149,14 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			this.Logger.LogError(ex, "One or more marshaled objects failed to dispose while faulting the JSON-RPC connection.");
 		}
 
+		this.StopReading();
+	}
+
+	/// <summary>Cancels <see cref="DisposalToken"/> and wakes the read loop, which waits without a token.</summary>
+	private void StopReading()
+	{
 		this.disposalSource.Cancel();
+		this.channel.AbortInbound(this.disposalSource.Token);
 	}
 
 	[GenerateShape]

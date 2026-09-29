@@ -27,6 +27,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	private readonly Task outboundTaskProcessor;
 	private readonly ChannelWriter<JsonRpcMessage> inboundMessageWriter;
 	private readonly ChannelReader<JsonRpcMessage> outboundMessageReader;
+	private volatile bool inboundAborted;
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcPipeChannel"/> class with deferred transport startup.</summary>
 	/// <param name="pipe">The connected duplex pipe.</param>
@@ -63,6 +64,9 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 #else
 		this.disposalSource.Cancel();
 #endif
+
+		// The outbound queue is read without a cancellation token (see HandleOutboundMessagesAsync), so completing it is what wakes that reader.
+		this.Writer.TryComplete(new OperationCanceledException(this.disposalSource.Token));
 		this.StartTransport();
 
 #pragma warning disable VSTHRD003 // Avoid awaiting foreign Tasks - No main thread dependency.
@@ -83,6 +87,18 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 				result.Result.ReleaseIfSingleUse();
 				break;
 		}
+	}
+
+	/// <summary>Completes the queue of received messages so that a consumer waiting on it without a cancellation token wakes up.</summary>
+	/// <param name="cancellationToken">The canceled token that ended the consumer's interest in received messages.</param>
+	/// <remarks>
+	/// Channel readers reuse a cached wait operation only for waits that cannot be canceled, so the connection waits
+	/// without a token and calls this method instead when it stops reading.
+	/// </remarks>
+	internal void AbortInbound(CancellationToken cancellationToken)
+	{
+		this.inboundAborted = true;
+		this.inboundMessageWriter.TryComplete(new OperationCanceledException(cancellationToken));
 	}
 
 	protected static Channel<JsonRpcMessage> CreateInboundChannel(int? capacity) => capacity is null
@@ -121,7 +137,11 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 		}
 		catch (Exception ex)
 		{
-			this.Logger.LogError(ex, "JSON-RPC inbound transport failed.");
+			if (!(ex is ChannelClosedException && this.inboundAborted))
+			{
+				this.Logger.LogError(ex, "JSON-RPC inbound transport failed.");
+			}
+
 			this.inboundMessageWriter.TryComplete(ex);
 			this.Writer.TryComplete(ex);
 #if NET
@@ -143,7 +163,9 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 #pragma warning restore VSTHRD003
 			while (!this.outboundMessageReader.Completion.IsCompleted)
 			{
-				JsonRpcMessage message = await this.outboundMessageReader.ReadAsync(cancellationToken).ConfigureAwait(false);
+				// Reading without a token lets the channel reuse its cached read operation; disposal completes the queue instead.
+				JsonRpcMessage message = await this.outboundMessageReader.ReadAsync(CancellationToken.None).ConfigureAwait(false);
+				cancellationToken.ThrowIfCancellationRequested();
 				await this.SendMessageAsync(writer, message, cancellationToken).ConfigureAwait(false);
 				await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
 				this.Logger.Log(LogLevel.Information, MessageSent, message, null, FormatLoggedMessage);
