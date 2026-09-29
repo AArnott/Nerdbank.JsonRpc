@@ -23,11 +23,11 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	/// <inheritdoc/>
 	internal override JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
 	{
-		using Sequence<byte> buffer = new(ArrayPool<byte>.Shared);
-		MessagePackWriter writer = new(buffer);
+		using ScratchSequence scratch = ScratchSequence.Rent();
+		MessagePackWriter writer = new(scratch.Sequence);
 		this.Serializer.Serialize(ref writer, value, shape, this.CreateStartingContext(callState, cancellationToken));
 		writer.Flush();
-		return JsonRpcValue.FromMessagePack((RawMessagePack)buffer.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromMessagePack((RawMessagePack)scratch.Sequence.AsReadOnlySequence.ToArray());
 	}
 
 	/// <inheritdoc/>

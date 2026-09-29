@@ -23,11 +23,11 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	/// <inheritdoc/>
 	internal override JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
 	{
-		using Sequence<byte> buffer = new(ArrayPool<byte>.Shared);
-		Nerdbank.Json.JsonWriter writer = new(buffer) { WriteIndented = this.Serializer.WriteIndented };
+		using ScratchSequence scratch = ScratchSequence.Rent();
+		Nerdbank.Json.JsonWriter writer = new(scratch.Sequence) { WriteIndented = this.Serializer.WriteIndented };
 		this.Serializer.Serialize(ref writer, value, shape, this.CreateStartingContext(callState, cancellationToken));
 		writer.Flush();
-		return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
+		return JsonRpcValue.FromJson(scratch.Sequence.AsReadOnlySequence.ToArray());
 	}
 
 	/// <inheritdoc/>
