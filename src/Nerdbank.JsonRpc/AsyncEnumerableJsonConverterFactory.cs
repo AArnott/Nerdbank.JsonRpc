@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Text;
@@ -31,7 +31,7 @@ internal sealed class AsyncEnumerableJsonConverterFactory(AsyncEnumerableManager
 		public override T? Read(ref Nerdbank.Json.JsonReader reader, Nerdbank.Json.SerializationContext context)
 		{
 			string raw = reader.ReadRawValue();
-			return raw == "null" ? default : (T)AsyncEnumerableMarshaler.Unmarshal(manager, JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(raw)), shape, RpcCallState.From(context));
+			return raw == "null" ? default : (T)AsyncEnumerableMarshaler.Unmarshal(manager, JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(raw)), shape, RpcCallState.Current);
 		}
 
 		/// <inheritdoc/>
@@ -43,7 +43,7 @@ internal sealed class AsyncEnumerableJsonConverterFactory(AsyncEnumerableManager
 				return;
 			}
 
-			JsonRpcValue encoded = AsyncEnumerableMarshaler.Marshal(manager, value, shape, JsonRpcEncoding.Json, RpcCallState.From(context));
+			JsonRpcValue encoded = AsyncEnumerableMarshaler.Marshal(manager, value, shape, JsonRpcEncoding.Json, RpcCallState.Current);
 			writer.WriteRawValue(Encoding.UTF8.GetString(encoded.OwnedBytes.Span));
 		}
 	}

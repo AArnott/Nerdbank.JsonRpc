@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using Nerdbank.MessagePack;
@@ -8,7 +8,7 @@ namespace Nerdbank.JsonRpc;
 internal sealed class MarshaledDisposableMessagePackConverter(MarshaledObjectManager manager) : MessagePackConverter<IDisposable>
 {
 	public override IDisposable? Read(ref MessagePackReader reader, SerializationContext context)
-		=> reader.TryReadNil() ? null : manager.Unmarshal(JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), RpcCallState.From(context));
+		=> reader.TryReadNil() ? null : manager.Unmarshal(JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), RpcCallState.Current);
 
 	public override void Write(ref MessagePackWriter writer, in IDisposable? value, SerializationContext context)
 	{
@@ -18,6 +18,6 @@ internal sealed class MarshaledDisposableMessagePackConverter(MarshaledObjectMan
 			return;
 		}
 
-		writer.Write(manager.Marshal(value, JsonRpcEncoding.MessagePack, RpcCallState.From(context)).AsOwnedMessagePack());
+		writer.Write(manager.Marshal(value, JsonRpcEncoding.MessagePack, RpcCallState.Current).AsOwnedMessagePack());
 	}
 }

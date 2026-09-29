@@ -7,15 +7,22 @@ namespace Nerdbank.JsonRpc;
 /// <remarks>
 /// <para>
 /// Converters that marshal objects, progress reporters, out-of-band streams and async enumerables need to reach the
-/// scope established by the RPC call that is currently being encoded or decoded. This state is handed to the
-/// serializer for each job and republished to converters through the serializer's own context state bag, which keeps
-/// concurrent calls isolated without the execution-context copying that ambient storage would require.
+/// scope established by the RPC call that is currently being encoded or decoded.
+/// </para>
+/// <para>
+/// A (de)serialization job runs to completion synchronously on the thread that starts it, so the job's state is
+/// published in a thread-static slot for the duration of that call. Concurrent calls therefore remain isolated
+/// without the execution-context copying that ambient storage requires, and without the per-job state bag
+/// allocation that publishing through the serializer's context would incur.
 /// </para>
 /// </remarks>
 internal sealed class RpcCallState
 {
-	/// <summary>The key under which an instance of this class is stored in a serializer's context state.</summary>
-	internal static readonly object ContextKey = new();
+	[ThreadStatic]
+	private static RpcCallState? current;
+
+	/// <summary>Gets the state of the (de)serialization job running on this thread, if any.</summary>
+	internal static RpcCallState? Current => current;
 
 	/// <summary>Gets or sets the scope collecting objects marshaled into the message being written.</summary>
 	internal MarshaledObjectManager.HandleScope? MarshaledObjects { get; set; }
@@ -41,13 +48,25 @@ internal sealed class RpcCallState
 	/// <summary>Gets or sets the scope receiving sequence consumers created while reading the message.</summary>
 	internal AsyncEnumerableManager.InboundScope? AsyncEnumerablesInbound { get; set; }
 
-	/// <summary>Retrieves the state published to a MessagePack (de)serialization job.</summary>
-	/// <param name="context">The converter's context.</param>
-	/// <returns>The state, or <see langword="null"/> if the job carries no RPC call scopes.</returns>
-	internal static RpcCallState? From(in Nerdbank.MessagePack.SerializationContext context) => (RpcCallState?)context[ContextKey];
+	/// <summary>Publishes state to the converters taking part in one (de)serialization job.</summary>
+	/// <param name="callState">The state to publish, if any.</param>
+	/// <returns>A frame that must be disposed when the job completes.</returns>
+	/// <remarks>
+	/// A converter may encode a nested value with its own state; the prior state is restored when the nested job's
+	/// frame is disposed.
+	/// </remarks>
+	internal static Frame Enter(RpcCallState? callState)
+	{
+		RpcCallState? prior = current;
+		current = callState;
+		return new(prior);
+	}
 
-	/// <summary>Retrieves the state published to a JSON (de)serialization job.</summary>
-	/// <param name="context">The converter's context.</param>
-	/// <returns>The state, or <see langword="null"/> if the job carries no RPC call scopes.</returns>
-	internal static RpcCallState? From(in Nerdbank.Json.SerializationContext context) => (RpcCallState?)context[ContextKey];
+	/// <summary>Restores the state that was current before a (de)serialization job began.</summary>
+	/// <param name="prior">The state to restore.</param>
+	internal readonly struct Frame(RpcCallState? prior) : IDisposable
+	{
+		/// <inheritdoc/>
+		public void Dispose() => current = prior;
+	}
 }

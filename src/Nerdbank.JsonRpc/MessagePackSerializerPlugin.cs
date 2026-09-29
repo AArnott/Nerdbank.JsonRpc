@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -23,9 +23,10 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	/// <inheritdoc/>
 	internal override JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
 	{
+		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
 		using ScratchSequence scratch = ScratchSequence.Rent();
 		MessagePackWriter writer = new(scratch.Sequence);
-		this.Serializer.Serialize(ref writer, value, shape, this.CreateStartingContext(callState, cancellationToken));
+		this.Serializer.Serialize(ref writer, value, shape, this.CreateStartingContext(cancellationToken));
 		writer.Flush();
 		return JsonRpcValue.FromMessagePack((RawMessagePack)scratch.Sequence.AsReadOnlySequence.ToArray());
 	}
@@ -33,8 +34,9 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	/// <inheritdoc/>
 	internal override T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
 	{
+		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
 		MessagePackReader reader = new(value.AsOwnedMessagePack());
-		return this.Serializer.Deserialize(ref reader, shape, this.CreateStartingContext(callState, cancellationToken))!;
+		return this.Serializer.Deserialize(ref reader, shape, this.CreateStartingContext(cancellationToken))!;
 	}
 
 	/// <inheritdoc/>
@@ -48,8 +50,9 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	/// <inheritdoc/>
 	internal override void SerializeTo<T>(IBufferWriter<byte> buffer, in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
 	{
+		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
 		MessagePackWriter writer = new(buffer);
-		this.Serializer.Serialize(ref writer, value, shape, this.CreateStartingContext(callState, cancellationToken));
+		this.Serializer.Serialize(ref writer, value, shape, this.CreateStartingContext(cancellationToken));
 		writer.Flush();
 	}
 
@@ -100,22 +103,14 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 
 	internal override object? DeserializeObject(JsonRpcValue value, ITypeShape shape, RpcCallState? callState, CancellationToken cancellationToken)
 	{
+		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
 		MessagePackReader reader = new(value.OwnedBytes);
-		return this.Serializer.DeserializeObject(ref reader, shape, this.CreateStartingContext(callState, cancellationToken));
+		return this.Serializer.DeserializeObject(ref reader, shape, this.CreateStartingContext(cancellationToken));
 	}
 
-	/// <summary>Builds the context for one (de)serialization job, publishing the call scopes to converters.</summary>
-	/// <param name="callState">The scopes that converters for marshaled values require, if any.</param>
+	/// <summary>Builds the context for one (de)serialization job.</summary>
 	/// <param name="cancellationToken">A cancellation token.</param>
 	/// <returns>The starting context for the job.</returns>
-	private SerializationContext CreateStartingContext(RpcCallState? callState, CancellationToken cancellationToken)
-	{
-		SerializationContext context = this.Serializer.StartingContext with { CancellationToken = cancellationToken };
-		if (callState is not null)
-		{
-			context[RpcCallState.ContextKey] = callState;
-		}
-
-		return context;
-	}
+	private SerializationContext CreateStartingContext(CancellationToken cancellationToken)
+		=> this.Serializer.StartingContext with { CancellationToken = cancellationToken };
 }
