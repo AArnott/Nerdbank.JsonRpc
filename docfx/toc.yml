@@ -1,7 +1,9 @@
 items:
-- name: Analyzer diagnostics
-  href: analyzers/NBJSONRPC001.md
 - name: Docs
   href: docs/
+- name: Analyzer diagnostics
+  href: analyzers/NBJSONRPC001.md
 - name: API
   href: api/
+- name: GitHub
+  href: https://github.com/AArnott/Nerdbank.JsonRpc
