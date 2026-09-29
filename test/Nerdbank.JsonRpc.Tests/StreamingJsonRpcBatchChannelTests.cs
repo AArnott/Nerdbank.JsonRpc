@@ -62,7 +62,7 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 	public async Task ReceiveNestedBatchPayloadClosesChannel()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
-		await using JsonRpcMessagePackChannel bob = new(bobPipe, NullLogger.Instance);
+		await using JsonRpcMessagePackChannel bob = new(bobPipe, NullLogger.Instance, JsonRpcMessagePackChannel.DefaultSerializer, JsonRpcMessagePackFraming.SelfDelimiting);
 		MessagePackWriter writer = new(alicePipe.Output);
 		writer.WriteArrayHeader(1);
 		writer.WriteArrayHeader(1);
@@ -81,7 +81,7 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 	public async Task NilParamsClosesChannel()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
-		JsonRpcMessagePackChannel bob = new(bobPipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel bob = new(bobPipe, NullLogger.Instance, JsonRpcMessagePackChannel.DefaultSerializer, JsonRpcMessagePackFraming.SelfDelimiting);
 
 		MessagePackWriter writer = new(alicePipe.Output);
 		writer.WriteMapHeader(3);
@@ -101,7 +101,7 @@ public class StreamingJsonRpcBatchChannelTests : TestBase
 	public async Task MissingErrorFieldsCloseChannel()
 	{
 		(IDuplexPipe alicePipe, IDuplexPipe bobPipe) = FullDuplexStream.CreatePipePair();
-		await using JsonRpcMessagePackChannel bob = new(bobPipe, NullLogger.Instance);
+		await using JsonRpcMessagePackChannel bob = new(bobPipe, NullLogger.Instance, JsonRpcMessagePackChannel.DefaultSerializer, JsonRpcMessagePackFraming.SelfDelimiting);
 
 		MessagePackWriter writer = new(alicePipe.Output);
 		writer.WriteMapHeader(3);
