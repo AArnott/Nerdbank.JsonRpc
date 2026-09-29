@@ -101,13 +101,6 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 	internal override JsonRpcValue SerializeCancellation(RequestId id, CancellationToken cancellationToken)
 		=> this.Serialize(new JsonRpc.CancelRequestParams(id), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc.Default.CancelRequestParams, cancellationToken);
 
-	internal override object? DeserializeObject(JsonRpcValue value, ITypeShape shape, RpcCallState? callState, CancellationToken cancellationToken)
-	{
-		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
-		MessagePackReader reader = new(value.OwnedBytes);
-		return this.Serializer.DeserializeObject(ref reader, shape, cancellationToken);
-	}
-
 	/// <summary>Builds the context for one (de)serialization job.</summary>
 	/// <param name="cancellationToken">A cancellation token.</param>
 	/// <returns>The starting context for the job.</returns>

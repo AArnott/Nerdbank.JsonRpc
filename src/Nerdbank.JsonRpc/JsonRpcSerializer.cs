@@ -156,14 +156,6 @@ public abstract class JsonRpcSerializer
 	/// <returns>Encoded cancellation parameters.</returns>
 	internal abstract JsonRpcValue SerializeCancellation(RequestId id, CancellationToken cancellationToken);
 
-	/// <summary>Decodes an application parameter with its runtime shape.</summary>
-	/// <param name="value">The encoded application value.</param>
-	/// <param name="shape">The application type shape.</param>
-	/// <param name="callState">The scopes that converters for marshaled values require, if any.</param>
-	/// <param name="cancellationToken">A cancellation token.</param>
-	/// <returns>The deserialized application value.</returns>
-	internal abstract object? DeserializeObject(JsonRpcValue value, ITypeShape shape, RpcCallState? callState, CancellationToken cancellationToken);
-
 	private void ValidateValue(JsonRpcValue value)
 	{
 		if (value.HasValue && value.Encoding != this.Encoding)

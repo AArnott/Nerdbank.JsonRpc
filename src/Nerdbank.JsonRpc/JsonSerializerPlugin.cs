@@ -34,6 +34,12 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	/// <inheritdoc/>
 	internal override T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)
 	{
+		if (typeof(T) == typeof(RequestId))
+		{
+			using JsonDocument document = JsonDocument.Parse(RequireJson(value));
+			return (T)(object)JsonRpcJsonCodec.ReadId(document.RootElement);
+		}
+
 		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
 		Nerdbank.Json.JsonReader reader = new(RequireJson(value).Span);
 		return this.Serializer.Deserialize(ref reader, shape, cancellationToken)!;
@@ -117,19 +123,6 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 		writer.WriteEndObject();
 		writer.Flush();
 		return JsonRpcValue.FromJson(buffer.AsReadOnlySequence.ToArray());
-	}
-
-	internal override object? DeserializeObject(JsonRpcValue value, ITypeShape shape, RpcCallState? callState, CancellationToken cancellationToken)
-	{
-		if (shape.Type == typeof(RequestId))
-		{
-			using JsonDocument document = JsonDocument.Parse(RequireJson(value));
-			return JsonRpcJsonCodec.ReadId(document.RootElement);
-		}
-
-		Nerdbank.Json.JsonReader reader = new(RequireJson(value).Span);
-		using RpcCallState.Frame frame = RpcCallState.Enter(callState);
-		return this.Serializer.DeserializeObject(ref reader, shape, cancellationToken);
 	}
 
 	private static ReadOnlyMemory<byte> RequireJson(JsonRpcValue value) => value.HasValue && value.Encoding == JsonRpcEncoding.Json ? value.OwnedBytes : throw new InvalidOperationException("Expected a JSON value.");
