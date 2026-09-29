@@ -150,7 +150,7 @@ internal static class JsonRpcJsonCodec
 				method = Token.Read(ref reader);
 				if (method.Type == JsonTokenType.String)
 				{
-					methodName = reader.GetString();
+					methodName = Utf8StringCache.ReadString(ref reader);
 				}
 			}
 			else if (reader.ValueTextEquals("id"u8))

@@ -580,6 +580,29 @@ public class JsonCodecTests : TestBase
 	}
 
 	[Test]
+	public async Task RepeatedMethodNamesDecodeConsistently()
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcJsonChannel channel = new(local, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("local"));
+		string[] wireNames = ["caf\u00e9", "café", "café", "cafe", "caf\u00e9", "cafë", "café"];
+		string[] expected = ["café", "café", "café", "cafe", "café", "cafë", "café"];
+		StringBuilder frames = new();
+		foreach (string wireName in wireNames)
+		{
+			frames.Append("{\"jsonrpc\":\"2.0\",\"method\":\"").Append(wireName).Append("\"}\n");
+		}
+
+		peer.Output.Write(Encoding.UTF8.GetBytes(frames.ToString()));
+		await peer.Output.FlushAsync(this.TimeoutToken);
+
+		foreach (string name in expected)
+		{
+			JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await channel.Reader.ReadAsync(this.TimeoutToken));
+			Assert.Equal(name, request.Method);
+		}
+	}
+
+	[Test]
 	[Arguments(JsonRpcJsonFraming.NewlineDelimited)]
 	[Arguments(JsonRpcJsonFraming.ContentLength)]
 	public async Task MalformedEnvelopeFaultsPendingCalls(JsonRpcJsonFraming framing)

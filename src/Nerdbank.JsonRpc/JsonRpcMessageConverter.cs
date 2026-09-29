@@ -102,7 +102,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 				}
 
 				method = true;
-				methodName = reader.ReadString();
+				methodName = Utf8StringCache.ReadString(ref reader);
 			}
 			else if (name.SequenceEqual("params"u8))
 			{
@@ -187,7 +187,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 
 				if (valid)
 				{
-					name = reader.ReadString();
+					name = Utf8StringCache.ReadString(ref reader);
 				}
 				else
 				{

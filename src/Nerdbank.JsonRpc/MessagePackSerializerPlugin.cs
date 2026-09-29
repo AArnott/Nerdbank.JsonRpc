@@ -86,7 +86,7 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 		(string? Name, JsonRpcValue Value)[] values = ArgumentList.Rent(count);
 		for (int i = 0; i < count; i++)
 		{
-			string? name = named ? reader.ReadString() : null;
+			string? name = named ? Utf8StringCache.ReadString(ref reader) : null;
 			values[i] = (name, JsonRpcValue.FromOwnedMessagePack(arguments, reader.ReadRaw(context)));
 		}
 

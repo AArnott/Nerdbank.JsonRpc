@@ -102,7 +102,7 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 			string? name = null;
 			if (named)
 			{
-				name = reader.GetString();
+				name = Utf8StringCache.ReadString(ref reader);
 				reader.Read();
 			}
 
