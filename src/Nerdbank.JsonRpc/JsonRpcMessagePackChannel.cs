@@ -86,12 +86,17 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 	protected override async IAsyncEnumerable<JsonRpcMessage> ReceiveMessagesAsync(PipeReader reader, [EnumeratorCancellation] CancellationToken cancellationToken)
 	{
 		Requires.NotNull(reader);
+		long scanOffset = 0;
+		SerializationContext scanContext = this.messagePackSerializer.StartingContext;
 		while (true)
 		{
 			ReadResult read = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
 			ReadOnlySequence<byte> buffer = read.Buffer;
-			if (this.TryReadMessage(ref buffer, cancellationToken, out JsonRpcMessage? message))
+			if (this.TryReadMessage(ref buffer, cancellationToken, ref scanOffset, ref scanContext, out JsonRpcMessage? message))
 			{
+				scanOffset = 0;
+				scanContext = this.messagePackSerializer.StartingContext;
+
 				// The envelope converter copies every retained payload, so the pipe's buffer may be released immediately.
 				reader.AdvanceTo(buffer.Start);
 				yield return message;
@@ -163,9 +168,11 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 
 	/// <summary>Finds the bytes of the first message if the buffer contains all of it.</summary>
 	/// <param name="buffer">The buffered bytes.</param>
+	/// <param name="scanOffset">The number of bytes already scanned in this incomplete message.</param>
+	/// <param name="context">The context for the incremental skip operation.</param>
 	/// <param name="message">Receives the message's MessagePack structure, excluding any header.</param>
 	/// <returns><see langword="true"/> if a complete message is buffered.</returns>
-	private bool TryFindMessage(ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> message)
+	private bool TryFindMessage(ReadOnlySequence<byte> buffer, ref long scanOffset, ref SerializationContext context, out ReadOnlySequence<byte> message)
 	{
 		if (this.framing == JsonRpcMessagePackFraming.BigEndianInt32LengthHeader)
 		{
@@ -202,15 +209,18 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 			return true;
 		}
 
-		// A null refresh delegate makes an incomplete buffer report InsufficientBuffer rather than end-of-stream.
-		MessagePackStreamingReader scanner = new(buffer, null, null);
-		SerializationContext context = this.messagePackSerializer.StartingContext;
+		// Continue from the previous buffer's scan position. TrySkip records partially skipped
+		// structures in MidSkipRemainingCount so the next reader can resume without rescanning.
+		ReadOnlySequence<byte> remaining = buffer.Slice(scanOffset);
+		MessagePackStreamingReader scanner = new(remaining, null, null);
 		switch (scanner.TrySkip(ref context))
 		{
 			case MessagePackPrimitives.DecodeResult.Success:
-				message = buffer.Slice(0, scanner.Position);
+				message = buffer.Slice(0, checked(scanOffset + remaining.Slice(0, scanner.Position).Length));
+				scanOffset = 0;
 				return true;
 			case MessagePackPrimitives.DecodeResult.EmptyBuffer or MessagePackPrimitives.DecodeResult.InsufficientBuffer:
+				scanOffset = checked(scanOffset + remaining.Slice(0, scanner.Position).Length);
 				message = default;
 				return false;
 			default:
@@ -221,11 +231,13 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 	/// <summary>Synchronously deserializes the first message if the buffer contains all of it.</summary>
 	/// <param name="buffer">The buffered bytes; advanced past the message when one is read.</param>
 	/// <param name="cancellationToken">A cancellation token.</param>
+	/// <param name="scanOffset">The number of bytes already scanned in this incomplete message.</param>
+	/// <param name="context">The context for the incremental skip operation.</param>
 	/// <param name="message">Receives the message.</param>
 	/// <returns><see langword="true"/> if a complete message was read.</returns>
-	private bool TryReadMessage(ref ReadOnlySequence<byte> buffer, CancellationToken cancellationToken, [NotNullWhen(true)] out JsonRpcMessage? message)
+	private bool TryReadMessage(ref ReadOnlySequence<byte> buffer, CancellationToken cancellationToken, ref long scanOffset, ref SerializationContext context, [NotNullWhen(true)] out JsonRpcMessage? message)
 	{
-		if (!this.TryFindMessage(buffer, out ReadOnlySequence<byte> messageBytes))
+		if (!this.TryFindMessage(buffer, ref scanOffset, ref context, out ReadOnlySequence<byte> messageBytes))
 		{
 			message = null;
 			return false;

@@ -13,6 +13,31 @@ using PolyType;
 public class JsonCodecTests : TestBase
 {
 	[Test]
+	public async Task ExcessiveJsonParameterCountIsRejected()
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcJsonChannel clientChannel = new(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("client"));
+		await using JsonRpcJsonChannel serverChannel = new(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("server"));
+		using JsonRpc client = new(clientChannel);
+		using JsonRpc server = new(serverChannel);
+		server.AddRpcTarget<ICalculator>(new Calculator());
+		client.Start();
+		server.Start();
+
+		string arguments = "[" + string.Join(",", Enumerable.Repeat("0", 65_537)) + "]";
+		JsonRpcRequest request = new()
+		{
+			Id = 1,
+			Method = "add",
+			Arguments = JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(arguments)),
+		};
+		await clientChannel.Writer.WriteAsync(request, this.TimeoutToken);
+
+		JsonRpcError error = Assert.IsType<JsonRpcError>(await clientChannel.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
+	}
+
+	[Test]
 	[Arguments(JsonRpcJsonFraming.NewlineDelimited)]
 	[Arguments(JsonRpcJsonFraming.ContentLength)]
 	public async Task DirectGeneratedProxyAndBatch(JsonRpcJsonFraming framing)

@@ -203,6 +203,30 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 	}
 
 	[Test]
+	public async Task SelfDelimitingParamsResumeAcrossManyFragments()
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcMessagePackChannel channel = CreateChannel(local, JsonRpcMessagePackFraming.SelfDelimiting);
+		byte[] message = EncodeRawRequest("fragmented", (ref Nerdbank.MessagePack.MessagePackWriter writer) =>
+		{
+			writer.WriteArrayHeader(1_024);
+			for (int i = 0; i < 1_024; i++)
+			{
+				writer.Write(i);
+			}
+		});
+		Task<JsonRpcMessage> pending = channel.Reader.ReadAsync(this.TimeoutToken).AsTask();
+		for (int offset = 0; offset < message.Length; offset += 16)
+		{
+			peer.Output.Write(message.AsSpan(offset, Math.Min(16, message.Length - offset)));
+			await peer.Output.FlushAsync(this.TimeoutToken);
+		}
+
+		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await pending.WithCancellation(this.TimeoutToken));
+		Assert.Equal("fragmented", request.Method);
+	}
+
+	[Test]
 	[Arguments(JsonRpcMessagePackFraming.SelfDelimiting, 8)]
 	[Arguments(JsonRpcMessagePackFraming.BigEndianInt32LengthHeader, 2)]
 	[Arguments(JsonRpcMessagePackFraming.BigEndianInt32LengthHeader, 8)]

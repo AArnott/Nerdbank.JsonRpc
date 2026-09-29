@@ -114,6 +114,11 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 		{
 			while (reader.Read() && reader.TokenType is not (JsonTokenType.EndObject or JsonTokenType.EndArray))
 			{
+				if (count == JsonRpcMessageConverter.MaximumCollectionCount)
+				{
+					throw new FormatException("The JSON params contain too many entries.");
+				}
+
 				string? name = null;
 				if (named)
 				{
