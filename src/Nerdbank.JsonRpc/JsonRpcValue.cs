@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -22,14 +22,15 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 {
 	private readonly object? storage;
 
-	private JsonRpcValue(object storage, JsonRpcEncoding encoding, MarshaledObjectManager.HandleSet? marshaledHandles = null, ProgressManager.RegistrationSet? progressRegistrations = null, OutOfBandStreamManager.ChannelSet? outOfBandChannels = null, AsyncEnumerableManager.TokenSet? asyncEnumerableTokens = null)
+	/// <summary>The resources owned by this value, which most values do not have.</summary>
+	/// <remarks>These are held out of line so that the many values without them stay small.</remarks>
+	private readonly Attachments? attachments;
+
+	private JsonRpcValue(object storage, JsonRpcEncoding encoding, Attachments? attachments = null)
 	{
 		this.storage = storage;
 		this.Encoding = encoding;
-		this.MarshaledHandles = marshaledHandles;
-		this.ProgressRegistrations = progressRegistrations;
-		this.OutOfBandChannels = outOfBandChannels;
-		this.AsyncEnumerableTokens = asyncEnumerableTokens;
+		this.attachments = attachments;
 	}
 
 	/// <summary>Gets the encoding of this value.</summary>
@@ -44,13 +45,13 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	/// <summary>Gets the internally owned bytes without copying.</summary>
 	internal ReadOnlyMemory<byte> OwnedBytes => this.storage is null ? ReadOnlyMemory<byte>.Empty : GetMemory(this.storage);
 
-	internal MarshaledObjectManager.HandleSet? MarshaledHandles { get; }
+	internal MarshaledObjectManager.HandleSet? MarshaledHandles => this.attachments?.MarshaledHandles;
 
-	internal ProgressManager.RegistrationSet? ProgressRegistrations { get; }
+	internal ProgressManager.RegistrationSet? ProgressRegistrations => this.attachments?.ProgressRegistrations;
 
-	internal OutOfBandStreamManager.ChannelSet? OutOfBandChannels { get; }
+	internal OutOfBandStreamManager.ChannelSet? OutOfBandChannels => this.attachments?.OutOfBandChannels;
 
-	internal AsyncEnumerableManager.TokenSet? AsyncEnumerableTokens { get; }
+	internal AsyncEnumerableManager.TokenSet? AsyncEnumerableTokens => this.attachments?.AsyncEnumerableTokens;
 
 	/// <summary>Converts a MessagePack raw value into a tagged value.</summary>
 	/// <param name="value">The raw value.</param>
@@ -102,7 +103,7 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	/// <param name="encoding">The wire encoding.</param>
 	/// <param name="marshaledHandles">The marshaled local handles owned by this encoded value.</param>
 	/// <returns>The owned value.</returns>
-	internal static JsonRpcValue FromOwnedBytes(byte[] bytes, JsonRpcEncoding encoding, MarshaledObjectManager.HandleSet? marshaledHandles = null) => new(bytes, encoding, marshaledHandles);
+	internal static JsonRpcValue FromOwnedBytes(byte[] bytes, JsonRpcEncoding encoding, MarshaledObjectManager.HandleSet? marshaledHandles = null) => new JsonRpcValue(bytes, encoding).WithMarshaledHandles(marshaledHandles);
 
 	/// <summary>Copies an encoded value into a pooled buffer.</summary>
 	/// <param name="bytes">The encoded bytes.</param>
@@ -121,7 +122,7 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	{
 		PooledByteBuffer buffer = new(checked((int)bytes.Length), singleUse);
 		bytes.CopyTo(buffer.Memory.Span);
-		return new(buffer, encoding, marshaledHandles);
+		return new JsonRpcValue(buffer, encoding).WithMarshaledHandles(marshaledHandles);
 	}
 
 	/// <summary>Copies a raw MessagePack value into a pooled buffer.</summary>
@@ -165,16 +166,20 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	/// <summary>Creates a copy of this value with marshaled handle ownership attached.</summary>
 	/// <param name="marshaledHandles">The marshaled local handles owned by this encoded value.</param>
 	/// <returns>The copied value.</returns>
-	internal JsonRpcValue WithMarshaledHandles(MarshaledObjectManager.HandleSet marshaledHandles) => new(this.storage!, this.Encoding, marshaledHandles, this.ProgressRegistrations, this.OutOfBandChannels, this.AsyncEnumerableTokens);
+	internal JsonRpcValue WithMarshaledHandles(MarshaledObjectManager.HandleSet? marshaledHandles)
+		=> this.With(ReferenceEquals(marshaledHandles, MarshaledObjectManager.HandleSet.Empty) ? null : marshaledHandles, this.MarshaledHandles, static (a, v) => a with { MarshaledHandles = v });
 
-	internal JsonRpcValue WithProgressRegistrations(ProgressManager.RegistrationSet progressRegistrations) => new(this.storage!, this.Encoding, this.MarshaledHandles, progressRegistrations, this.OutOfBandChannels, this.AsyncEnumerableTokens);
+	internal JsonRpcValue WithProgressRegistrations(ProgressManager.RegistrationSet progressRegistrations)
+		=> this.With(ReferenceEquals(progressRegistrations, ProgressManager.RegistrationSet.Empty) ? null : progressRegistrations, this.ProgressRegistrations, static (a, v) => a with { ProgressRegistrations = v });
 
-	internal JsonRpcValue WithOutOfBandChannels(OutOfBandStreamManager.ChannelSet outOfBandChannels) => new(this.storage!, this.Encoding, this.MarshaledHandles, this.ProgressRegistrations, outOfBandChannels, this.AsyncEnumerableTokens);
+	internal JsonRpcValue WithOutOfBandChannels(OutOfBandStreamManager.ChannelSet outOfBandChannels)
+		=> this.With(ReferenceEquals(outOfBandChannels, OutOfBandStreamManager.ChannelSet.Empty) ? null : outOfBandChannels, this.OutOfBandChannels, static (a, v) => a with { OutOfBandChannels = v });
 
 	/// <summary>Creates a copy of this value with async enumerable generator ownership attached.</summary>
 	/// <param name="asyncEnumerableTokens">The generator tokens encoded into this value.</param>
 	/// <returns>The copied value.</returns>
-	internal JsonRpcValue WithAsyncEnumerableTokens(AsyncEnumerableManager.TokenSet asyncEnumerableTokens) => new(this.storage!, this.Encoding, this.MarshaledHandles, this.ProgressRegistrations, this.OutOfBandChannels, asyncEnumerableTokens);
+	internal JsonRpcValue WithAsyncEnumerableTokens(AsyncEnumerableManager.TokenSet asyncEnumerableTokens)
+		=> this.With(ReferenceEquals(asyncEnumerableTokens, AsyncEnumerableManager.TokenSet.Empty) ? null : asyncEnumerableTokens, this.AsyncEnumerableTokens, static (a, v) => a with { AsyncEnumerableTokens = v });
 
 	/// <summary>Returns a pooled buffer that backs this value to the pool.</summary>
 	/// <remarks>
@@ -199,6 +204,40 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 		OwnedSlice slice => slice.Memory,
 		_ => ReadOnlyMemory<byte>.Empty,
 	};
+
+	/// <summary>Creates a copy of this value with one attached resource replaced.</summary>
+	/// <typeparam name="T">The type of the attached resource.</typeparam>
+	/// <param name="value">The new resource, or <see langword="null"/> if there is none (empty sets are treated as none).</param>
+	/// <param name="current">The resource currently attached.</param>
+	/// <param name="set">Copies attachments, replacing the resource.</param>
+	/// <returns>The copied value.</returns>
+	private JsonRpcValue With<T>(T? value, T? current, Func<Attachments, T?, Attachments> set)
+		where T : class
+	{
+		if (ReferenceEquals(value, current))
+		{
+			return this;
+		}
+
+		Attachments updated = set(this.attachments ?? Attachments.None, value);
+		return new(this.storage!, this.Encoding, updated.IsEmpty ? null : updated);
+	}
+
+	/// <summary>The resources owned by an encoded value.</summary>
+	private sealed record Attachments
+	{
+		internal static readonly Attachments None = new();
+
+		internal MarshaledObjectManager.HandleSet? MarshaledHandles { get; init; }
+
+		internal ProgressManager.RegistrationSet? ProgressRegistrations { get; init; }
+
+		internal OutOfBandStreamManager.ChannelSet? OutOfBandChannels { get; init; }
+
+		internal AsyncEnumerableManager.TokenSet? AsyncEnumerableTokens { get; init; }
+
+		internal bool IsEmpty => this.MarshaledHandles is null && this.ProgressRegistrations is null && this.OutOfBandChannels is null && this.AsyncEnumerableTokens is null;
+	}
 
 	/// <summary>A slice of a buffer owned by another value.</summary>
 	/// <param name="owner">The <see cref="byte"/> array or <see cref="PooledByteBuffer"/> that owns the bytes.</param>
