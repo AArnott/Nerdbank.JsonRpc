@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -84,12 +84,10 @@ internal static class JsonRpcJsonCodec
 	}
 
 	/// <summary>Writes a JSON-RPC message or batch as one compact UTF-8 frame.</summary>
+	/// <param name="writer">The writer that receives the encoded UTF-8 payload without framing.</param>
 	/// <param name="message">The complete message.</param>
-	/// <returns>The encoded UTF-8 payload without framing.</returns>
-	internal static byte[] Write(JsonRpcMessage message)
+	internal static void Write(Utf8JsonWriter writer, JsonRpcMessage message)
 	{
-		using Sequence<byte> buffer = new(ArrayPool<byte>.Shared);
-		using Utf8JsonWriter writer = new(buffer);
 		if (message is JsonRpcMessageBatch batch)
 		{
 			if (batch.Messages.IsEmpty)
@@ -111,7 +109,6 @@ internal static class JsonRpcJsonCodec
 		}
 
 		writer.Flush();
-		return buffer.AsReadOnlySequence.ToArray();
 	}
 
 	private static JsonRpcMessage ReadOne(JsonElement element)
@@ -310,7 +307,17 @@ internal static class JsonRpcJsonCodec
 			throw new ArgumentException("Expected a JSON application value.");
 		}
 
-		using JsonDocument document = JsonDocument.Parse(value.OwnedBytes);
-		document.RootElement.WriteTo(writer);
+		ReadOnlySpan<byte> bytes = value.OwnedBytes.Span;
+		if (bytes.IndexOfAny((byte)'\r', (byte)'\n') < 0)
+		{
+			// Copy the already encoded value as it is, which still validates it.
+			writer.WriteRawValue(bytes);
+		}
+		else
+		{
+			// Re-encode values that span lines so that the frame stays on one line.
+			using JsonDocument document = JsonDocument.Parse(value.OwnedBytes);
+			document.RootElement.WriteTo(writer);
+		}
 	}
 }
