@@ -25,7 +25,6 @@ public enum JsonRpcJsonFraming
 /// <summary>Encodes JSON-RPC messages as UTF-8 JSON with explicit framing.</summary>
 public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 {
-	private const int MaximumFrameSize = 8 * 1024 * 1024;
 	private const int MaximumHeaderSize = 8192;
 	private readonly JsonRpcJsonFraming framing;
 
@@ -91,7 +90,7 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 					yield break;
 				}
 
-				if (buffer.Length > MaximumFrameSize + MaximumHeaderSize)
+				if ((long)buffer.Length > (long)this.MaximumMessageSize + MaximumHeaderSize)
 				{
 					throw new ProtocolViolationException("JSON-RPC frame exceeds the size limit.");
 				}
@@ -120,7 +119,7 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 
 			JsonRpcJsonCodec.Write(this.sendWriter, message);
 			ReleaseSingleUsePayload(message);
-			if (payload.Length > MaximumFrameSize)
+			if (payload.Length > this.MaximumMessageSize)
 			{
 				throw new ProtocolViolationException("JSON-RPC frame exceeds the size limit.");
 			}
@@ -192,7 +191,7 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 				record = record.Slice(0, record.Length - 1);
 			}
 
-			if (record.IsEmpty || record.Length > MaximumFrameSize)
+			if (record.IsEmpty || record.Length > this.MaximumMessageSize)
 			{
 				throw new ProtocolViolationException("Invalid or oversized JSON-RPC line.");
 			}
@@ -234,7 +233,7 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 
 			if (line.Substring(0, separator).Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
 			{
-				if (length.HasValue || !int.TryParse(line.Substring(separator + 1).Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int parsed) || parsed <= 0 || parsed > MaximumFrameSize)
+				if (length.HasValue || !int.TryParse(line.Substring(separator + 1).Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int parsed) || parsed <= 0 || parsed > this.MaximumMessageSize)
 				{
 					throw new ProtocolViolationException("Invalid JSON-RPC Content-Length header.");
 				}

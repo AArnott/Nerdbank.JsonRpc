@@ -328,6 +328,41 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 	}
 
 	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task JsonRpcMaximumMessageSizeConfiguresBuiltInChannel(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		JsonRpcPipeChannel channel = encoding == JsonRpcEncoding.Json
+			? new JsonRpcJsonChannel(local, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger<JsonRpcPipeChannel>())
+			: CreateChannel(local, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader);
+		using JsonRpc rpc = new(channel);
+		Assert.Equal(8 * 1024 * 1024, rpc.MaximumMessageSize);
+		rpc.MaximumMessageSize = 32;
+
+		if (encoding == JsonRpcEncoding.Json)
+		{
+			peer.Output.Write("{\"jsonrpc\":\"2.0\",\"method\":\"method-too-long\",\"id\":1}\n"u8);
+		}
+		else
+		{
+			peer.Output.Write(Frame(EncodeRequest("method-too-long", 1), JsonRpcMessagePackFraming.BigEndianInt32LengthHeader));
+		}
+
+		await peer.Output.FlushAsync(this.TimeoutToken);
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
+	}
+
+	[Test]
+	public void JsonRpcMaximumMessageSizeMustBePositive()
+	{
+		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
+		using JsonRpc rpc = new(CreateChannel(local, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader));
+		Assert.Throws<ArgumentOutOfRangeException>(() => rpc.MaximumMessageSize = 0);
+		Assert.Throws<ArgumentOutOfRangeException>(() => rpc.MaximumMessageSize = -1);
+	}
+
+	[Test]
 	public async Task OversizedSelfDelimitingFrameFaultsTransport()
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();

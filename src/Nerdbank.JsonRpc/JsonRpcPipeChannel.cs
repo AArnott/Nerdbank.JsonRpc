@@ -18,6 +18,9 @@ namespace Nerdbank.JsonRpc;
 /// </remarks>
 public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDisposable
 {
+	/// <summary>The default maximum encoded message size, in bytes.</summary>
+	internal const int DefaultMaximumMessageSize = 8 * 1024 * 1024;
+
 	private static readonly EventId MessageSent = new(1, "Message sent");
 	private static readonly EventId MessageReceived = new(2, "Message received");
 
@@ -27,6 +30,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	private readonly Task outboundTaskProcessor;
 	private readonly ChannelWriter<JsonRpcMessage> inboundMessageWriter;
 	private readonly ChannelReader<JsonRpcMessage> outboundMessageReader;
+	private volatile int maximumMessageSize = DefaultMaximumMessageSize;
 	private volatile bool inboundAborted;
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcPipeChannel"/> class with deferred transport startup.</summary>
@@ -54,6 +58,9 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 
 	/// <summary>Gets the serializer selected by this channel for application values.</summary>
 	public abstract JsonRpcSerializer Serializer { get; }
+
+	/// <summary>Gets the configured maximum size, in bytes, of a message.</summary>
+	protected int MaximumMessageSize => this.maximumMessageSize;
 
 	protected ILogger Logger { get; }
 
@@ -96,6 +103,10 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 		}
 	}
 
+	/// <summary>Gets the configured maximum encoded message size.</summary>
+	/// <returns>The maximum encoded message size in bytes.</returns>
+	internal int GetMaximumMessageSize() => this.maximumMessageSize;
+
 	/// <summary>Completes the queue of received messages so that a consumer waiting on it without a cancellation token wakes up.</summary>
 	/// <param name="cancellationToken">The canceled token that ended the consumer's interest in received messages.</param>
 	/// <remarks>
@@ -106,6 +117,18 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	{
 		this.inboundAborted = true;
 		this.inboundMessageWriter.TryComplete(new OperationCanceledException(cancellationToken));
+	}
+
+	/// <summary>Updates the configured maximum encoded message size.</summary>
+	/// <param name="value">The new positive maximum size, in bytes.</param>
+	internal void SetMaximumMessageSize(int value)
+	{
+		if (value <= 0)
+		{
+			throw new ArgumentOutOfRangeException(nameof(value), value, "A positive size is required.");
+		}
+
+		this.maximumMessageSize = value;
 	}
 
 	protected static Channel<JsonRpcMessage> CreateInboundChannel(int? capacity) => capacity is null

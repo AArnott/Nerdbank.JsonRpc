@@ -76,6 +76,18 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		this.AddRpcTarget(new SpecialMethodsTarget(this));
 	}
 
+	/// <summary>Gets or sets the maximum encoded message size, in bytes.</summary>
+	/// <value>Defaults to 8 MiB. The built-in JSON and MessagePack channels apply this limit to received messages; the JSON channel also applies it to sent messages.</value>
+	/// <exception cref="ArgumentOutOfRangeException">Thrown when set to zero or a negative value.</exception>
+	public int MaximumMessageSize
+	{
+		get => this.channel.GetMaximumMessageSize();
+		set
+		{
+			this.channel.SetMaximumMessageSize(value);
+		}
+	}
+
 	/// <summary>Gets or sets the multiplexing stream used to send and receive out-of-band streams.</summary>
 	/// <remarks>This property must be set before <see cref="Start"/>.</remarks>
 	public MultiplexingStream? MultiplexingStream
