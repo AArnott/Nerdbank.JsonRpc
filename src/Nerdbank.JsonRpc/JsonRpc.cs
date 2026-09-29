@@ -25,7 +25,10 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 {
 	internal const string SpecialCancelMethodName = "$/cancelRequest";
 
-	private readonly ConcurrentDictionary<RequestId, PendingInboundRequest> pendingInboundRequests = [];
+	/// <summary>Requests being dispatched, keyed by ID. Guarded by locking the dictionary itself.</summary>
+	/// <remarks>A locked <see cref="Dictionary{TKey, TValue}"/> stores entries inline, where a concurrent dictionary would allocate a node per request.</remarks>
+	private readonly Dictionary<RequestId, PendingInboundRequest> pendingInboundRequests = [];
+
 	private readonly MarshaledObjectManager marshaledObjects;
 	private readonly ProgressManager progress;
 	private readonly OutOfBandStreamManager outOfBandStreams;
@@ -36,7 +39,10 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private readonly CancellationTokenSource disposalSource = new();
 	private readonly ConcurrentDictionary<string, (object? Target, MethodInvoker Invoker)> handlers = new();
 	private readonly List<IDisposable> eventSubscriptions = [];
-	private readonly ConcurrentDictionary<RequestId, TaskCompletionSource<JsonRpcResponse>> pendingOutboundRequests = new();
+
+	/// <summary>Requests awaiting responses, keyed by ID. Guarded by <see cref="connectionSync"/>.</summary>
+	private readonly Dictionary<RequestId, TaskCompletionSource<JsonRpcResponse>> pendingOutboundRequests = [];
+
 	private readonly Action<object?> cancelOutboundRequestDelegate;
 	private readonly JsonRpcPipeChannel channel;
 	private readonly JsonRpcSerializer userDataSerializer;
@@ -473,12 +479,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			this.channel.Writer.TryComplete();
 			foreach ((RequestId id, TaskCompletionSource<JsonRpcResponse> pending) in this.pendingOutboundRequests)
 			{
-				if (this.pendingOutboundRequests.TryRemove(id, out _))
-				{
-					this.progress.UnregisterOutboundRequest(id);
-					pending.TrySetException(new ObjectDisposedException(nameof(JsonRpc)));
-				}
+				this.progress.UnregisterOutboundRequest(id);
+				pending.TrySetException(new ObjectDisposedException(nameof(JsonRpc)));
 			}
+
+			this.pendingOutboundRequests.Clear();
 		}
 
 		this.marshaledObjects.DisposeAll();
@@ -592,11 +597,23 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				throw new InvalidOperationException("The JSON-RPC connection is closed.");
 			}
 
-			return this.pendingOutboundRequests.TryAdd(request.Id.Value, responseTcs);
+			if (this.pendingOutboundRequests.ContainsKey(request.Id.Value))
+			{
+				return false;
+			}
+
+			this.pendingOutboundRequests.Add(request.Id.Value, responseTcs);
+			return true;
 		}
 	}
 
-	internal bool TryUnregisterOutboundRequest(RequestId id) => this.pendingOutboundRequests.TryRemove(id, out _);
+	internal bool TryUnregisterOutboundRequest(RequestId id)
+	{
+		lock (this.connectionSync)
+		{
+			return this.pendingOutboundRequests.Remove(id);
+		}
+	}
 
 	internal void CancelOutboundRequest(JsonRpcRequest request)
 	{
@@ -799,7 +816,17 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 					CancellationTokenSource = new(),
 				};
 
-				if (!this.pendingInboundRequests.TryAdd(id, tracker))
+				bool added;
+				lock (this.pendingInboundRequests)
+				{
+					added = !this.pendingInboundRequests.ContainsKey(id);
+					if (added)
+					{
+						this.pendingInboundRequests.Add(id, tracker);
+					}
+				}
+
+				if (!added)
 				{
 					tracker.Dispose();
 					throw new ProtocolViolationException($"A request with ID {id} is already pending.");
@@ -863,7 +890,14 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		{
 			if (request.Id is RequestId id)
 			{
-				if (this.pendingInboundRequests.TryRemove(id, out PendingInboundRequest tracker))
+				PendingInboundRequest tracker;
+				bool removed;
+				lock (this.pendingInboundRequests)
+				{
+					removed = this.pendingInboundRequests.TryGetValue(id, out tracker) && this.pendingInboundRequests.Remove(id);
+				}
+
+				if (removed)
 				{
 					tracker.Dispose();
 				}
@@ -885,8 +919,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				return;
 			}
 
-			if (this.pendingOutboundRequests.TryRemove(response.Id, out TaskCompletionSource<JsonRpcResponse>? tcs))
+			if (this.pendingOutboundRequests.TryGetValue(response.Id, out TaskCompletionSource<JsonRpcResponse>? tcs))
 			{
+				this.pendingOutboundRequests.Remove(response.Id);
 				this.progress.UnregisterOutboundRequest(response.Id);
 				this.outOfBandStreams.CompleteOutboundRequest(response.Id, successful: response is JsonRpcResult);
 				this.asyncEnumerables.CompleteOutboundRequest(response.Id);
@@ -1127,12 +1162,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 			foreach ((RequestId id, TaskCompletionSource<JsonRpcResponse> pending) in this.pendingOutboundRequests)
 			{
-				if (this.pendingOutboundRequests.TryRemove(id, out _))
-				{
-					this.progress.UnregisterOutboundRequest(id);
-					pending.TrySetException(exception);
-				}
+				this.progress.UnregisterOutboundRequest(id);
+				pending.TrySetException(exception);
 			}
+
+			this.pendingOutboundRequests.Clear();
 
 			this.channel.Writer.TryComplete(exception);
 			this.Logger.LogError(exception, "JSON-RPC connection terminated: {Reason}", exception.Message);
@@ -1185,7 +1219,15 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		[MethodShape(Name = SpecialCancelMethodName)]
 		public void CancelRequest(RequestId id)
 		{
-			if (owner.pendingInboundRequests.TryGetValue(id, out PendingInboundRequest tracker))
+			PendingInboundRequest tracker;
+			bool found;
+			lock (owner.pendingInboundRequests)
+			{
+				found = owner.pendingInboundRequests.TryGetValue(id, out tracker);
+			}
+
+			// Cancel outside the lock, since cancellation runs arbitrary callbacks.
+			if (found)
 			{
 				tracker.CancellationTokenSource?.Cancel();
 			}
