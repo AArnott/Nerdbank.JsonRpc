@@ -148,6 +148,16 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 		return new(sequence.ToArray(), JsonRpcEncoding.MessagePack);
 	}
 
+	/// <summary>Retains a range of this value's bytes as a separate value without copying.</summary>
+	/// <param name="offset">The offset of the range within this value.</param>
+	/// <param name="length">The length of the range.</param>
+	/// <returns>A value that shares this value's backing buffer.</returns>
+	internal JsonRpcValue Slice(int offset, int length)
+	{
+		(object root, int baseOffset) = this.storage is OwnedSlice parent ? (parent.Owner, parent.Offset) : (this.storage!, 0);
+		return new(new OwnedSlice(root, baseOffset + offset, length), this.Encoding);
+	}
+
 	/// <summary>Returns the internally owned MessagePack bytes without copying.</summary>
 	/// <returns>The internally owned MessagePack value.</returns>
 	internal RawMessagePack AsOwnedMessagePack() => this.Encoding == JsonRpcEncoding.MessagePack && this.HasValue ? (RawMessagePack)this.OwnedBytes : throw new InvalidOperationException("Expected a MessagePack value.");
@@ -198,6 +208,8 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	private sealed class OwnedSlice(object owner, int offset, int length)
 	{
 		internal object Owner { get; } = owner;
+
+		internal int Offset => offset;
 
 		internal ReadOnlyMemory<byte> Memory => GetMemory(this.Owner).Slice(offset, length);
 	}

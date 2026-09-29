@@ -97,7 +97,7 @@ internal sealed class ProgressManager(JsonRpc owner)
 
 		try
 		{
-			(bool named, List<(string? Name, JsonRpcValue Value)> values) = owner.UserDataSerializer.ReadArguments(request.Arguments);
+			(bool named, List<(string? Name, JsonRpcValue Value)> values) = owner.UserDataSerializer.ReadArguments(request);
 			if (values.Count != 2)
 			{
 				throw new FormatException("Progress notifications must include a token and a value parameter.");

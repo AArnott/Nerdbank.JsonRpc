@@ -1,6 +1,7 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.Buffers;
 using System.Collections.Immutable;
 using System.Net;
 using Nerdbank.MessagePack;
@@ -63,6 +64,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 		RequestId id = default;
 		string? methodName = null;
 		JsonRpcValue arguments = default, resultValue = default;
+		(bool Named, List<(string? Name, JsonRpcValue Value)> Values)? splitArguments = null;
 		JsonRpcErrorDetails? errorDetails = null;
 		TopLevelProperties? extensions = null;
 		for (int i = 0; i < count; i++)
@@ -110,7 +112,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 				}
 
 				parameters = true;
-				arguments = JsonRpcValue.FromPooledMessagePack(reader.ReadRaw(context));
+				arguments = ReadParameters(ref reader, context, out splitArguments);
 			}
 			else if (name.SequenceEqual("result"u8))
 			{
@@ -144,10 +146,73 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 		}
 
 		return method
-			? new JsonRpcRequest { Method = methodName!, Arguments = arguments, Id = idPresent ? id : (RequestId?)null, TopLevelProperties = extensions }
+			? new JsonRpcRequest { Method = methodName!, Arguments = arguments, SplitArguments = splitArguments, Id = idPresent ? id : (RequestId?)null, TopLevelProperties = extensions }
 			: result
 				? new JsonRpcResult { Id = id, Result = resultValue, TopLevelProperties = extensions }
 				: new JsonRpcError { Id = id, Error = errorDetails!, TopLevelProperties = extensions };
+	}
+
+	/// <summary>Reads request params, locating each argument on the same pass that finds where the params end.</summary>
+	/// <param name="reader">The reader, positioned at the params map or array.</param>
+	/// <param name="context">The serialization context.</param>
+	/// <param name="split">Receives the individual arguments, which share the returned value's buffer.</param>
+	/// <returns>The params, copied into a pooled buffer.</returns>
+	private static JsonRpcValue ReadParameters(ref MessagePackReader reader, SerializationContext context, out (bool Named, List<(string? Name, JsonRpcValue Value)> Values)? split)
+	{
+		ReadOnlySequence<byte> sequence = reader.Sequence;
+		SequencePosition start = reader.Position;
+		split = null;
+		MessagePackType type = reader.NextMessagePackType;
+		if (type is not (MessagePackType.Map or MessagePackType.Array))
+		{
+			// Leave malformed params for the user data serializer to reject when the request is dispatched.
+			return JsonRpcValue.FromPooledMessagePack(reader.ReadRaw(context));
+		}
+
+		long startConsumed = reader.Consumed;
+		bool named = type == MessagePackType.Map;
+		int count = named ? reader.ReadMapHeader() : reader.ReadArrayHeader();
+		List<(string? Name, JsonRpcValue Value)> values = new(count);
+		Span<(int Offset, int Length)> ranges = count <= 16 ? stackalloc (int, int)[count] : new (int, int)[count];
+		bool valid = true;
+		for (int i = 0; i < count; i++)
+		{
+			string? name = null;
+			if (named)
+			{
+				if (reader.NextMessagePackType is not (MessagePackType.String or MessagePackType.Nil))
+				{
+					valid = false;
+				}
+
+				if (valid)
+				{
+					name = reader.ReadString();
+				}
+				else
+				{
+					reader.Skip(context);
+				}
+			}
+
+			int offset = checked((int)(reader.Consumed - startConsumed));
+			reader.Skip(context);
+			ranges[i] = (offset, checked((int)(reader.Consumed - startConsumed)) - offset);
+			values.Add((name, default));
+		}
+
+		JsonRpcValue parameters = JsonRpcValue.FromPooledBytes(sequence.Slice(start, reader.Position), JsonRpcEncoding.MessagePack);
+		if (valid)
+		{
+			for (int i = 0; i < count; i++)
+			{
+				values[i] = (values[i].Name, parameters.Slice(ranges[i].Offset, ranges[i].Length));
+			}
+
+			split = (named, values);
+		}
+
+		return parameters;
 	}
 
 	/// <summary>Retains a primitive extension property, skipping values of other types.</summary>

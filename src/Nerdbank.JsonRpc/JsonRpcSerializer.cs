@@ -144,6 +144,12 @@ public abstract class JsonRpcSerializer
 	/// <returns>The named or positional entries.</returns>
 	internal abstract (bool Named, List<(string? Name, JsonRpcValue Value)> Values) ReadArguments(JsonRpcValue arguments);
 
+	/// <summary>Gets a request's individual arguments, reusing any the transport already located while reading the message.</summary>
+	/// <param name="request">The request whose arguments to read.</param>
+	/// <returns>Whether the arguments are named, and the arguments themselves.</returns>
+	internal (bool Named, List<(string? Name, JsonRpcValue Value)> Values) ReadArguments(JsonRpcRequest request)
+		=> request.SplitArguments ?? this.ReadArguments(request.Arguments);
+
 	/// <summary>Encodes a cancellation notification using the protocol ID token.</summary>
 	/// <param name="id">The ID to cancel.</param>
 	/// <param name="cancellationToken">A cancellation token.</param>

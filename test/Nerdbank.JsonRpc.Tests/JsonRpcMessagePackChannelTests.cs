@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -8,8 +8,81 @@ using Microsoft.VisualStudio.Threading;
 using Nerdbank.Streams;
 
 [InheritsTests]
-public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(CreateTransports())
+public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(CreateTransports())
 {
+	private delegate void ParamsWriter(ref Nerdbank.MessagePack.MessagePackWriter writer);
+
+	[Test]
+	[Arguments(true)]
+	[Arguments(false)]
+	public async Task ReceivedArgumentsBindToParameters(bool named)
+	{
+		(JsonRpcMessagePackChannel peerChannel, IDuplexPipe peer, JsonRpc server) = StartServer();
+		await using (peerChannel)
+		using (server)
+		{
+			string text = new('x', 1_000);
+			byte[] request = EncodeRawRequest(nameof(ArgumentServer.Describe), (ref Nerdbank.MessagePack.MessagePackWriter writer) =>
+			{
+				if (named)
+				{
+					// Deliberately out of order, with a large argument ahead of a small one.
+					writer.WriteMapHeader(2);
+					writer.Write("text");
+					writer.Write(text);
+					writer.Write("count");
+					writer.Write(3);
+				}
+				else
+				{
+					writer.WriteArrayHeader(2);
+					writer.Write(3);
+					writer.Write(text);
+				}
+			});
+
+			peer.Output.Write(Frame(request, JsonRpcMessagePackChannel.DefaultFraming));
+			await peer.Output.FlushAsync(this.TimeoutToken);
+			JsonRpcResult result = Assert.IsType<JsonRpcResult>(await peerChannel.Reader.ReadAsync(this.TimeoutToken));
+			Assert.Equal($"3:{text.Length}", new Nerdbank.MessagePack.MessagePackReader(result.Result.AsMessagePack()).ReadString());
+		}
+	}
+
+	[Test]
+	public async Task NonStringParameterNameProducesErrorResponseWithoutFaultingTransport()
+	{
+		(JsonRpcMessagePackChannel peerChannel, IDuplexPipe peer, JsonRpc server) = StartServer();
+		await using (peerChannel)
+		using (server)
+		{
+			byte[] malformed = EncodeRawRequest(nameof(ArgumentServer.Describe), (ref Nerdbank.MessagePack.MessagePackWriter writer) =>
+			{
+				writer.WriteMapHeader(2);
+				writer.Write(1);
+				writer.Write(3);
+				writer.Write("text");
+				writer.Write("x");
+			});
+
+			peer.Output.Write(Frame(malformed, JsonRpcMessagePackChannel.DefaultFraming));
+			await peer.Output.FlushAsync(this.TimeoutToken);
+			JsonRpcError error = Assert.IsType<JsonRpcError>(await peerChannel.Reader.ReadAsync(this.TimeoutToken));
+			Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
+
+			byte[] valid = EncodeRawRequest(nameof(ArgumentServer.Describe), (ref Nerdbank.MessagePack.MessagePackWriter writer) =>
+			{
+				writer.WriteArrayHeader(2);
+				writer.Write(5);
+				writer.Write("yz");
+			});
+
+			peer.Output.Write(Frame(valid, JsonRpcMessagePackChannel.DefaultFraming));
+			await peer.Output.FlushAsync(this.TimeoutToken);
+			JsonRpcResult result = Assert.IsType<JsonRpcResult>(await peerChannel.Reader.ReadAsync(this.TimeoutToken));
+			Assert.Equal("5:2", new Nerdbank.MessagePack.MessagePackReader(result.Result.AsMessagePack()).ReadString());
+		}
+	}
+
 	[Test]
 	public async Task MessagePackChannelDeclaresItsEncoding()
 	{
@@ -235,6 +308,32 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 		}
 	}
 
+	private static byte[] EncodeRawRequest(string method, ParamsWriter writeParams)
+	{
+		Nerdbank.Streams.Sequence<byte> buffer = new();
+		Nerdbank.MessagePack.MessagePackWriter writer = new(buffer);
+		writer.WriteMapHeader(4);
+		writer.Write("jsonrpc");
+		writer.Write("2.0");
+		writer.Write("method");
+		writer.Write(method);
+		writer.Write("id");
+		writer.Write(1);
+		writer.Write("params");
+		writeParams(ref writer);
+		writer.Flush();
+		return buffer.AsReadOnlySequence.ToArray();
+	}
+
+	private static (JsonRpcMessagePackChannel PeerChannel, IDuplexPipe Peer, JsonRpc Server) StartServer()
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		JsonRpc server = new(CreateChannel(local, JsonRpcMessagePackChannel.DefaultFraming));
+		server.AddRpcTarget(new ArgumentServer(), new JsonRpcTargetOptions { MethodNameTransform = CommonMethodNameTransforms.Identity });
+		server.Start();
+		return (CreateChannel(peer, JsonRpcMessagePackChannel.DefaultFraming), peer, server);
+	}
+
 	private static byte[] EncodeRequest(string method, int argument)
 	{
 		Nerdbank.Streams.Sequence<byte> buffer = new();
@@ -259,5 +358,12 @@ public class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBase(Creat
 		ILogger<JsonRpcPipeChannel> aliceLogger = LoggerFactory.CreateLogger<JsonRpcPipeChannel>();
 		ILogger<JsonRpcPipeChannel> bobLogger = LoggerFactory.CreateLogger<JsonRpcPipeChannel>();
 		return (new JsonRpcMessagePackChannel(alice, aliceLogger), new JsonRpcMessagePackChannel(bob, bobLogger));
+	}
+
+	/// <summary>A target whose method distinguishes its arguments by type and size.</summary>
+	[PolyType.GenerateShape(IncludeMethods = PolyType.MethodShapeFlags.PublicInstance)]
+	internal partial class ArgumentServer
+	{
+		public string Describe(int count, string text) => $"{count}:{text.Length}";
 	}
 }

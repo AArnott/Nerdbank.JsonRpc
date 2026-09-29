@@ -145,7 +145,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 
 						if (dispatch.Request.Arguments.HasValue)
 						{
-							(bool named, List<(string? Name, JsonRpcValue Value)> values) = dispatch.UserDataSerializer.ReadArguments(dispatch.Request.Arguments);
+							(bool named, List<(string? Name, JsonRpcValue Value)> values) = dispatch.UserDataSerializer.ReadArguments(dispatch.Request);
 							if (!named && values.Count > parameterSetters.Length)
 							{
 								return new DispatchResponse
