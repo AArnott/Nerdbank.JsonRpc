@@ -97,29 +97,37 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 		};
 		(string? Name, JsonRpcValue Value)[] values = ArgumentList.Rent(4);
 		int count = 0;
-		while (reader.Read() && reader.TokenType is not (JsonTokenType.EndObject or JsonTokenType.EndArray))
+		try
 		{
-			string? name = null;
-			if (named)
+			while (reader.Read() && reader.TokenType is not (JsonTokenType.EndObject or JsonTokenType.EndArray))
 			{
-				name = Utf8StringCache.ReadString(ref reader);
-				reader.Read();
+				string? name = null;
+				if (named)
+				{
+					name = Utf8StringCache.ReadString(ref reader);
+					reader.Read();
+				}
+
+				int start = checked((int)reader.TokenStartIndex);
+				reader.Skip();
+				if (count == values.Length)
+				{
+					ArgumentList.Grow(ref values, count);
+				}
+
+				values[count++] = (name, arguments.Slice(start, checked((int)reader.BytesConsumed) - start));
 			}
 
-			int start = checked((int)reader.TokenStartIndex);
-			reader.Skip();
-			if (count == values.Length)
-			{
-				ArgumentList.Grow(ref values, count);
-			}
+			// Reject trailing content, as parsing the whole value would.
+			reader.Read();
 
-			values[count++] = (name, arguments.Slice(start, checked((int)reader.BytesConsumed) - start));
+			return (named, new(values, count, named));
 		}
-
-		// Reject trailing content, as parsing the whole value would.
-		reader.Read();
-
-		return (named, new(values, count, named));
+		catch
+		{
+			new ArgumentList(values, count, named).Return();
+			throw;
+		}
 	}
 
 	internal override JsonRpcValue SerializeCancellation(RequestId id, CancellationToken cancellationToken)

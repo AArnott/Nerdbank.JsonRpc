@@ -661,7 +661,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			JsonRpcResponse response = await responseTask.ConfigureAwait(false);
 			switch (response)
 			{
-				case JsonRpcResult:
+				case JsonRpcResult result:
+					result.Result.Release();
 					return;
 				case JsonRpcError error:
 					this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
@@ -763,6 +764,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		return serialized.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithOutOfBandChannels(outOfBandChannels).WithAsyncEnumerableTokens(asyncEnumerableScope.Commit());
 	}
 
+	private static void ReleaseReceivedArguments(JsonRpcRequest request)
+	{
+		request.SplitArguments.Return();
+		request.SplitArguments = default;
+		request.Arguments.Release();
+	}
+
 	/// <summary>Invokes a request handler as a child of the caller's joinable task.</summary>
 	/// <param name="jtf">The joinable task factory.</param>
 	/// <param name="invoker">The request handler.</param>
@@ -777,6 +785,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	{
 		if (request.Id is null && (this.progress.TryHandleNotification(request) || this.marshaledObjects.TryHandleNotification(request)))
 		{
+			ReleaseReceivedArguments(request);
 			return new ValueTask<JsonRpcResponse?>((JsonRpcResponse?)null);
 		}
 
@@ -791,6 +800,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 		else if (!this.handlers.TryGetValue(request.Method, out handler))
 		{
+			ReleaseReceivedArguments(request);
 			bool missingMarshaledObject = this.marshaledObjects.IsMissingHandleInvocation(request, out long missingHandle);
 			return new ValueTask<JsonRpcResponse?>(request.Id is RequestId missingId
 				? new JsonRpcError
@@ -851,6 +861,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 		catch (Exception ex)
 		{
+			ReleaseReceivedArguments(request);
 			this.Fault(ex);
 			return new ValueTask<JsonRpcResponse?>(Task.FromException<JsonRpcResponse?>(ex));
 		}
@@ -888,6 +899,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 		finally
 		{
+			ReleaseReceivedArguments(request);
 			if (request.Id is RequestId id)
 			{
 				PendingInboundRequest tracker;

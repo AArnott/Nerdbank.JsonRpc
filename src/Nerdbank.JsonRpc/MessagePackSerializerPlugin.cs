@@ -84,18 +84,28 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 		};
 		int count = named ? reader.ReadMapHeader() : reader.ReadArrayHeader();
 		(string? Name, JsonRpcValue Value)[] values = ArgumentList.Rent(count);
-		for (int i = 0; i < count; i++)
+		int initialized = 0;
+		try
 		{
-			string? name = named ? Utf8StringCache.ReadString(ref reader) : null;
-			values[i] = (name, JsonRpcValue.FromOwnedMessagePack(arguments, reader.ReadRaw(context)));
-		}
+			for (int i = 0; i < count; i++)
+			{
+				string? name = named ? Utf8StringCache.ReadString(ref reader) : null;
+				values[i] = (name, JsonRpcValue.FromOwnedMessagePack(arguments, reader.ReadRaw(context)));
+				initialized++;
+			}
 
-		if (!reader.End)
+			if (!reader.End)
+			{
+				throw new FormatException("Trailing bytes in parameters.");
+			}
+
+			return (named, new(values, count, named));
+		}
+		catch
 		{
-			throw new FormatException("Trailing bytes in parameters.");
+			new ArgumentList(values, initialized, named).Return();
+			throw;
 		}
-
-		return (named, new(values, count, named));
 	}
 
 	internal override JsonRpcValue SerializeCancellation(RequestId id, CancellationToken cancellationToken)
