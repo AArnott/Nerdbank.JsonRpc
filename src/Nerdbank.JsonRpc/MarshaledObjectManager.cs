@@ -780,7 +780,12 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		internal HandleSet Commit()
 		{
 			this.committed = true;
-			return this.handles is { Count: > 0 } handles ? new(manager, [.. handles], this.HasMarshaledObjects) : HandleSet.Empty;
+			if (this.handles is { Count: > 0 } handles)
+			{
+				return new(manager, [.. handles], this.HasMarshaledObjects);
+			}
+
+			return this.HasMarshaledObjects ? new(manager, [], hasMarshaledObjects: true) : HandleSet.Empty;
 		}
 	}
 

@@ -17,6 +17,7 @@ namespace Nerdbank.JsonRpc;
 
 /// <summary>
 /// Encodes JSON-RPC messages as MessagePack over a duplex pipe, framed as described by <see cref="JsonRpcMessagePackFraming"/>.
+/// Inbound frames are limited to 8 MiB.
 /// </summary>
 public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 {
@@ -24,6 +25,7 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 	public const JsonRpcMessagePackFraming DefaultFraming = JsonRpcMessagePackFraming.BigEndianInt32LengthHeader;
 
 	private const int LengthHeaderSize = 4;
+	private const int MaximumFrameSize = 8 * 1024 * 1024;
 
 	private readonly MessagePackSerializer messagePackSerializer;
 
@@ -95,6 +97,11 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 				reader.AdvanceTo(buffer.Start);
 				yield return message;
 				continue;
+			}
+
+			if (this.framing == JsonRpcMessagePackFraming.SelfDelimiting && buffer.Length > MaximumFrameSize)
+			{
+				throw new ProtocolViolationException("MessagePack frame exceeds the size limit.");
 			}
 
 			if (read.IsCompleted)
@@ -181,9 +188,9 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 				length = BinaryPrimitives.ReadUInt32BigEndian(header);
 			}
 
-			if (length is 0 or > int.MaxValue)
+			if (length == 0 || length > MaximumFrameSize)
 			{
-				throw new ProtocolViolationException($"Invalid MessagePack message length: {length}.");
+				throw new ProtocolViolationException($"Invalid MessagePack message length: {length}. The maximum frame size is {MaximumFrameSize} bytes.");
 			}
 
 			if (buffer.Length - LengthHeaderSize < length)

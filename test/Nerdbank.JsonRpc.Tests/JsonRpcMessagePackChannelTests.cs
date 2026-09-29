@@ -263,6 +263,7 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 
 	[Test]
 	[Arguments(0u)]
+	[Arguments(8_388_609u)]
 	[Arguments(0x80000000u)]
 	public async Task InvalidLengthHeaderFaultsTransport(uint length)
 	{
@@ -273,6 +274,18 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 		peer.Output.Write(header);
 		await peer.Output.FlushAsync(this.TimeoutToken);
 		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
+	}
+
+	[Test]
+	public async Task OversizedSelfDelimitingFrameFaultsTransport()
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcMessagePackChannel channel = CreateChannel(local, JsonRpcMessagePackFraming.SelfDelimiting);
+		byte[] oversized = new byte[(8 * 1024 * 1024) + 1];
+		oversized[0] = 0xdb;
+		System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(oversized.AsSpan(1), (8 * 1024 * 1024) + 1);
+		peer.Output.Write(oversized);
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(async () => await peer.Output.FlushAsync(this.TimeoutToken));
 	}
 
 	private static JsonRpcMessagePackChannel CreateChannel(IDuplexPipe pipe, JsonRpcMessagePackFraming framing)
