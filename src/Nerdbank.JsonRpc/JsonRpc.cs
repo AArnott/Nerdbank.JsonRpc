@@ -422,25 +422,26 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <inheritdoc/>
 	public ValueTask NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
-		cancellationToken.ThrowIfCancellationRequested();
-		this.marshaledObjects.EnsureNoMarshaledObjects(arguments);
-		this.progress.EnsureNoProgressRegistrations(arguments);
-		this.asyncEnumerables.EnsureNoAsyncEnumerables(arguments);
-
-		JsonRpcRequest request = new()
-		{
-			Id = null,
-			Method = method,
-			Arguments = arguments,
-		};
-
 		try
 		{
+			cancellationToken.ThrowIfCancellationRequested();
+			this.marshaledObjects.EnsureNoMarshaledObjects(arguments);
+			this.progress.EnsureNoProgressRegistrations(arguments);
+			this.asyncEnumerables.EnsureNoAsyncEnumerables(arguments);
+
+			JsonRpcRequest request = new()
+			{
+				Id = null,
+				Method = method,
+				Arguments = arguments,
+			};
+
 			return this.AwaitPostedNotificationAsync(this.PostMessageAsync(request, cancellationToken), request);
 		}
 		catch
 		{
-			this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
+			this.marshaledObjects.ReleaseLocalObjects(arguments);
+			arguments.ReleaseIfSingleUse();
 			throw;
 		}
 	}
@@ -924,25 +925,26 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private void ProcessResponse(JsonRpcResponse response)
 	{
 		ProtocolViolationException? unmatchedResponseException = null;
+		bool transferredToCaller = false;
 		lock (this.connectionSync)
 		{
-			if (this.Completion.IsCompleted)
-			{
-				return;
-			}
-
-			if (this.pendingOutboundRequests.TryGetValue(response.Id, out TaskCompletionSource<JsonRpcResponse>? tcs))
+			if (!this.Completion.IsCompleted && this.pendingOutboundRequests.TryGetValue(response.Id, out TaskCompletionSource<JsonRpcResponse>? tcs))
 			{
 				this.pendingOutboundRequests.Remove(response.Id);
 				this.progress.UnregisterOutboundRequest(response.Id);
 				this.outOfBandStreams.CompleteOutboundRequest(response.Id, successful: response is JsonRpcResult);
 				this.asyncEnumerables.CompleteOutboundRequest(response.Id);
-				tcs.TrySetResult(response);
+				transferredToCaller = tcs.TrySetResult(response);
 			}
-			else
+			else if (!this.Completion.IsCompleted)
 			{
 				unmatchedResponseException = new ProtocolViolationException($"Received a response with ID {response.Id} that does not match any pending requests.");
 			}
+		}
+
+		if (!transferredToCaller && response is JsonRpcResult discardedResult)
+		{
+			discardedResult.Result.Release();
 		}
 
 		if (unmatchedResponseException is not null)
@@ -1084,6 +1086,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 		catch (Exception ex) when (!posted)
 		{
+			request.Arguments.ReleaseIfSingleUse();
 			if (request.Id.HasValue)
 			{
 				this.TryUnregisterOutboundRequest(request.Id.Value);
@@ -1110,6 +1113,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			catch
 			{
 				this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
+				request.Arguments.ReleaseIfSingleUse();
 				throw;
 			}
 		}
@@ -1124,6 +1128,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		catch
 		{
 			this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
+			request.Arguments.ReleaseIfSingleUse();
 			throw;
 		}
 	}

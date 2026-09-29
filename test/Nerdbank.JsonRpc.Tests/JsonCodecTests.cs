@@ -178,6 +178,14 @@ public class JsonCodecTests : TestBase
 	}
 
 	[Test]
+	public void RequestIdDeserializationRejectsTrailingJson()
+	{
+		JsonRpcSerializer serializer = new JsonSerializerPlugin(new Nerdbank.Json.JsonSerializer());
+		JsonRpcValue value = JsonRpcValue.FromJson("1 2"u8.ToArray());
+		Assert.ThrowsAny<JsonException>(() => serializer.Deserialize(value, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.RequestId, this.TimeoutToken));
+	}
+
+	[Test]
 	[Arguments(JsonRpcEncoding.Json)]
 	[Arguments(JsonRpcEncoding.MessagePack)]
 	public async Task ErrorDataDistinguishesAbsentAndExplicitNull(JsonRpcEncoding encoding)

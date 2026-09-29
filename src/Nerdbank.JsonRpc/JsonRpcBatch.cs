@@ -462,12 +462,27 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 
 	private ValueTask<JsonRpcResponse> AddRequestAsync(JsonRpcRequest request, CancellationToken cancellationToken)
 	{
-		this.owner.ApplyJoinableTaskToken(request);
+		try
+		{
+			this.owner.ApplyJoinableTaskToken(request);
+		}
+		catch
+		{
+			this.owner.MarshaledObjects.ReleaseLocalObjects(request.Arguments);
+			this.owner.AsyncEnumerables.ReleaseGenerators(request.Arguments);
+			request.Arguments.ReleaseIfSingleUse();
+			throw;
+		}
+
 		TaskCompletionSource<JsonRpcResponse> responseTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 		Entry entry = new(this, request, responseTcs, cancellationToken);
 		try
 		{
 			this.AddEntry(entry);
+			if (cancellationToken.IsCancellationRequested)
+			{
+				entry.ReleaseAbandonedArguments();
+			}
 		}
 		catch
 		{
@@ -500,6 +515,10 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		try
 		{
 			this.AddEntry(entry);
+			if (cancellationToken.IsCancellationRequested)
+			{
+				entry.ReleaseAbandonedArguments();
+			}
 		}
 		catch
 		{
@@ -737,6 +756,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 
 			this.owner.owner.MarshaledObjects.ReleaseLocalObjects(this.Request.Arguments);
 			this.owner.owner.AsyncEnumerables.ReleaseGenerators(this.Request.Arguments);
+			this.Request.Arguments.ReleaseIfSingleUse();
 		}
 
 		internal void Fault(Exception ex)

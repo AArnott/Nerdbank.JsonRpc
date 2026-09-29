@@ -54,6 +54,28 @@ public partial class PooledPayloadLifetimeTests : TestBase
 	}
 
 	[Test]
+	public async Task SingleUseArgumentsAreReleasedWhenCanceledBeforeSending()
+	{
+		using Fixture fixture = new(JsonRpcEncoding.Json);
+		using CancellationTokenSource cts = new();
+		cts.Cancel();
+
+		JsonRpcValue notificationArguments = BuildSingleUseArguments(fixture.ClientRpc);
+		Assert.Throws<OperationCanceledException>(() => fixture.ClientRpc.NotifyAsync("notify", notificationArguments, cts.Token));
+		Assert.Throws<ObjectDisposedException>(() => _ = notificationArguments.Bytes);
+
+		JsonRpcValue requestArguments = BuildSingleUseArguments(fixture.ClientRpc);
+		ValueTask<int> request = fixture.ClientRpc.RequestAsync("double", requestArguments, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, cts.Token);
+		await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request.AsTask());
+		Assert.Throws<ObjectDisposedException>(() => _ = requestArguments.Bytes);
+
+		using JsonRpcBatch batch = fixture.ClientRpc.CreateBatch();
+		JsonRpcValue batchArguments = BuildSingleUseArguments(fixture.ClientRpc);
+		await batch.NotifyAsync("notify", batchArguments, cts.Token);
+		Assert.Throws<ObjectDisposedException>(() => _ = batchArguments.Bytes);
+	}
+
+	[Test]
 	[Arguments(JsonRpcEncoding.MessagePack)]
 	[Arguments(JsonRpcEncoding.Json)]
 	public async Task BatchedSingleUseArgumentsAreReleasedAfterSending(JsonRpcEncoding encoding)
@@ -77,6 +99,13 @@ public partial class PooledPayloadLifetimeTests : TestBase
 		JsonRpcMessageBatch received = Assert.IsType<JsonRpcMessageBatch>(await receiver.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal("method", Assert.IsType<JsonRpcRequest>(Assert.Single(received.Messages)).Method);
 		Assert.Throws<ObjectDisposedException>(() => _ = arguments.Bytes);
+	}
+
+	private static JsonRpcValue BuildSingleUseArguments(JsonRpc rpc)
+	{
+		using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named: false, count: 1, CancellationToken.None);
+		builder.Add(null, 42, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32);
+		return builder.BuildForSingleUse();
 	}
 
 	private static string CreatePayload(int seed) => new((char)('a' + (seed % 26)), (seed * 37) % 3000);

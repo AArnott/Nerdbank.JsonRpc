@@ -38,7 +38,13 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 		{
 			Utf8JsonReader idReader = new(RequireJson(value).Span);
 			idReader.Read();
-			return (T)(object)JsonRpcJsonCodec.ReadId(ref idReader);
+			RequestId id = JsonRpcJsonCodec.ReadId(ref idReader);
+			if (idReader.Read())
+			{
+				throw new JsonException("Unexpected content after the request ID.");
+			}
+
+			return (T)(object)id;
 		}
 
 		using RpcCallState.Frame frame = RpcCallState.Enter(callState);

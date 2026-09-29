@@ -692,7 +692,8 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		{
 			if (waitForCompletion)
 			{
-				await owner.RequestRawAsync(AbortMethod, this.CreateTokenArguments(token), CancellationToken.None).ConfigureAwait(false);
+				JsonRpcValue response = await owner.RequestRawAsync(AbortMethod, this.CreateTokenArguments(token), CancellationToken.None).ConfigureAwait(false);
+				response.Release();
 			}
 			else
 			{
@@ -1101,28 +1102,35 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 					}
 
 					JsonRpcValue response = await this.manager.RequestNextValuesAsync(activeToken, this.cancellationToken).ConfigureAwait(false);
-					(List<JsonRpcValue> values, bool finished) = ReadResultValue(response);
-					this.generatorFinished = finished;
-					using (RpcCallState.Lease callStateLease = new(RpcCallState.Rent()))
-					using (InboundScope inboundScope = this.manager.TrackInboundRequest(hasResponse: true, callStateLease.State))
+					try
 					{
-						foreach (JsonRpcValue value in values)
+						(List<JsonRpcValue> values, bool finished) = ReadResultValue(response);
+						this.generatorFinished = finished;
+						using (RpcCallState.Lease callStateLease = new(RpcCallState.Rent()))
+						using (InboundScope inboundScope = this.manager.TrackInboundRequest(hasResponse: true, callStateLease.State))
 						{
-							this.cached.Enqueue(this.manager.Owner.UserDataSerializer.Deserialize(value, this.elementShape, callStateLease.State, this.cancellationToken));
+							foreach (JsonRpcValue value in values)
+							{
+								this.cached.Enqueue(this.manager.Owner.UserDataSerializer.Deserialize(value, this.elementShape, callStateLease.State, this.cancellationToken));
+							}
+
+							inboundScope.RetainCallScopedArguments(this.argumentLifetime);
 						}
 
-						inboundScope.RetainCallScopedArguments(this.argumentLifetime);
-					}
+						if (finished)
+						{
+							Interlocked.Exchange(ref this.argumentLifetime, null)?.Dispose();
+						}
 
-					if (finished)
-					{
-						Interlocked.Exchange(ref this.argumentLifetime, null)?.Dispose();
+						if (this.cached.Count == 0)
+						{
+							this.Current = default!;
+							return false;
+						}
 					}
-
-					if (this.cached.Count == 0)
+					finally
 					{
-						this.Current = default!;
-						return false;
+						response.Release();
 					}
 				}
 			}
