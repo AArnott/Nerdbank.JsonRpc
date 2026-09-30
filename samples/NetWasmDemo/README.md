@@ -25,9 +25,8 @@ A proof of concept that runs Nerdbank.JsonRpc, compiled to WebAssembly by [NetWa
 ## Build and run
 
 ```sh
-./build-client.sh                          # Release (Oz) build: slow (wasm-opt); or:
-./build-client.sh -p:NetWasmOptimization=O1  # ~5 minutes, ~42 MB module
-./run-server.sh                            # http://localhost:5080
+./build-client.sh   # Release (Oz): ~4.5 minutes, ~31 MB module
+./run-server.sh     # http://localhost:5080
 ```
 
 Then open http://localhost:5080/.
