@@ -13,7 +13,6 @@ using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.Threading;
 using Nerdbank.MessagePack;
 using Nerdbank.Streams;
@@ -47,7 +46,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private readonly JsonRpcPipeChannel channel;
 	private readonly JsonRpcSerializer userDataSerializer;
 	private bool disposed;
-	private ILogger logger = NullLogger.Instance;
 	private Task? readerTask;
 	private int nextRequestId;
 
@@ -121,11 +119,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		init => field = Requires.NotNull(value);
 	}
 
-	/// <summary>Gets or initializes the logger for request and connection failures. Defaults to <see cref="NullLogger.Instance"/>.</summary>
+	/// <summary>Gets or initializes the logger for request, connection, and transport diagnostics.</summary>
+	/// <value>Defaults to the logger supplied to the <see cref="JsonRpcPipeChannel"/>.</value>
+	/// <remarks>Setting this property also configures the underlying channel to use the same logger.</remarks>
 	public ILogger Logger
 	{
-		get => this.logger;
-		init => this.logger = value ?? throw new ArgumentNullException(nameof(value));
+		get => this.channel.GetLogger();
+		init => this.channel.SetLogger(value);
 	}
 
 	/// <summary>

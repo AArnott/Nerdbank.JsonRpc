@@ -31,6 +31,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	private readonly ChannelWriter<JsonRpcMessage> inboundMessageWriter;
 	private readonly ChannelReader<JsonRpcMessage> outboundMessageReader;
 	private volatile int maximumMessageSize = DefaultMaximumMessageSize;
+	private ILogger logger;
 	private volatile bool inboundAborted;
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcPipeChannel"/> class with deferred transport startup.</summary>
@@ -44,7 +45,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 		Requires.NotNull(inboundChannel);
 		Requires.NotNull(outboundChannel);
 
-		this.Logger = logger;
+		this.logger = Requires.NotNull(logger);
 
 		(this.Reader, this.inboundMessageWriter) = (inboundChannel.Reader, inboundChannel.Writer);
 		(this.Writer, this.outboundMessageReader) = (outboundChannel.Writer, outboundChannel.Reader);
@@ -62,7 +63,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	/// <summary>Gets the configured maximum size, in bytes, of a message.</summary>
 	protected int MaximumMessageSize => this.maximumMessageSize;
 
-	protected ILogger Logger { get; }
+	protected ILogger Logger => Volatile.Read(ref this.logger);
 
 	public async ValueTask DisposeAsync()
 	{
@@ -106,6 +107,14 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	/// <summary>Gets the configured maximum encoded message size.</summary>
 	/// <returns>The maximum encoded message size in bytes.</returns>
 	internal int GetMaximumMessageSize() => this.maximumMessageSize;
+
+	/// <summary>Gets the logger used by this channel.</summary>
+	/// <returns>The logger used for transport diagnostics.</returns>
+	internal ILogger GetLogger() => this.Logger;
+
+	/// <summary>Sets the logger used by this channel.</summary>
+	/// <param name="value">The logger to use for transport diagnostics.</param>
+	internal void SetLogger(ILogger value) => Volatile.Write(ref this.logger, Requires.NotNull(value));
 
 	/// <summary>Completes the queue of received messages so that a consumer waiting on it without a cancellation token wakes up.</summary>
 	/// <param name="cancellationToken">The canceled token that ended the consumer's interest in received messages.</param>
