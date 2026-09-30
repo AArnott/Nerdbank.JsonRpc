@@ -76,8 +76,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		this.cancelOutboundRequestDelegate = this.CancelOutboundRequest;
 
 #if NETWASM
-		// NetWasm: dynamic (attribute-based) shape resolution is unavailable, so use the source-generated provider directly.
-		this.AddRpcTarget(new SpecialMethodsTarget(this), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc.Default.GetTypeShapeOrThrow<SpecialMethodsTarget>());
+		// NetWasm: dynamic (attribute-based) shape resolution is unavailable, so use the source-generated shape directly.
+		// (Not GetTypeShape(Type): that roots every shape in the provider, including UnsafeAccessor-based setters NetWasm cannot compile.)
+		this.AddRpcTarget(new SpecialMethodsTarget(this), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc.Default.SpecialMethodsTarget);
 #else
 		this.AddRpcTarget(new SpecialMethodsTarget(this));
 #endif
