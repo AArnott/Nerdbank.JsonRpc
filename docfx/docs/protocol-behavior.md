@@ -18,6 +18,17 @@ Cancellation propagates using `$/cancelRequest`. For a [batched request](batchin
 
 Messages may carry additional top-level envelope properties beyond those defined by JSON-RPC 2.0. String and signed 64-bit integer values are preserved for internal use. Other value types, and integers outside that range, are ignored. Duplicate extension properties are rejected as malformed. Well-known extension properties with a value of the wrong type are also rejected.
 
+## Dispatch order and concurrency
+
+Inbound requests are dispatched so that their handlers *begin* executing in the order the remote party sent them. `JsonRpc.SynchronizationContext` controls this and defaults to a non-sticky `NonConcurrentSynchronizationContext`, which starts each invocation on the thread pool, one at a time, in arrival order.
+
+Because that context is non-sticky, it does not become the current synchronization context while a handler runs. As soon as a handler yields at its first `await` (or returns), the next queued handler starts. Long-running handlers therefore overlap and may complete in any order; only their *start* order is guaranteed.
+
+- Set the property to `null` to drop the ordering guarantee. Each invocation is then queued to the thread pool independently, so handlers may start in any order and run with full concurrency. This offers the highest throughput when start order does not matter.
+- Set the property to your own `SynchronizationContext`, such as one that marshals to an application's main thread, to start every handler there. A context that runs callbacks one at a time keeps the ordering guarantee; one that runs them concurrently does not.
+
+Request parsing and cancellation bookkeeping always run on the reader loop in message order and are unaffected by this property. The property must be set before calling `Start`.
+
 ## Deadlock mitigation with JoinableTaskFactory
 
 A process with a main thread can set JsonRpc.JoinableTaskFactory. This prevents deadlocks when a remote party must call back into the process while its main thread waits on a request, which works when both parties participate or when they are separated by intermediaries that do not use a JoinableTaskFactory. It interoperates with StreamJsonRpc.
