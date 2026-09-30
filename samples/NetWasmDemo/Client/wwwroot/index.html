@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nerdbank.JsonRpc on NetWasm</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2em; max-width: 60em; }
+  table { border-collapse: collapse; margin-bottom: 1em; }
+  td, th { border: 1px solid #ccc; padding: .4em .8em; text-align: left; }
+  th { background: #f4f4f4; }
+  pre { background: #111; color: #cfc; padding: 1em; white-space: pre-wrap; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Nerdbank.JsonRpc in the browser via NetWasm</h1>
+<p>The C# client below is compiled to WebAssembly by NetWasm (netwasm0.1). It talks JSON-RPC
+(newline-delimited JSON) over a WebSocket to an ASP.NET Core server that also uses Nerdbank.JsonRpc.</p>
+<table>
+  <tr><th>Status</th><td id="status">loading wasm…</td></tr>
+  <tr><th>Add(2, 3)</th><td id="add">…</td></tr>
+  <tr><th>Greet("NetWasm")</th><td id="greet">…</td></tr>
+  <tr><th>Server notification (tick)</th><td id="tick">…</td></tr>
+</table>
+<pre id="log"></pre>
+<script type="module">
+const logEl = document.getElementById('log');
+const log = s => { logEl.textContent += s + "\n"; console.log(s); };
+const show = s => { const i = s.indexOf('='); document.getElementById(s.slice(0, i)).textContent = s.slice(i + 1); };
+let socket, messageCallback;
+const pending = [];
+globalThis.netwasmConsumerModules = {
+  "app.host": {
+    log,
+    show,
+    connect: path => new Promise((resolve, reject) => {
+      const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + path;
+      log("js: connecting " + url);
+      socket = new WebSocket(url);
+      socket.binaryType = "arraybuffer";
+      socket.onopen = () => resolve(1);
+      socket.onerror = e => { log("js: WebSocket error"); reject(new Error("WebSocket error")); };
+      socket.onclose = e => { log("js: WebSocket closed (" + e.code + ")"); show("status=disconnected"); };
+      socket.onmessage = e => {
+        const bytes = typeof e.data === "string" ? new TextEncoder().encode(e.data) : new Uint8Array(e.data);
+        if (messageCallback) messageCallback(bytes); else pending.push(bytes);
+      };
+    }),
+    send: bytes => socket.send(bytes),
+    onMessage: cb => { messageCallback = cb; pending.splice(0).forEach(b => cb(b)); return { dispose() { messageCallback = null; } }; },
+  }
+};
+try {
+  const t0 = performance.now();
+  const { executeNetWasm } = await import("./netwasm.browser.mjs");
+  const manifestBytes = new Uint8Array(await (await fetch("./deployment.json")).arrayBuffer());
+  const manifest = JSON.parse(new TextDecoder().decode(manifestBytes));
+  const sha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", manifestBytes))].map(b => b.toString(16).padStart(2, "0")).join("");
+  const dec = new TextDecoder();
+  log("js: starting NetWasm module (" + manifest.artifacts.map(a => a.relativePath).join(", ") + ")");
+  show("status=starting wasm…");
+  const result = await executeNetWasm({
+    request: { schemaVersion: 1, buildFingerprint: manifest.buildFingerprint, deploymentManifestSha256: sha,
+      arguments: [], environment: [], grants: { environment: [], preopens: [], network: "denyAll", clocks: ["wall", "monotonic"], randomness: true },
+      applicationImports: [] },
+    stdout: Object.freeze({ write: b => log("stdout: " + dec.decode(b)) }),
+    stderr: Object.freeze({ write: b => log("stderr: " + dec.decode(b)) }),
+    signal: null,
+  });
+  log("js: module exited: " + JSON.stringify(result));
+} catch (e) {
+  log("js: failed: " + (e && e.stack || e));
+  show("status=failed: " + e);
+}
+</script>
+</body>
+</html>

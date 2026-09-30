@@ -1,0 +1,45 @@
+<Project Sdk="NetWasm.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>netwasm0.1</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>14</LangVersion>
+    <RootNamespace>NetWasmDemo</RootNamespace>
+
+    <!--
+      Browser recipe (NetWasm.Sdk 0.5.0): async code needs the async-command contract, which only
+      works as a raw (non-component) module; the page supplies the [JSImport] module "app.host"
+      through a custom bootstrap (the stock browser bootstrap has no way to pass consumer modules).
+    -->
+    <NetWasmRawWasm>true</NetWasmRawWasm>
+    <NetWasmComponentContract>async-command</NetWasmComponentContract>
+    <NetWasmPublishTarget>browser</NetWasmPublishTarget>
+    <NetWasmMinifyJavaScript>false</NetWasmMinifyJavaScript>
+    <NetWasmHostingBrowserModulePath>$(MSBuildProjectDirectory)/obj/custom-raw-bootstrap.mjs</NetWasmHostingBrowserModulePath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Contract\DemoContract.cs" Link="DemoContract.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- From the local feed: see REPORT.md / README.md. Brings Nerdbank.Json, Nerdbank.MessagePack, PolyType, VS.Validation (all -netwasm). -->
+    <PackageReference Include="Nerdbank.JsonRpc" Version="0.2.6-netwasm" />
+    <PackageReference Include="PolyType" Version="1.5.4-netwasm" />
+    <PackageReference Include="NetWasm.System.IO.Pipelines" Version="0.5.0" />
+    <PackageReference Include="NetWasm.Microsoft.Extensions.Logging.Abstractions" Version="0.5.0" />
+  </ItemGroup>
+
+  <!-- The bootstrap imports the NetWasm.Hosting browser modules by absolute path; stamp in the restored package location. -->
+  <Target Name="GenerateCustomBootstrap" BeforeTargets="Build;Publish">
+    <PropertyGroup>
+      <_HostingDir>$([MSBuild]::EnsureTrailingSlash('$(NuGetPackageRoot)'))netwasm.hosting/0.5.0/tools/netwasm/hosting/</_HostingDir>
+      <_BootstrapText>$([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)/host/custom-raw-bootstrap.template.mjs').Replace('__NETWASM_HOSTING_DIR__', '$(_HostingDir)'))</_BootstrapText>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(NetWasmHostingBrowserModulePath)" Lines="$(_BootstrapText)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!-- The page that loads the module and implements "app.host" (WebSocket + DOM). -->
+  <ItemGroup>
+    <None Include="wwwroot/index.html" Link="browser/index.html" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

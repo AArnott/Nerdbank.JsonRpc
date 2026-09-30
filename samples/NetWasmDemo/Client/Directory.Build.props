@@ -1,0 +1,7 @@
+<Project>
+  <!--
+    The browser client builds with NetWasm.Sdk against the netwasm0.1 packages in the local feed
+    (Nerdbank.JsonRpc 0.2.x-netwasm and its dependency chain), so it deliberately does not import
+    the repo-wide Directory.Build.props (strong naming, analyzers, NBGV, etc.).
+  -->
+</Project>
