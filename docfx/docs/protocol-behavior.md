@@ -24,10 +24,10 @@ Inbound requests are dispatched so that their handlers *begin* executing in the 
 
 Because that context is non-sticky, it does not become the current synchronization context while a handler runs. As soon as a handler yields at its first `await` (or returns), the next queued handler starts. Long-running handlers therefore overlap and may complete in any order; only their *start* order is guaranteed.
 
-- Set the property to `null` to drop the ordering guarantee. Each invocation is then queued to the thread pool independently, so handlers may start in any order and run with full concurrency. This offers the highest throughput when start order does not matter.
-- Set the property to your own <xref:System.Threading.SynchronizationContext>, such as one that marshals to an application's main thread, to start every handler there. A context that runs callbacks one at a time keeps the ordering guarantee; one that runs them concurrently does not.
+- Initialize the property to `null` to drop the ordering guarantee. Each invocation is then queued to the thread pool independently, so handlers may start in any order and run with full concurrency. This offers the highest throughput when start order does not matter.
+- Initialize the property with your own <xref:System.Threading.SynchronizationContext>, such as one that marshals to an application's main thread, to start every handler there. A context that runs callbacks one at a time keeps the ordering guarantee; one that runs them concurrently does not.
 
-Request parsing and cancellation bookkeeping always run on the reader loop in message order and are unaffected by this property. The property must be set before calling <xref:Nerdbank.JsonRpc.JsonRpc.Start?displayProperty=nameWithType>.
+Request parsing and cancellation bookkeeping always run on the reader loop in message order and are unaffected by this property. The property is init-only, so it is set in the object initializer when constructing <xref:Nerdbank.JsonRpc.JsonRpc>.
 
 ## Deadlock mitigation with JoinableTaskFactory
 

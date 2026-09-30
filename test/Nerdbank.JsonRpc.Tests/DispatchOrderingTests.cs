@@ -100,7 +100,7 @@ public partial class DispatchOrderingTests : TestBase
 	public async Task NullSynchronizationContext_DispatchesWithFullConcurrency()
 	{
 		const int CallCount = 3;
-		MockChannel<JsonRpcMessage> client = this.CreateConnection(rpc => rpc.SynchronizationContext = null);
+		MockChannel<JsonRpcMessage> client = this.CreateConnection(syncContext: null);
 
 		// Without an ordering context every invocation is queued to the thread pool independently,
 		// so all of them start even though none of them ever yields.
@@ -119,7 +119,7 @@ public partial class DispatchOrderingTests : TestBase
 		const int CallCount = 3;
 		DedicatedThreadSynchronizationContext syncContext = new();
 		this.disposables.Add(syncContext);
-		MockChannel<JsonRpcMessage> client = this.CreateConnection(rpc => rpc.SynchronizationContext = syncContext);
+		MockChannel<JsonRpcMessage> client = this.CreateConnection(syncContext);
 
 		for (int i = 0; i < CallCount; i++)
 		{
@@ -129,14 +129,6 @@ public partial class DispatchOrderingTests : TestBase
 		await this.server.WaitForStartCountAsync(CallCount, this.TimeoutToken);
 		Assert.Equal([0, 1, 2], this.server.StartOrder);
 		Assert.All(this.server.InvocationThreadIds, id => Assert.Equal(syncContext.ThreadId, id));
-	}
-
-	[Test]
-	public void SynchronizationContext_ThrowsWhenSetAfterStart()
-	{
-		this.CreateConnection();
-		JsonRpc connection = this.connections[^1];
-		Assert.Throws<InvalidOperationException>(() => connection.SynchronizationContext = null);
 	}
 
 	private static JsonRpcRequest CreateRequest(RequestId id, string method, int sequence)
@@ -150,12 +142,26 @@ public partial class DispatchOrderingTests : TestBase
 		return new JsonRpcRequest { Id = id, Method = method, Arguments = (RawMessagePack)seq.AsReadOnlySequence };
 	}
 
-	private MockChannel<JsonRpcMessage> CreateConnection(Action<JsonRpc>? configure = null)
+	/// <summary>Creates a connection that uses the default (ordered) dispatch synchronization context.</summary>
+	/// <returns>The client end of the connection.</returns>
+	private MockChannel<JsonRpcMessage> CreateConnection()
 	{
 		(MockChannel<JsonRpcMessage> client, Channel<JsonRpcMessage> serverChannel) = MockChannel<JsonRpcMessage>.CreatePair();
-		JsonRpc connection = new(new MockJsonRpcPipeChannel(serverChannel));
+		return this.StartConnection(client, new JsonRpc(new MockJsonRpcPipeChannel(serverChannel)));
+	}
+
+	/// <summary>Creates a connection that dispatches using the given synchronization context.</summary>
+	/// <param name="syncContext">The context to dispatch on, or <see langword="null"/> for unordered thread pool dispatch.</param>
+	/// <returns>The client end of the connection.</returns>
+	private MockChannel<JsonRpcMessage> CreateConnection(SynchronizationContext? syncContext)
+	{
+		(MockChannel<JsonRpcMessage> client, Channel<JsonRpcMessage> serverChannel) = MockChannel<JsonRpcMessage>.CreatePair();
+		return this.StartConnection(client, new JsonRpc(new MockJsonRpcPipeChannel(serverChannel)) { SynchronizationContext = syncContext });
+	}
+
+	private MockChannel<JsonRpcMessage> StartConnection(MockChannel<JsonRpcMessage> client, JsonRpc connection)
+	{
 		connection.AddRpcTarget(this.server, new JsonRpcTargetOptions { MethodNameTransform = CommonMethodNameTransforms.Identity });
-		configure?.Invoke(connection);
 		connection.Start();
 		this.connections.Add(connection);
 		return client;

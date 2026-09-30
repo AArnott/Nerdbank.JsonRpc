@@ -206,7 +206,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	}
 
 	/// <summary>
-	/// Gets or sets the <see cref="System.Threading.SynchronizationContext"/> that schedules the start of each inbound RPC method invocation.
+	/// Gets the <see cref="System.Threading.SynchronizationContext"/> that schedules the start of each inbound RPC method invocation.
 	/// </summary>
 	/// <value>
 	/// Defaults to a private <see cref="NonConcurrentSynchronizationContext"/> instance (configured as non-sticky)
@@ -226,7 +226,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// This offers the highest throughput and is appropriate when the order in which methods start does not matter.
 	/// </para>
 	/// <para>
-	/// Alternatively, set this property to your own <see cref="System.Threading.SynchronizationContext"/> (for example, one that
+	/// Alternatively, initialize this property with your own <see cref="System.Threading.SynchronizationContext"/> (for example, one that
 	/// marshals to an application's main thread) to have every inbound method invocation begin execution on that context.
 	/// A context that runs callbacks one at a time preserves the ordering guarantee described above; one that runs them
 	/// concurrently does not. As with the default, a method's continuations after its first <see langword="await"/> are
@@ -237,21 +237,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <para>
 	/// Work that precedes the invocation (such as request parsing and cancellation bookkeeping) always runs on the reader
 	/// loop in message order and is unaffected by this property.
-	/// This property may only be set before <see cref="Start"/> is called.
 	/// </para>
 	/// </remarks>
-	/// <exception cref="InvalidOperationException">Thrown when setting this property after <see cref="Start"/> has been called.</exception>
-	public SynchronizationContext? SynchronizationContext
-	{
-		get;
-		set
-		{
-			this.ThrowIfStarted();
-			field = value;
-		}
-	}
-
-	= new NonConcurrentSynchronizationContext(sticky: false);
+	public SynchronizationContext? SynchronizationContext { get; init; } = new NonConcurrentSynchronizationContext(sticky: false);
 
 	JsonRpcSerializer IJsonRpcClient.Serializer => this.userDataSerializer;
 
