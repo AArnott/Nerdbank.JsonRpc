@@ -131,6 +131,36 @@ public partial class DispatchOrderingTests : TestBase
 		Assert.All(this.server.InvocationThreadIds, id => Assert.Equal(syncContext.ThreadId, id));
 	}
 
+	[Test]
+	public async Task NullSynchronizationContext_CancelRequestIsProcessedWhileAnInvocationBlocks()
+	{
+		MockChannel<JsonRpcMessage> client = this.CreateConnection(syncContext: null);
+		await client.Writer.WriteAsync(CreateRequest(1, nameof(OrderTrackingServer.BlockUntilReleased), 0), this.TimeoutToken);
+		await this.server.WaitForStartCountAsync(1, this.TimeoutToken);
+
+		// The invocation is occupying a thread and will never yield. The reader loop must nevertheless
+		// remain free to receive the cancellation notification for that very call and act on it.
+		await client.Writer.WriteAsync(this.CreateCancellationRequest(1), this.TimeoutToken);
+
+		JsonRpcError error = Assert.IsType<JsonRpcError>(await client.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal(new RequestId(1), error.Id);
+	}
+
+	[Test]
+	public async Task DefaultSynchronizationContext_CancelRequestBypassesTheOrderedDispatcher()
+	{
+		MockChannel<JsonRpcMessage> client = this.CreateConnection();
+		await client.Writer.WriteAsync(CreateRequest(1, nameof(OrderTrackingServer.BlockUntilReleased), 0), this.TimeoutToken);
+		await this.server.WaitForStartCountAsync(1, this.TimeoutToken);
+
+		// The invocation is occupying the ordered dispatcher and will never yield. If cancellation were
+		// queued behind it like an ordinary request, it could never arrive and this call would hang forever.
+		await client.Writer.WriteAsync(this.CreateCancellationRequest(1), this.TimeoutToken);
+
+		JsonRpcError error = Assert.IsType<JsonRpcError>(await client.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal(new RequestId(1), error.Id);
+	}
+
 	private static JsonRpcRequest CreateRequest(RequestId id, string method, int sequence)
 	{
 		Sequence<byte> seq = new();
@@ -140,6 +170,20 @@ public partial class DispatchOrderingTests : TestBase
 		msgpackWriter.Flush();
 
 		return new JsonRpcRequest { Id = id, Method = method, Arguments = (RawMessagePack)seq.AsReadOnlySequence };
+	}
+
+	/// <summary>Creates a <c>$/cancelRequest</c> notification for the given inbound request.</summary>
+	/// <param name="id">The ID of the request to cancel.</param>
+	/// <returns>The notification.</returns>
+	private JsonRpcRequest CreateCancellationRequest(RequestId id)
+	{
+		Sequence<byte> seq = new();
+		MessagePackWriter msgpackWriter = new(seq);
+		msgpackWriter.WriteArrayHeader(1);
+		((MessagePackSerializerPlugin)((IJsonRpcClient)this.connections[^1]).Serializer).Serializer.Serialize(ref msgpackWriter, id, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.RequestId, this.TimeoutToken);
+		msgpackWriter.Flush();
+
+		return new JsonRpcRequest { Method = "$/cancelRequest", Arguments = (RawMessagePack)seq.AsReadOnlySequence };
 	}
 
 	/// <summary>Creates a connection that uses the default (ordered) dispatch synchronization context.</summary>

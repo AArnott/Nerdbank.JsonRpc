@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 #if NET
@@ -237,6 +237,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <para>
 	/// Work that precedes the invocation (such as request parsing and cancellation bookkeeping) always runs on the reader
 	/// loop in message order and is unaffected by this property.
+	/// </para>
+	/// <para>
+	/// Inbound <c>$/cancelRequest</c> notifications are exempt from this property and always begin on the thread pool.
+	/// Because their purpose is to interrupt work that is already running, queueing them behind that work would prevent
+	/// a handler that occupies the dispatcher without yielding from ever being canceled.
 	/// </para>
 	/// </remarks>
 	public SynchronizationContext? SynchronizationContext { get; init; } = new NonConcurrentSynchronizationContext(sticky: false);
@@ -839,6 +844,23 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private static JoinableTask<DispatchResponse> RunUnderJoinableTaskAsync(JoinableTaskFactory jtf, MethodInvoker invoker, DispatchRequest dispatchRequest, string parentToken)
 		=> jtf.RunAsync(() => invoker(dispatchRequest).AsTask(), parentToken, JoinableTaskCreationOptions.None);
 
+	/// <summary>Gets the <see cref="System.Threading.SynchronizationContext"/> to dispatch a particular request on.</summary>
+	/// <param name="request">The inbound request.</param>
+	/// <returns>The context to begin the invocation on.</returns>
+	/// <remarks>
+	/// <para>
+	/// <c>$/cancelRequest</c> notifications always go to the thread pool rather than to <see cref="SynchronizationContext"/>.
+	/// Their entire purpose is to interrupt work that is already running, so queueing them behind that work would be
+	/// self-defeating: a handler that occupies the ordered dispatcher without yielding could never be canceled.
+	/// </para>
+	/// <para>
+	/// They are not run on the reader loop itself because cancellation invokes arbitrary user callbacks,
+	/// which must not be given the opportunity to stall message processing.
+	/// </para>
+	/// </remarks>
+	private SynchronizationContext GetDispatchSynchronizationContext(JsonRpcRequest request)
+		=> request.Method == SpecialCancelMethodName ? UnorderedDispatchSynchronizationContext : this.DispatchSynchronizationContext;
+
 	private ValueTask<JsonRpcResponse?> DispatchAsync(JsonRpcRequest request)
 	{
 		if (request.Id is null && (this.progress.TryHandleNotification(request) || this.marshaledObjects.TryHandleNotification(request)))
@@ -951,7 +973,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			// remote party sent the requests (per the SynchronizationContext property).
 			// Awaiting a SynchronizationContext does not allocate a delegate or closure of its own: the awaiter
 			// posts the state machine's existing continuation using a cached, static SendOrPostCallback.
-			await this.DispatchSynchronizationContext;
+			await this.GetDispatchSynchronizationContext(request);
 
 			DispatchResponse response = jtf is not null && parentToken is not null
 				? await RunUnderJoinableTaskAsync(jtf, invoker, dispatchRequest, parentToken)

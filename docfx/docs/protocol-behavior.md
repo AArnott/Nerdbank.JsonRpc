@@ -29,6 +29,8 @@ Because that context is non-sticky, it does not become the current synchronizati
 
 Request parsing and cancellation bookkeeping always run on the reader loop in message order and are unaffected by this property. The property is init-only, so it is set in the object initializer when constructing <xref:Nerdbank.JsonRpc.JsonRpc>.
 
+Inbound `$/cancelRequest` notifications are exempt and always begin on the thread pool. Because their purpose is to interrupt work that is already running, queueing them behind that work would prevent a handler that occupies the dispatcher without yielding from ever being canceled.
+
 ## Deadlock mitigation with JoinableTaskFactory
 
 A process with a main thread can set JsonRpc.JoinableTaskFactory. This prevents deadlocks when a remote party must call back into the process while its main thread waits on a request, which works when both parties participate or when they are separated by intermediaries that do not use a JoinableTaskFactory. It interoperates with StreamJsonRpc.
