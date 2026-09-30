@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO.Pipelines;
@@ -68,8 +68,8 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 
 	/// <summary>Gets the writer of messages to send.</summary>
 	internal ChannelWriter<JsonRpcMessage> Writer { get; }
-
 #endif
+
 	/// <summary>Gets the encoding used by this transport.</summary>
 	public abstract JsonRpcEncoding Encoding { get; }
 

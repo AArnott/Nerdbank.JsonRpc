@@ -1,4 +1,4 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Collections.Immutable;
@@ -422,7 +422,9 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		if (returnType is INamedTypeSymbol namedReturnType && namedReturnType.IsGenericType)
 		{
-			string genericTypeName = namedReturnType.ConstructedFrom.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+			// Compare by namespace and metadata name (e.g. ValueTask`1) rather than display string,
+			// because the type parameter names vary between BCL implementations (NetWasm's CoreLib names them differently).
+			string genericTypeName = GetGenericDefinitionName(namedReturnType.ConstructedFrom);
 			if (genericTypeName is KnownApis.ValueTaskOfT or KnownApis.TaskOfT)
 			{
 				resultTypeName = namedReturnType.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
@@ -442,6 +444,18 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			KnownApis.ValueTask => ProxyMethodKind.ValueTask,
 			KnownApis.Task => ProxyMethodKind.Task,
 			_ => ProxyMethodKind.Unsupported,
+		};
+	}
+
+	private static string GetGenericDefinitionName(INamedTypeSymbol definition)
+	{
+		string ns = definition.ContainingNamespace.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+		return definition.MetadataName switch
+		{
+			"ValueTask`1" when ns == "global::System.Threading.Tasks" => KnownApis.ValueTaskOfT,
+			"Task`1" when ns == "global::System.Threading.Tasks" => KnownApis.TaskOfT,
+			"IAsyncEnumerable`1" when ns == "global::System.Collections.Generic" => KnownApis.IAsyncEnumerableOfT,
+			_ => definition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
 		};
 	}
 
