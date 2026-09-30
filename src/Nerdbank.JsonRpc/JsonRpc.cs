@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 #if NET
@@ -23,6 +23,12 @@ namespace Nerdbank.JsonRpc;
 public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArgumentsBuilderContext
 {
 	internal const string SpecialCancelMethodName = "$/cancelRequest";
+
+	/// <summary>
+	/// A <see cref="System.Threading.SynchronizationContext"/> that schedules work to the thread pool with no ordering guarantees.
+	/// </summary>
+	/// <remarks>Used when <see cref="SynchronizationContext"/> is set to <see langword="null"/>. A base <see cref="System.Threading.SynchronizationContext"/> posts to the thread pool, so no two dispatches are serialized against each other.</remarks>
+	private static readonly SynchronizationContext UnorderedDispatchSynchronizationContext = new();
 
 	/// <summary>Requests being dispatched, keyed by ID. Guarded by locking the dictionary itself.</summary>
 	/// <remarks>A locked <see cref="Dictionary{TKey, TValue}"/> stores entries inline, where a concurrent dictionary would allocate a node per request.</remarks>
@@ -169,6 +175,47 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		init => field = Requires.NotNull(value);
 	}
 
+	/// <summary>
+	/// Gets or initializes the <see cref="System.Threading.SynchronizationContext"/> that schedules the start of each inbound RPC method invocation.
+	/// </summary>
+	/// <value>
+	/// Defaults to a private <see cref="NonConcurrentSynchronizationContext"/> instance (configured as non-sticky)
+	/// that guarantees inbound method invocations <em>begin</em> in the order the remote party sent the requests.
+	/// </value>
+	/// <remarks>
+	/// <para>
+	/// With the default value, inbound requests are dispatched on the thread pool, one at a time, in the order they arrive.
+	/// Because the default context is non-sticky, it does not become <see cref="System.Threading.SynchronizationContext.Current"/>
+	/// while a method runs. As soon as a method yields at its first <see langword="await"/> (or returns), the next queued method
+	/// may begin. Long-running methods therefore execute and complete concurrently with each other and in any order;
+	/// only the order in which they <em>start</em> is guaranteed to match the order the client sent them.
+	/// </para>
+	/// <para>
+	/// Set this property to <see langword="null"/> to remove the ordering guarantee entirely. Each inbound invocation is then
+	/// queued to the thread pool independently, so invocations may begin in any order and with full concurrency.
+	/// This offers the highest throughput and is appropriate when the order in which methods start does not matter.
+	/// </para>
+	/// <para>
+	/// Alternatively, initialize this property with your own <see cref="System.Threading.SynchronizationContext"/> (for example, one that
+	/// marshals to an application's main thread) to have every inbound method invocation begin execution on that context.
+	/// A context that runs callbacks one at a time preserves the ordering guarantee described above; one that runs them
+	/// concurrently does not. As with the default, a method's continuations after its first <see langword="await"/> are
+	/// subject to normal <see langword="await"/> semantics and only return to this context if the context applies itself
+	/// as <see cref="System.Threading.SynchronizationContext.Current"/> and the method does not use
+	/// <see cref="Task.ConfigureAwait(bool)"/> with <see langword="false"/>.
+	/// </para>
+	/// <para>
+	/// Work that precedes the invocation (such as request parsing and cancellation bookkeeping) always runs on the reader
+	/// loop in message order and is unaffected by this property.
+	/// </para>
+	/// <para>
+	/// Inbound <c>$/cancelRequest</c> notifications are exempt from this property and always begin on the thread pool.
+	/// Because their purpose is to interrupt work that is already running, queueing them behind that work would prevent
+	/// a handler that occupies the dispatcher without yielding from ever being canceled.
+	/// </para>
+	/// </remarks>
+	public SynchronizationContext? SynchronizationContext { get; init; } = new NonConcurrentSynchronizationContext(sticky: false);
+
 	JsonRpcSerializer IJsonRpcClient.Serializer => this.userDataSerializer;
 
 	JsonRpcSerializer IArgumentsBuilderContext.Serializer => this.userDataSerializer;
@@ -206,6 +253,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	/// <summary>Gets the manager that tracks <see cref="IAsyncEnumerable{T}"/> generators for this connection.</summary>
 	internal AsyncEnumerableManager AsyncEnumerables => this.asyncEnumerables;
+
+	/// <summary>Gets the <see cref="System.Threading.SynchronizationContext"/> that dispatch should use, falling back to a thread pool context that imposes no ordering when <see cref="SynchronizationContext"/> is <see langword="null"/>.</summary>
+	private SynchronizationContext DispatchSynchronizationContext => this.SynchronizationContext ?? UnorderedDispatchSynchronizationContext;
 
 	/// <inheritdoc/>
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);
@@ -769,6 +819,23 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private static JoinableTask<DispatchResponse> RunUnderJoinableTaskAsync(JoinableTaskFactory jtf, MethodInvoker invoker, DispatchRequest dispatchRequest, string parentToken)
 		=> jtf.RunAsync(() => invoker(dispatchRequest).AsTask(), parentToken, JoinableTaskCreationOptions.None);
 
+	/// <summary>Gets the <see cref="System.Threading.SynchronizationContext"/> to dispatch a particular request on.</summary>
+	/// <param name="request">The inbound request.</param>
+	/// <returns>The context to begin the invocation on.</returns>
+	/// <remarks>
+	/// <para>
+	/// <c>$/cancelRequest</c> notifications always go to the thread pool rather than to <see cref="SynchronizationContext"/>.
+	/// Their entire purpose is to interrupt work that is already running, so queueing them behind that work would be
+	/// self-defeating: a handler that occupies the ordered dispatcher without yielding could never be canceled.
+	/// </para>
+	/// <para>
+	/// They are not run on the reader loop itself because cancellation invokes arbitrary user callbacks,
+	/// which must not be given the opportunity to stall message processing.
+	/// </para>
+	/// </remarks>
+	private SynchronizationContext GetDispatchSynchronizationContext(JsonRpcRequest request)
+		=> request.Method == SpecialCancelMethodName ? UnorderedDispatchSynchronizationContext : this.DispatchSynchronizationContext;
+
 	private ValueTask<JsonRpcResponse?> DispatchAsync(JsonRpcRequest request)
 	{
 		if (request.Id is null && (this.progress.TryHandleNotification(request) || this.marshaledObjects.TryHandleNotification(request)))
@@ -875,6 +942,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			{
 				this.JoinableTaskTracker.Token = parentToken;
 			}
+
+			// IMPORTANT: This must remain the first await in this method, with no other await between it and
+			// invoking the handler. It is what guarantees that handlers *begin* executing in the order the
+			// remote party sent the requests (per the SynchronizationContext property).
+			// Awaiting a SynchronizationContext does not allocate a delegate or closure of its own: the awaiter
+			// posts the state machine's existing continuation using a cached, static SendOrPostCallback.
+			await this.GetDispatchSynchronizationContext(request);
 
 			DispatchResponse response = jtf is not null && parentToken is not null
 				? await RunUnderJoinableTaskAsync(jtf, invoker, dispatchRequest, parentToken)
