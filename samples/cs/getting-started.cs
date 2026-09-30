@@ -1,12 +1,17 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.IO.Pipelines;
+using Microsoft.Extensions.Logging;
 using Nerdbank.JsonRpc;
+using Nerdbank.Streams;
 using PolyType;
 
 namespace GettingStarted;
 
-#region generated-client-proxy
+#pragma warning disable SA1649 // The sample file name matches its documentation topic rather than its type.
+
+#region rpc-contract
 [GenerateJsonRpcProxy]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 public partial interface ICalculator
@@ -15,29 +20,45 @@ public partial interface ICalculator
 }
 #endregion
 
-#region server-setup
-[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
-public partial interface IServerCalculator
+public static class Example
 {
-    ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken);
+    #region create-connection
+    public static JsonRpc CreateConnection(Stream stream, ILogger logger)
+    {
+        IDuplexPipe pipe = stream.UsePipe();
+        var channel = new JsonRpcMessagePackChannel(pipe, logger);
+        return new JsonRpc(channel) { Logger = logger };
+    }
+    #endregion
+
+    public static async Task ExposeCalculatorAsync(Stream stream, ILogger logger)
+    {
+        #region expose-target
+        using JsonRpc rpc = CreateConnection(stream, logger);
+        rpc.AddRpcTarget<ICalculator>(new Calculator());
+        rpc.Start();
+
+        await rpc.Completion;
+        #endregion
+    }
+
+    public static async Task<int> CallCalculatorAsync(Stream stream, ILogger logger, CancellationToken cancellationToken)
+    {
+        #region attach-proxy
+        using JsonRpc rpc = CreateConnection(stream, logger);
+        rpc.Start();
+
+        ICalculator calculator = rpc.Attach<ICalculator>();
+        int sum = await calculator.AddAsync(1, 2, cancellationToken);
+        #endregion
+
+        return sum;
+    }
 }
 
-public sealed class Calculator : IServerCalculator
+#region rpc-target
+public sealed class Calculator : ICalculator
 {
     public ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken) => new(a + b);
 }
 #endregion
-
-public sealed class Example
-{
-    public async Task RunAsync(JsonRpcPipeChannel channel)
-    {
-        #region attach-proxy
-        JsonRpc rpc = new(channel);
-        rpc.Start();
-
-        ICalculator client = rpc.Attach<ICalculator>();
-        int sum = await client.AddAsync(1, 2, CancellationToken.None);
-        #endregion
-    }
-}
