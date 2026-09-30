@@ -48,6 +48,7 @@ public partial class JoinableTaskTokenTests : TestBase
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
 		await using JsonRpcPipeChannel channel = CreateChannel(local, encoding);
+		channel.Start();
 		JoinableTaskContext context = CreateJoinableTaskContext();
 		using JsonRpc client = new(channel) { JoinableTaskFactory = context.Factory };
 		client.Start();
@@ -87,6 +88,7 @@ public partial class JoinableTaskTokenTests : TestBase
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
 		await using JsonRpcPipeChannel channel = CreateChannel(local, encoding);
+		channel.Start();
 		using JsonRpc client = new(channel);
 		client.Start();
 
@@ -107,6 +109,7 @@ public partial class JoinableTaskTokenTests : TestBase
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
 		await using JsonRpcPipeChannel channel = CreateChannel(local, encoding);
+		channel.Start();
 		JoinableTaskContext context = CreateJoinableTaskContext();
 		using JsonRpc client = new(channel) { JoinableTaskFactory = context.Factory };
 		client.Start();
@@ -228,24 +231,22 @@ public partial class JoinableTaskTokenTests : TestBase
 		writer.Flush();
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
 		await using JsonRpcPipeChannel channel = CreateChannel(local, WireEncoding.MessagePack);
+		channel.Start();
 		await peer.Output.WriteAsync(input.AsReadOnlySequence.ToArray(), this.TimeoutToken);
 		await peer.Output.CompleteAsync();
 		await Assert.ThrowsAnyAsync<Exception>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
 	}
 
 	[Test]
-	public async Task ConfigurationIsLockedAfterStart()
+	public async Task ConfigurationUsesObjectInitializer()
 	{
 		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
 		await using JsonRpcPipeChannel channel = CreateChannel(local, WireEncoding.Json);
-		using JsonRpc rpc = new(channel);
+		channel.Start();
 		JoinableTaskTokenTracker tracker = new();
-		rpc.JoinableTaskTracker = tracker;
+		using JsonRpc rpc = new(channel) { JoinableTaskTracker = tracker };
 		Assert.Same(tracker, rpc.JoinableTaskTracker);
-		Assert.Throws<ArgumentNullException>(() => rpc.JoinableTaskTracker = null!);
-		rpc.Start();
-		Assert.Throws<InvalidOperationException>(() => rpc.JoinableTaskFactory = CreateJoinableTaskContext().Factory);
-		Assert.Throws<InvalidOperationException>(() => rpc.JoinableTaskTracker = new());
+		Assert.Throws<ArgumentNullException>(() => new JsonRpc(channel) { JoinableTaskTracker = null! });
 	}
 
 	/// <summary>
@@ -287,19 +288,16 @@ public partial class JoinableTaskTokenTests : TestBase
 		(IDuplexPipe upstreamLocal, IDuplexPipe upstreamPeer) = FullDuplexStream.CreatePipePair();
 		(IDuplexPipe downstreamLocal, IDuplexPipe downstreamPeer) = FullDuplexStream.CreatePipePair();
 		await using JsonRpcPipeChannel upstreamChannel = CreateChannel(upstreamLocal, WireEncoding.Json);
+		upstreamChannel.Start();
 		await using JsonRpcPipeChannel downstreamChannel = CreateChannel(downstreamLocal, WireEncoding.Json);
+		downstreamChannel.Start();
 		JoinableTaskTokenTracker? tracker = isolatedTracker ? new() : null;
-		using JsonRpc downstream = new(downstreamChannel);
-		using JsonRpc upstream = new(upstreamChannel);
-		if (tracker is not null)
-		{
-			upstream.JoinableTaskTracker = tracker;
-			if (shareTracker)
-			{
-				downstream.JoinableTaskTracker = tracker;
-			}
-		}
-
+		using JsonRpc downstream = tracker is not null && shareTracker
+			? new(downstreamChannel) { JoinableTaskTracker = tracker }
+			: new(downstreamChannel);
+		using JsonRpc upstream = tracker is not null
+			? new(upstreamChannel) { JoinableTaskTracker = tracker }
+			: new(upstreamChannel);
 		Intermediary intermediary = new(downstream, expectedConcurrency: 3);
 		upstream.AddRpcTarget(intermediary);
 		downstream.Start();
@@ -405,6 +403,7 @@ public partial class JoinableTaskTokenTests : TestBase
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
 		await using JsonRpcPipeChannel channel = CreateChannel(local, WireEncoding.Json);
+		channel.Start();
 		await WriteJsonAsync(peer.Output, json, this.TimeoutToken);
 		await Assert.ThrowsAnyAsync<Exception>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
 	}
@@ -482,6 +481,7 @@ public partial class JoinableTaskTokenTests : TestBase
 		writer.Flush();
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
 		await using JsonRpcPipeChannel channel = CreateChannel(local, WireEncoding.MessagePack);
+		channel.Start();
 		await peer.Output.WriteAsync(input.AsReadOnlySequence.ToArray(), this.TimeoutToken);
 		await Assert.ThrowsAnyAsync<Exception>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
 	}
@@ -502,8 +502,8 @@ public partial class JoinableTaskTokenTests : TestBase
 
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, WireEncoding encoding) => encoding switch
 	{
-		WireEncoding.Json => new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("test")),
-		_ => new JsonRpcMessagePackChannel(pipe, LoggerFactory.CreateLogger("test"), JsonRpcMessagePackChannel.DefaultSerializer, JsonRpcMessagePackFraming.SelfDelimiting),
+		WireEncoding.Json => new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited),
+		_ => new JsonRpcMessagePackChannel(pipe, JsonRpcMessagePackChannel.DefaultSerializer, JsonRpcMessagePackFraming.SelfDelimiting),
 	};
 
 	private static JsonRpcValue EmptyParams(WireEncoding encoding) => encoding == WireEncoding.Json ? JsonRpcValue.FromJson("[]"u8.ToArray()) : JsonRpcValue.FromMessagePack(EmptyParamsMsgPack);
@@ -567,7 +567,9 @@ public partial class JoinableTaskTokenTests : TestBase
 		(IDuplexPipe inLocal, IDuplexPipe inPeer) = FullDuplexStream.CreatePipePair();
 		(IDuplexPipe outLocal, IDuplexPipe outPeer) = FullDuplexStream.CreatePipePair();
 		await using JsonRpcPipeChannel inbound = CreateChannel(inLocal, encoding);
+		inbound.Start();
 		await using JsonRpcPipeChannel outbound = CreateChannel(outLocal, encoding);
+		outbound.Start();
 		await inPeer.Output.WriteAsync(input, this.TimeoutToken);
 		JsonRpcMessage message = await inbound.Reader.ReadAsync(this.TimeoutToken);
 
@@ -581,7 +583,9 @@ public partial class JoinableTaskTokenTests : TestBase
 	{
 		(IDuplexPipe aPipe, IDuplexPipe bPipe) = FullDuplexStream.CreatePipePair();
 		await using JsonRpcPipeChannel aChannel = CreateChannel(aPipe, encoding);
+		aChannel.Start();
 		await using JsonRpcPipeChannel bChannel = CreateChannel(bPipe, encoding);
+		bChannel.Start();
 		using JsonRpc b = new(bChannel);
 		b.AddRpcTarget(new ProcessB(b.Attach<IMainThreadService>()));
 		b.Start();
@@ -593,12 +597,10 @@ public partial class JoinableTaskTokenTests : TestBase
 			{
 				SynchronizationContext.SetSynchronizationContext(new SingleThreadedSynchronizationContext());
 				JoinableTaskContext context = new();
-				using JsonRpc a = new(aChannel);
-				if (configureJoinableTaskFactory)
+				using JsonRpc a = new(aChannel)
 				{
-					a.JoinableTaskFactory = context.Factory;
-				}
-
+					JoinableTaskFactory = configureJoinableTaskFactory ? context.Factory : null,
+				};
 				a.AddRpcTarget(new ProcessA(context));
 				a.Start();
 

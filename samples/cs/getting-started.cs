@@ -26,7 +26,7 @@ public static class Example
     public static JsonRpc CreateConnection(Stream stream, ILogger logger)
     {
         IDuplexPipe pipe = stream.UsePipe();
-        var channel = new JsonRpcMessagePackChannel(pipe, logger);
+        var channel = new JsonRpcMessagePackChannel(pipe);
         return new JsonRpc(channel) { Logger = logger };
     }
     #endregion

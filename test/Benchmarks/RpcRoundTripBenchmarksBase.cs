@@ -87,8 +87,8 @@ public abstract class RpcRoundTripBenchmarksBase
 	// The default MessagePack framing (a big-endian length header) matches StreamJsonRpc's LengthHeaderMessageHandler.
 	private static JsonRpcPipeChannel CreateNerdbankChannel(IDuplexPipe pipe, RpcEncoding encoding) => encoding switch
 	{
-		RpcEncoding.Json => new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance),
-		RpcEncoding.MessagePack => new JsonRpcMessagePackChannel(pipe, NullLogger.Instance),
+		RpcEncoding.Json => new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited),
+		RpcEncoding.MessagePack => new JsonRpcMessagePackChannel(pipe),
 		_ => throw new ArgumentOutOfRangeException(nameof(encoding)),
 	};
 

@@ -13,7 +13,6 @@ using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.Threading;
 using Nerdbank.MessagePack;
 using Nerdbank.Streams;
@@ -47,7 +46,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private readonly JsonRpcPipeChannel channel;
 	private readonly JsonRpcSerializer userDataSerializer;
 	private bool disposed;
-	private ILogger logger = NullLogger.Instance;
 	private Task? readerTask;
 	private int nextRequestId;
 
@@ -76,79 +74,62 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		this.AddRpcTarget(new SpecialMethodsTarget(this));
 	}
 
-	/// <summary>Gets or sets the maximum encoded message size, in bytes.</summary>
+	/// <summary>Gets or initializes the maximum encoded message size, in bytes.</summary>
 	/// <value>Defaults to 8 MiB. The built-in JSON and MessagePack channels apply this limit to received messages; the JSON channel also applies it to sent messages.</value>
 	/// <exception cref="ArgumentOutOfRangeException">Thrown when set to zero or a negative value.</exception>
 	public int MaximumMessageSize
 	{
 		get => this.channel.GetMaximumMessageSize();
-		set
-		{
-			this.channel.SetMaximumMessageSize(value);
-		}
+		init => this.channel.SetMaximumMessageSize(value);
 	}
 
-	/// <summary>Gets or sets the multiplexing stream used to send and receive out-of-band streams.</summary>
-	/// <remarks>This property must be set before <see cref="Start"/>.</remarks>
+	/// <summary>Gets or initializes the multiplexing stream used to send and receive out-of-band streams.</summary>
+	/// <remarks>Initialize this property before calling <see cref="Start"/>.</remarks>
 	public MultiplexingStream? MultiplexingStream
 	{
 		get => this.outOfBandStreams.MultiplexingStream;
-		set
-		{
-			this.ThrowIfStarted();
-			this.outOfBandStreams.MultiplexingStream = value;
-		}
+		init => this.outOfBandStreams.MultiplexingStream = value;
 	}
 
-	/// <summary>Gets or sets the options used for proxies implicitly created for RPC-marshalable objects.</summary>
+	/// <summary>Gets or initializes the options used for proxies implicitly created for RPC-marshalable objects.</summary>
 	/// <value>Defaults to <see cref="JsonRpcProxyOptions.Default"/>, the same naming convention used for ordinary RPC proxies.</value>
 	/// <remarks>
 	/// To communicate with StreamJsonRpc's default RPC-marshalable objects, set this property to
-	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> before <see cref="Start"/>.
+	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> in the <see cref="JsonRpc"/> object initializer.
 	/// This does not change options for proxies attached through <see cref="Attach{T}(JsonRpcProxyOptions?)"/>.
 	/// </remarks>
 	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
-	/// <exception cref="InvalidOperationException">Thrown when set after <see cref="Start"/>.</exception>
 	public JsonRpcProxyOptions MarshaledProxyOptions
 	{
 		get => field ??= JsonRpcProxyOptions.Default;
-		set
-		{
-			Requires.NotNull(value);
-			this.ThrowIfStarted();
-			field = value;
-		}
+		init => field = Requires.NotNull(value);
 	}
 
-	/// <summary>Gets or sets the options used when implicitly registering RPC-marshalable targets.</summary>
+	/// <summary>Gets or initializes the options used when implicitly registering RPC-marshalable targets.</summary>
 	/// <value>Defaults to <see cref="JsonRpcTargetOptions.Default"/>, the same naming convention used for ordinary RPC targets.</value>
 	/// <remarks>
 	/// To communicate with StreamJsonRpc's default RPC-marshalable objects, set this property to
-	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> before <see cref="Start"/>.
+	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> in the <see cref="JsonRpc"/> object initializer.
 	/// This does not change options for targets registered through <see cref="AddRpcTarget{T}(T, ITypeShape{T}, JsonRpcTargetOptions?)"/>.
 	/// </remarks>
 	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
-	/// <exception cref="InvalidOperationException">Thrown when set after <see cref="Start"/>.</exception>
 	public JsonRpcTargetOptions MarshaledTargetOptions
 	{
 		get => field ??= JsonRpcTargetOptions.Default;
-		set
-		{
-			Requires.NotNull(value);
-			this.ThrowIfStarted();
-			field = value;
-		}
+		init => field = Requires.NotNull(value);
 	}
 
-	/// <summary>Gets the logger for request and connection failures. Defaults to <see cref="NullLogger.Instance"/>.</summary>
+	/// <summary>Gets or initializes the logger for request, connection, and transport diagnostics.</summary>
+	/// <value>Defaults to <see cref="Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance"/>.</value>
+	/// <remarks>Setting this property also configures the underlying channel to use the same logger.</remarks>
 	public ILogger Logger
 	{
-		get => this.logger;
-		init => this.logger = value ?? throw new ArgumentNullException(nameof(value));
+		get => this.channel.GetLogger();
+		init => this.channel.SetLogger(value);
 	}
 
 	/// <summary>
-	/// Gets or sets the <see cref="Microsoft.VisualStudio.Threading.JoinableTaskFactory"/> to participate in to mitigate deadlocks with the main thread.
+	/// Gets or initializes the <see cref="Microsoft.VisualStudio.Threading.JoinableTaskFactory"/> to participate in to mitigate deadlocks with the main thread.
 	/// </summary>
 	/// <value>Defaults to <see langword="null"/>.</value>
 	/// <remarks>
@@ -160,22 +141,17 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// </para>
 	/// <para>
 	/// The token is exchanged as the top-level <c>joinableTaskToken</c> JSON-RPC envelope property, compatible with StreamJsonRpc.
-	/// This property may only be set before <see cref="Start"/> is called.
+	/// Initialize this property before calling <see cref="Start"/>.
 	/// </para>
 	/// </remarks>
-	/// <exception cref="InvalidOperationException">Thrown when setting this property after <see cref="Start"/> has been called.</exception>
 	public JoinableTaskFactory? JoinableTaskFactory
 	{
 		get => field;
-		set
-		{
-			this.ThrowIfStarted();
-			field = value;
-		}
+		init => field = value;
 	}
 
 	/// <summary>
-	/// Gets or sets the <see cref="JoinableTaskTokenTracker"/> used to forward <see cref="JoinableTask"/> tokens
+	/// Gets or initializes the <see cref="JoinableTaskTokenTracker"/> used to forward <see cref="JoinableTask"/> tokens
 	/// from inbound requests to outbound requests when <see cref="JoinableTaskFactory"/> is <see langword="null"/>.
 	/// </summary>
 	/// <value>Defaults to an instance shared with all other <see cref="JsonRpc"/> instances that do not set this property.</value>
@@ -184,19 +160,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <para>
 	/// Set this only in advanced scenarios where one process has many <see cref="JsonRpc"/> instances connected to different
 	/// remote parties and correlating tokens across them is undesirable.
-	/// This property may only be set before <see cref="Start"/> is called.
+	/// Initialize this property before calling <see cref="Start"/>.
 	/// </para>
 	/// </remarks>
-	/// <exception cref="InvalidOperationException">Thrown when setting this property after <see cref="Start"/> has been called.</exception>
 	public JoinableTaskTokenTracker JoinableTaskTracker
 	{
 		get => field ??= JoinableTaskTokenTracker.Default;
-		set
-		{
-			Requires.NotNull(value);
-			this.ThrowIfStarted();
-			field = value;
-		}
+		init => field = Requires.NotNull(value);
 	}
 
 	JsonRpcSerializer IJsonRpcClient.Serializer => this.userDataSerializer;
@@ -247,6 +217,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <typeparam name="T">The statically shaped type describing which members of <paramref name="target"/> to register.</typeparam>
 	/// <param name="target">The object whose methods should be invoked in response to matching incoming requests and notifications.</param>
 	/// <param name="options">Options controlling method name resolution for this target. When <see langword="null"/>, default options are used.</param>
+	/// <remarks>Register all initial targets before calling <see cref="Start"/> so the listener is ready to dispatch every method as soon as it begins reading messages.</remarks>
 	public void AddRpcTarget<T>(T target, JsonRpcTargetOptions? options = null)
 		where T : IShapeable<T> => this.AddRpcTarget(target, T.GetTypeShape(), options);
 #endif
@@ -258,6 +229,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <param name="target">The object whose methods should be invoked in response to matching incoming requests and notifications.</param>
 	/// <param name="shape">The type shape describing <paramref name="target"/>'s methods.</param>
 	/// <param name="options">Options controlling method name resolution for this target. When <see langword="null"/>, default options are used.</param>
+	/// <remarks>Register all initial targets before calling <see cref="Start"/> so the listener is ready to dispatch every method as soon as it begins reading messages.</remarks>
 	public void AddRpcTarget<T>(T target, ITypeShape<T> shape, JsonRpcTargetOptions? options = null)
 	{
 		Requires.NotNull(shape);
@@ -458,8 +430,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+	/// <summary>Starts listening for and dispatching incoming messages.</summary>
+	/// <remarks>Call this after registering initial targets with <see cref="AddRpcTarget{T}(T, ITypeShape{T}, JsonRpcTargetOptions?)"/> to avoid rejecting incoming requests or dropping notifications for which no RPC target has yet been registered.</remarks>
 	public void Start()
 	{
+		this.channel.Start();
 		this.readerTask = this.ReadAsync(this.channel.Reader);
 	}
 
@@ -932,8 +907,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	private void FaultOnFailure(Task task) => task.ContinueWith(static (t, s) => ((JsonRpc)s!).Fault(t.Exception!), this, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default).Forget();
 
-	private void ThrowIfStarted() => Verify.Operation(this.readerTask is null, "This property may only be set before Start is called.");
-
 	private void ProcessResponse(JsonRpcResponse response)
 	{
 		ProtocolViolationException? unmatchedResponseException = null;
@@ -1229,7 +1202,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 		[Key(0)]
 		[PropertyShape(IsRequired = true)]
-		public RequestId Id { get; set; }
+		public RequestId Id { get; init; }
 	}
 
 	private struct PendingInboundRequest : IDisposable

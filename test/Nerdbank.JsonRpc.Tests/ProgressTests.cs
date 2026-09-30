@@ -117,8 +117,8 @@ public partial class ProgressTests
 
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
 		=> encoding == JsonRpcEncoding.Json
-			? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance)
-			: new JsonRpcMessagePackChannel(pipe, NullLogger.Instance);
+			? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
+			: new JsonRpcMessagePackChannel(pipe);
 
 	[GenerateShapeFor<IProgress<int>>]
 	private partial class Witness;
