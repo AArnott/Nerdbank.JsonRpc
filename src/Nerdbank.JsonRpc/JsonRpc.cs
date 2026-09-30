@@ -120,7 +120,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	}
 
 	/// <summary>Gets or initializes the logger for request, connection, and transport diagnostics.</summary>
-	/// <value>Defaults to the logger supplied to the <see cref="JsonRpcPipeChannel"/>.</value>
+	/// <value>Defaults to <see cref="Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance"/>.</value>
 	/// <remarks>Setting this property also configures the underlying channel to use the same logger.</remarks>
 	public ILogger Logger
 	{

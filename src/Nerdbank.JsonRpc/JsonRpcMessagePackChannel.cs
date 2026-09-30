@@ -9,7 +9,6 @@ using System.Net;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using Microsoft;
-using Microsoft.Extensions.Logging;
 using Nerdbank.MessagePack;
 using Nerdbank.Streams;
 
@@ -38,34 +37,31 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcMessagePackChannel"/> class with the default serializer.</summary>
 	/// <param name="pipe">The connected duplex pipe.</param>
-	/// <param name="logger">The transport logger.</param>
 	/// <param name="inboundCapacity">The inbound queue limit, or null for an unbounded queue.</param>
 	/// <param name="outboundCapacity">The outbound queue limit, or null for an unbounded queue.</param>
-	public JsonRpcMessagePackChannel(IDuplexPipe pipe, ILogger logger, int? inboundCapacity = 100, int? outboundCapacity = null)
-		: this(pipe, logger, DefaultSerializer, inboundCapacity, outboundCapacity)
+	public JsonRpcMessagePackChannel(IDuplexPipe pipe, int? inboundCapacity = 100, int? outboundCapacity = null)
+		: this(pipe, DefaultSerializer, inboundCapacity, outboundCapacity)
 	{
 	}
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcMessagePackChannel"/> class with a configured serializer.</summary>
 	/// <param name="pipe">The connected duplex pipe.</param>
-	/// <param name="logger">The transport logger.</param>
 	/// <param name="serializer">The serializer for MessagePack application values and envelopes.</param>
 	/// <param name="inboundCapacity">The inbound queue limit, or null for an unbounded queue.</param>
 	/// <param name="outboundCapacity">The outbound queue limit, or null for an unbounded queue.</param>
-	public JsonRpcMessagePackChannel(IDuplexPipe pipe, ILogger logger, MessagePackSerializer serializer, int? inboundCapacity = 100, int? outboundCapacity = null)
-		: this(pipe, logger, serializer, DefaultFraming, inboundCapacity, outboundCapacity)
+	public JsonRpcMessagePackChannel(IDuplexPipe pipe, MessagePackSerializer serializer, int? inboundCapacity = 100, int? outboundCapacity = null)
+		: this(pipe, serializer, DefaultFraming, inboundCapacity, outboundCapacity)
 	{
 	}
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcMessagePackChannel"/> class with a configured serializer and framing.</summary>
 	/// <param name="pipe">The connected duplex pipe.</param>
-	/// <param name="logger">The transport logger.</param>
 	/// <param name="serializer">The serializer for MessagePack application values and envelopes.</param>
 	/// <param name="framing">The wire framing convention, which both parties must agree on.</param>
 	/// <param name="inboundCapacity">The inbound queue limit, or null for an unbounded queue.</param>
 	/// <param name="outboundCapacity">The outbound queue limit, or null for an unbounded queue.</param>
-	public JsonRpcMessagePackChannel(IDuplexPipe pipe, ILogger logger, MessagePackSerializer serializer, JsonRpcMessagePackFraming framing, int? inboundCapacity = 100, int? outboundCapacity = null)
-		: base(pipe, CreateValidatedInboundChannel(inboundCapacity, serializer, framing), CreateOutboundChannel(outboundCapacity), logger)
+	public JsonRpcMessagePackChannel(IDuplexPipe pipe, MessagePackSerializer serializer, JsonRpcMessagePackFraming framing, int? inboundCapacity = 100, int? outboundCapacity = null)
+		: base(pipe, CreateValidatedInboundChannel(inboundCapacity, serializer, framing), CreateOutboundChannel(outboundCapacity))
 	{
 		this.messagePackSerializer = serializer;
 		this.framing = framing;

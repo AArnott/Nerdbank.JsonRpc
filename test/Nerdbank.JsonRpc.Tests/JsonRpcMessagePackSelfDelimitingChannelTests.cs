@@ -12,7 +12,7 @@ public class JsonRpcMessagePackSelfDelimitingChannelTests() : JsonRpcPipeChannel
 	{
 		(IDuplexPipe alice, IDuplexPipe bob) = FullDuplexStream.CreatePipePair();
 		return (
-			new JsonRpcMessagePackChannel(alice, LoggerFactory.CreateLogger<JsonRpcPipeChannel>(), JsonRpcMessagePackChannel.DefaultSerializer, JsonRpcMessagePackFraming.SelfDelimiting),
-			new JsonRpcMessagePackChannel(bob, LoggerFactory.CreateLogger<JsonRpcPipeChannel>(), JsonRpcMessagePackChannel.DefaultSerializer, JsonRpcMessagePackFraming.SelfDelimiting));
+			new JsonRpcMessagePackChannel(alice, JsonRpcMessagePackChannel.DefaultSerializer, JsonRpcMessagePackFraming.SelfDelimiting),
+			new JsonRpcMessagePackChannel(bob, JsonRpcMessagePackChannel.DefaultSerializer, JsonRpcMessagePackFraming.SelfDelimiting));
 	}
 }

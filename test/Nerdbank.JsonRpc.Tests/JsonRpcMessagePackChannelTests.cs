@@ -88,7 +88,7 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 	{
 		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
 		Nerdbank.MessagePack.MessagePackSerializer configured = new();
-		await using JsonRpcMessagePackChannel channel = new(local, LoggerFactory.CreateLogger<JsonRpcPipeChannel>(), serializer: configured);
+		await using JsonRpcMessagePackChannel channel = new(local, serializer: configured);
 		Assert.Equal(JsonRpcEncoding.MessagePack, channel.Encoding);
 		Assert.Same(configured, Assert.IsType<MessagePackSerializerPlugin>(channel.Serializer).Serializer);
 		using JsonRpc rpc = new(channel);
@@ -101,8 +101,8 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 	{
 		(IDuplexPipe local, IDuplexPipe remote) = FullDuplexStream.CreatePipePair();
 		Nerdbank.MessagePack.MessagePackSerializer configured = new() { InternStrings = false };
-		await using JsonRpcMessagePackChannel clientChannel = new(local, LoggerFactory.CreateLogger<JsonRpcPipeChannel>(), serializer: configured);
-		await using JsonRpcMessagePackChannel serverChannel = new(remote, LoggerFactory.CreateLogger<JsonRpcPipeChannel>());
+		await using JsonRpcMessagePackChannel clientChannel = new(local, serializer: configured);
+		await using JsonRpcMessagePackChannel serverChannel = new(remote);
 		using JsonRpc client = new(clientChannel);
 		client.Start();
 
@@ -129,7 +129,7 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 	public async Task DirectWriterRejectsInvalidMessages(int caseNumber, string expectedMessage)
 	{
 		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
-		await using JsonRpcMessagePackChannel channel = new(local, LoggerFactory.CreateLogger<JsonRpcPipeChannel>());
+		await using JsonRpcMessagePackChannel channel = new(local);
 		JsonRpcMessage message = caseNumber switch
 		{
 			0 => new JsonRpcMessageBatch([]),
@@ -145,7 +145,7 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 	public async Task NullSerializerDoesNotStartTransport()
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
-		Assert.Throws<ArgumentNullException>(() => new JsonRpcMessagePackChannel(local, LoggerFactory.CreateLogger<JsonRpcPipeChannel>(), serializer: null!));
+		Assert.Throws<ArgumentNullException>(() => new JsonRpcMessagePackChannel(local, serializer: null!));
 		peer.Output.Write("still available"u8.ToArray());
 		await peer.Output.FlushAsync(this.TimeoutToken);
 		ReadResult read = await local.Input.ReadAsync(this.TimeoutToken);
@@ -158,7 +158,7 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 	{
 		Assert.Equal(JsonRpcMessagePackFraming.BigEndianInt32LengthHeader, JsonRpcMessagePackChannel.DefaultFraming);
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
-		await using JsonRpcMessagePackChannel channel = new(local, LoggerFactory.CreateLogger<JsonRpcPipeChannel>());
+		await using JsonRpcMessagePackChannel channel = new(local);
 		await channel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = "one" }, this.TimeoutToken);
 
 		byte[] header = await ReadExactlyAsync(peer.Input, 4, this.TimeoutToken);
@@ -362,7 +362,7 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
 		JsonRpcPipeChannel channel = encoding == JsonRpcEncoding.Json
-			? new JsonRpcJsonChannel(local, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger<JsonRpcPipeChannel>())
+			? new JsonRpcJsonChannel(local, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
 			: CreateChannel(local, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader);
 		using JsonRpc rpc = new(channel) { MaximumMessageSize = 32 };
 
@@ -399,7 +399,7 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 	}
 
 	private static JsonRpcMessagePackChannel CreateChannel(IDuplexPipe pipe, JsonRpcMessagePackFraming framing)
-		=> new(pipe, LoggerFactory.CreateLogger<JsonRpcPipeChannel>(), JsonRpcMessagePackChannel.DefaultSerializer, framing);
+		=> new(pipe, JsonRpcMessagePackChannel.DefaultSerializer, framing);
 
 	private static byte[] Frame(byte[] message, JsonRpcMessagePackFraming framing)
 	{
@@ -478,9 +478,7 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 	private static (JsonRpcPipeChannel Alice, JsonRpcPipeChannel Bob) CreateTransports()
 	{
 		(IDuplexPipe alice, IDuplexPipe bob) = FullDuplexStream.CreatePipePair();
-		ILogger<JsonRpcPipeChannel> aliceLogger = LoggerFactory.CreateLogger<JsonRpcPipeChannel>();
-		ILogger<JsonRpcPipeChannel> bobLogger = LoggerFactory.CreateLogger<JsonRpcPipeChannel>();
-		return (new JsonRpcMessagePackChannel(alice, aliceLogger), new JsonRpcMessagePackChannel(bob, bobLogger));
+		return (new JsonRpcMessagePackChannel(alice), new JsonRpcMessagePackChannel(bob));
 	}
 
 	/// <summary>A target whose method distinguishes its arguments by type and size.</summary>

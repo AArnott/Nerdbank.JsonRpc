@@ -17,8 +17,8 @@ public class GeneratedProxyTests
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 
-		JsonRpcMessagePackChannel clientChannel = new(clientPipe, NullLogger.Instance);
-		JsonRpcMessagePackChannel serverChannel = new(serverPipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel clientChannel = new(clientPipe);
+		JsonRpcMessagePackChannel serverChannel = new(serverPipe);
 
 		JsonRpc clientRpc = new(clientChannel);
 		clientRpc.Start();
@@ -343,8 +343,8 @@ public class GeneratedProxyTests
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 
-		JsonRpcMessagePackChannel clientChannel = new(clientPipe, NullLogger.Instance);
-		JsonRpcMessagePackChannel serverChannel = new(serverPipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel clientChannel = new(clientPipe);
+		JsonRpcMessagePackChannel serverChannel = new(serverPipe);
 
 		JsonRpc clientRpc = new(clientChannel);
 		clientRpc.Start();
@@ -514,8 +514,8 @@ public class GeneratedProxyTests
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
 		=> encoding switch
 		{
-			JsonRpcEncoding.MessagePack => new JsonRpcMessagePackChannel(pipe, NullLogger.Instance),
-			JsonRpcEncoding.Json => new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance),
+			JsonRpcEncoding.MessagePack => new JsonRpcMessagePackChannel(pipe),
+			JsonRpcEncoding.Json => new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited),
 			_ => throw new ArgumentOutOfRangeException(nameof(encoding)),
 		};
 }

@@ -5,6 +5,7 @@ using System.IO.Pipelines;
 using System.Threading.Channels;
 using Microsoft;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Nerdbank.JsonRpc;
 
@@ -31,21 +32,18 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	private readonly ChannelWriter<JsonRpcMessage> inboundMessageWriter;
 	private readonly ChannelReader<JsonRpcMessage> outboundMessageReader;
 	private volatile int maximumMessageSize = DefaultMaximumMessageSize;
-	private ILogger logger;
+	private ILogger logger = NullLogger.Instance;
 	private volatile bool inboundAborted;
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcPipeChannel"/> class with deferred transport startup.</summary>
 	/// <param name="pipe">The connected duplex pipe.</param>
 	/// <param name="inboundChannel">The queue for received messages.</param>
 	/// <param name="outboundChannel">The queue for messages to send.</param>
-	/// <param name="logger">The transport logger.</param>
-	protected JsonRpcPipeChannel(IDuplexPipe pipe, Channel<JsonRpcMessage> inboundChannel, Channel<JsonRpcMessage> outboundChannel, ILogger logger)
+	protected JsonRpcPipeChannel(IDuplexPipe pipe, Channel<JsonRpcMessage> inboundChannel, Channel<JsonRpcMessage> outboundChannel)
 	{
 		Requires.NotNull(pipe);
 		Requires.NotNull(inboundChannel);
 		Requires.NotNull(outboundChannel);
-
-		this.logger = Requires.NotNull(logger);
 
 		(this.Reader, this.inboundMessageWriter) = (inboundChannel.Reader, inboundChannel.Writer);
 		(this.Writer, this.outboundMessageReader) = (outboundChannel.Writer, outboundChannel.Reader);

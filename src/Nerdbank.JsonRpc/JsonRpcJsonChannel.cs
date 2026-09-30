@@ -7,7 +7,6 @@ using System.IO.Pipelines;
 using System.Net;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
-using Microsoft.Extensions.Logging;
 using Nerdbank.Streams;
 
 namespace Nerdbank.JsonRpc;
@@ -38,11 +37,10 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 	/// <param name="pipe">The connected pipe.</param>
 	/// <param name="serializer">The plugin used for JSON application values by default.</param>
 	/// <param name="framing">The wire framing convention.</param>
-	/// <param name="logger">The transport logger.</param>
 	/// <param name="inboundCapacity">The inbound queue limit.</param>
 	/// <param name="outboundCapacity">The outbound queue limit.</param>
-	public JsonRpcJsonChannel(IDuplexPipe pipe, JsonSerializerPlugin serializer, JsonRpcJsonFraming framing, ILogger logger, int? inboundCapacity = 100, int? outboundCapacity = null)
-		: base(pipe, CreateValidatedInboundChannel(inboundCapacity, serializer, framing), CreateOutboundChannel(outboundCapacity), logger)
+	public JsonRpcJsonChannel(IDuplexPipe pipe, JsonSerializerPlugin serializer, JsonRpcJsonFraming framing, int? inboundCapacity = 100, int? outboundCapacity = null)
+		: base(pipe, CreateValidatedInboundChannel(inboundCapacity, serializer, framing), CreateOutboundChannel(outboundCapacity))
 	{
 		this.Serializer = serializer;
 		this.framing = framing;
@@ -53,9 +51,8 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 	/// <param name="pipe">The connected pipe.</param>
 	/// <param name="serializer">The configured serializer used for JSON application values by default.</param>
 	/// <param name="framing">The wire framing convention.</param>
-	/// <param name="logger">The transport logger.</param>
-	public JsonRpcJsonChannel(IDuplexPipe pipe, Nerdbank.Json.JsonSerializer serializer, JsonRpcJsonFraming framing, ILogger logger)
-		: this(pipe, new JsonSerializerPlugin(serializer), framing, logger)
+	public JsonRpcJsonChannel(IDuplexPipe pipe, Nerdbank.Json.JsonSerializer serializer, JsonRpcJsonFraming framing)
+		: this(pipe, new JsonSerializerPlugin(serializer), framing)
 	{
 	}
 

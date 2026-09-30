@@ -24,17 +24,13 @@ public partial class JsonRpcClientTests : TestBase
 	}
 
 	[Test]
-	public void LoggerIsSharedWithChannel()
+	public void LoggerConfiguresConnectionAndTransport()
 	{
 		Assert.Same(Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, this.jsonRpc.Logger);
 
-		Microsoft.Extensions.Logging.ILogger channelLogger = LoggerFactory.CreateLogger("channel");
-		using JsonRpc channelConfigured = new(new MockJsonRpcPipeChannel(Channel.CreateUnbounded<JsonRpcMessage>(), logger: channelLogger));
-		Assert.Same(channelLogger, channelConfigured.Logger);
-
-		Microsoft.Extensions.Logging.ILogger rpcLogger = LoggerFactory.CreateLogger("rpc");
-		using JsonRpc rpcConfigured = new(new MockJsonRpcPipeChannel(Channel.CreateUnbounded<JsonRpcMessage>())) { Logger = rpcLogger };
-		Assert.Same(rpcLogger, rpcConfigured.Logger);
+		Microsoft.Extensions.Logging.ILogger logger = LoggerFactory.CreateLogger("rpc");
+		using JsonRpc configured = new(new MockJsonRpcPipeChannel(Channel.CreateUnbounded<JsonRpcMessage>())) { Logger = logger };
+		Assert.Same(logger, configured.Logger);
 		Assert.Throws<ArgumentNullException>(() => new JsonRpc(new MockJsonRpcPipeChannel(Channel.CreateUnbounded<JsonRpcMessage>())) { Logger = null! });
 	}
 

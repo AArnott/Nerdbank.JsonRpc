@@ -532,7 +532,7 @@ public class StreamJsonRpcInteropTests : TestBase
 		}
 
 		private static JsonRpc CreateNerdbankRpc(IDuplexPipe pipe, MultiplexingStream? multiplexingStream = null) => new(
-			new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance))
+			new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited))
 		{
 			MultiplexingStream = multiplexingStream,
 			MarshaledProxyOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity },

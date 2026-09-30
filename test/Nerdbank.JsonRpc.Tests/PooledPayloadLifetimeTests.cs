@@ -145,8 +145,8 @@ public partial class PooledPayloadLifetimeTests : TestBase
 		internal static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
 			=> encoding switch
 			{
-				JsonRpcEncoding.MessagePack => new JsonRpcMessagePackChannel(pipe, NullLogger.Instance),
-				JsonRpcEncoding.Json => new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance),
+				JsonRpcEncoding.MessagePack => new JsonRpcMessagePackChannel(pipe),
+				JsonRpcEncoding.Json => new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited),
 				_ => throw new ArgumentOutOfRangeException(nameof(encoding)),
 			};
 	}
