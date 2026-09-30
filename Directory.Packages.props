@@ -21,7 +21,7 @@
     <PackageVersion Include="Microsoft.VisualStudio.DiagnosticsHub.BenchmarkDotNetDiagnosers" Version="18.7.37220.1" />
     <PackageVersion Include="Microsoft.VisualStudio.Threading" Version="18.7.23" />
     <PackageVersion Include="Nerdbank.Json" Version="0.2.3-netwasm" />
-    <PackageVersion Include="PolyType" Version="1.5.3-netwasm" />
+    <PackageVersion Include="PolyType" Version="1.5.4-netwasm" />
     <PackageVersion Include="Microsoft.VisualStudio.Validation" Version="18.7.0-netwasm-0001" />
     <PackageVersion Include="NetWasm.Microsoft.Extensions.Logging.Abstractions" Version="0.5.0" />
     <PackageVersion Include="NetWasm.System.IO.Pipelines" Version="0.5.0" />
