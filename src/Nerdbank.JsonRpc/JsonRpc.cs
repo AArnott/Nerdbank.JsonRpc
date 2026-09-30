@@ -206,7 +206,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	}
 
 	/// <summary>
-	/// Gets the <see cref="System.Threading.SynchronizationContext"/> that schedules the start of each inbound RPC method invocation.
+	/// Gets or initializes the <see cref="System.Threading.SynchronizationContext"/> that schedules the start of each inbound RPC method invocation.
 	/// </summary>
 	/// <value>
 	/// Defaults to a private <see cref="NonConcurrentSynchronizationContext"/> instance (configured as non-sticky)
