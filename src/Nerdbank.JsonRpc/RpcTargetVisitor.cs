@@ -142,7 +142,14 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 #if NET
 		[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
+#if NETWASM
+		ValueTask<DispatchResponse> InvokeAsync(DispatchRequest dispatch) => new(InvokeCoreAsync(dispatch));
+
+		// NetWasm 0.5.0 compiler bug: an async ValueTask<T> method whose filtered try block (catch ... when) awaits returns default(T). Task<T> is unaffected.
+		async Task<DispatchResponse> InvokeCoreAsync(DispatchRequest dispatch)
+#else
 		async ValueTask<DispatchResponse> InvokeAsync(DispatchRequest dispatch)
+#endif
 		{
 			TArgumentState argState;
 			ArgumentList values = default;

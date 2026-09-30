@@ -174,7 +174,19 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	protected abstract ValueTask SendMessageAsync(PipeWriter writer, JsonRpcMessage message, CancellationToken cancellationToken);
 
 	private static string FormatLoggedMessage(JsonRpcMessage message, Exception? exception)
+#if NETWASM
+		// NetWasm has no runtime type names (Type.Name is unavailable), so name the known message kinds explicitly.
+		=> message switch
+		{
+			JsonRpcRequest => "JSON-RPC JsonRpcRequest",
+			JsonRpcResult => "JSON-RPC JsonRpcResult",
+			JsonRpcError => "JSON-RPC JsonRpcError",
+			JsonRpcMessageBatch => "JSON-RPC JsonRpcMessageBatch",
+			_ => "JSON-RPC message",
+		};
+#else
 		=> $"JSON-RPC {message.GetType().Name}";
+#endif
 
 	private async Task HandleInboundMessagesAsync(PipeReader reader, CancellationToken cancellationToken)
 	{

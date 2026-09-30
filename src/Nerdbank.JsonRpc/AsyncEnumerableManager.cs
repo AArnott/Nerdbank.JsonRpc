@@ -575,7 +575,14 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	/// <summary>Handles a consumer's request for the next batch of values.</summary>
 	/// <param name="dispatch">The inbound request.</param>
 	/// <returns>The response carrying the batch.</returns>
+#if NETWASM
+	private ValueTask<DispatchResponse> GetNextValuesAsync(DispatchRequest dispatch) => new(this.GetNextValuesCoreAsync(dispatch));
+
+	// NetWasm 0.5.0 compiler bug: an async ValueTask<T> method whose filtered try block (catch ... when) awaits returns default(T). Task<T> is unaffected.
+	private async Task<DispatchResponse> GetNextValuesCoreAsync(DispatchRequest dispatch)
+#else
 	private async ValueTask<DispatchResponse> GetNextValuesAsync(DispatchRequest dispatch)
+#endif
 	{
 		RequestId? id = dispatch.Request.Id;
 		try

@@ -1109,11 +1109,18 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+#if NETWASM
+	private ValueTask<JsonRpcResponse> RequestAsync(JsonRpcRequest request, CancellationToken cancellationToken) => new(this.RequestCoreAsync(request, cancellationToken));
+
+	// NetWasm 0.5.0 compiler bug: an async ValueTask<T> method whose filtered try block (catch ... when) awaits returns default(T). Task<T> is unaffected.
+	private async Task<JsonRpcResponse> RequestCoreAsync(JsonRpcRequest request, CancellationToken cancellationToken)
+#else
 	// Pooled because this is only ever awaited once, by the typed response helpers.
 #if NET
 	[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
 	private async ValueTask<JsonRpcResponse> RequestAsync(JsonRpcRequest request, CancellationToken cancellationToken)
+#endif
 	{
 		TaskCompletionSource<JsonRpcResponse>? responseTcs = null;
 		bool posted = false;

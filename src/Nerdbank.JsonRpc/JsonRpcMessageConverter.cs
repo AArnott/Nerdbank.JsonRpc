@@ -371,7 +371,11 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 			case null:
 				throw new ArgumentNullException(nameof(message));
 			default:
+#if NETWASM
+				throw new ArgumentException("Unrecognized JSON-RPC message type.", nameof(message)); // NetWasm: no runtime type names.
+#else
 				throw new ArgumentException($"Unrecognized JSON-RPC message type: {message.GetType().FullName}", nameof(message));
+#endif
 		}
 	}
 
