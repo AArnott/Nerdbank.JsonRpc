@@ -71,7 +71,7 @@ public class ProxyForwardingTests : TestBase
 	private static async Task AssertForwardingRejectedAsync(JsonRpcEncoding encoding, Func<Task> action)
 	{
 		Exception exception = encoding == JsonRpcEncoding.Json
-			? await Assert.ThrowsAsync<NotSupportedException>(action)
+			? await Assert.ThrowsAsync<Nerdbank.Json.JsonSerializationException>(action)
 			: await Assert.ThrowsAsync<MessagePackSerializationException>(action);
 		Assert.IsType<NotSupportedException>(exception.GetBaseException());
 		Assert.Contains("different JSON-RPC connection", exception.GetBaseException().Message);
