@@ -31,9 +31,14 @@ internal static class AsyncEnumerableMarshaler
 
 	/// <summary>Tests whether a type is exactly <see cref="IAsyncEnumerable{T}"/>.</summary>
 	/// <param name="type">The candidate type.</param>
+	/// <param name="shape">The shape of the candidate type, if available. NetWasm cannot inspect <see cref="Type"/>, so the PolyType shape is used there instead.</param>
 	/// <returns><see langword="true"/> if the type is a constructed <see cref="IAsyncEnumerable{T}"/>.</returns>
-	internal static bool IsAsyncEnumerable(Type type)
+	internal static bool IsAsyncEnumerable(Type type, ITypeShape? shape)
+#if NETWASM
+		=> shape is IEnumerableTypeShape { IsAsyncEnumerable: true };
+#else
 		=> type.IsInterface && type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IAsyncEnumerable<>);
+#endif
 
 	/// <summary>Builds a strongly typed contract for the element type of a sequence shape.</summary>
 	/// <typeparam name="T">The <see cref="IAsyncEnumerable{T}"/> type.</typeparam>
@@ -41,9 +46,13 @@ internal static class AsyncEnumerableMarshaler
 	/// <returns>The contract.</returns>
 	private static EnumerableContract GetContract<T>(ITypeShape<T> shape)
 	{
+#if NETWASM
+		ITypeShape elementShape = ((IEnumerableTypeShape)shape).ElementType;
+#else
 		Type elementType = shape.Type.GetGenericArguments()[0];
 		ITypeShape elementShape = shape.Provider.GetTypeShape(elementType)
 			?? throw new NotSupportedException($"A PolyType shape for async enumerable element type '{elementType}' is required.");
+#endif
 		return (EnumerableContract)elementShape.Invoke(EnumerableShapeFunc.Instance)!;
 	}
 

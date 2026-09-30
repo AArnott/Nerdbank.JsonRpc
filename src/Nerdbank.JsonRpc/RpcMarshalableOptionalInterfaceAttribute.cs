@@ -29,10 +29,12 @@ public sealed class RpcMarshalableOptionalInterfaceAttribute : Attribute
 	{
 		this.InterfaceId = interfaceId;
 		this.OptionalInterface = optionalInterface ?? throw new ArgumentNullException(nameof(optionalInterface));
+#if !NETWASM // NetWasm: Type.IsInterface is unavailable.
 		if (!optionalInterface.IsInterface)
 		{
 			throw new ArgumentException("The optional type must be an interface.", nameof(optionalInterface));
 		}
+#endif
 	}
 
 	/// <summary>Gets the stable signed 32-bit protocol identifier.</summary>

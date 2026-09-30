@@ -16,10 +16,14 @@ internal static class ProgressMarshaler
 
 	private static ProgressContract GetProgressContract<T>(ITypeShape<T> shape)
 	{
+#if NETWASM
+		throw new PlatformNotSupportedException("IObserver<T>/IProgress<T> marshaling requires reflection over generic type arguments, which NetWasm does not support.");
+#else
 		Type valueType = shape.Type.GetGenericArguments()[0];
 		ITypeShape valueShape = shape.Provider.GetTypeShape(valueType)
 			?? throw new NotSupportedException($"A PolyType shape for progress value type '{valueType}' is required.");
 		return (ProgressContract)valueShape.Invoke(ProgressShapeFunc.Instance)!;
+#endif
 	}
 
 	private abstract class ProgressContract

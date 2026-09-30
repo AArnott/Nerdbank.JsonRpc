@@ -43,7 +43,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new ArgumentNullException(nameof(value));
 		}
 
-		RpcMarshalableAttribute attribute = shape.Type.GetCustomAttribute<RpcMarshalableAttribute>()
+		RpcMarshalableAttribute attribute = shape.GetTypeAttribute<RpcMarshalableAttribute>()
 			?? throw new InvalidOperationException($"The interface '{shape.Type}' is not marked with {nameof(RpcMarshalableAttribute)}.");
 		object target = value;
 		if (!attribute.CallScopedLifetime && target is not IDisposable)
@@ -54,14 +54,19 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		TargetRegistration registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, owner.MarshaledTargetOptions)!;
 		List<(int InterfaceId, TargetRegistration Registration)> optionalRegistrations = [];
 		HashSet<int> interfaceIds = [];
-		foreach (RpcMarshalableOptionalInterfaceAttribute optionalInterface in shape.Type.GetCustomAttributes<RpcMarshalableOptionalInterfaceAttribute>())
+		foreach (RpcMarshalableOptionalInterfaceAttribute optionalInterface in shape.GetTypeAttributes<RpcMarshalableOptionalInterfaceAttribute>())
 		{
 			if (!interfaceIds.Add(optionalInterface.InterfaceId))
 			{
 				throw new InvalidOperationException($"Optional interface ID {optionalInterface.InterfaceId} is declared more than once on '{shape.Type}'.");
 			}
 
+#if NETWASM
+			// NetWasm: Type.IsInstanceOfType is unavailable, so optional interfaces are never advertised.
+			if (false)
+#else
 			if (optionalInterface.OptionalInterface.IsInstanceOfType(target))
+#endif
 			{
 				ITypeShape optionalShape = shape.Provider.GetTypeShape(optionalInterface.OptionalInterface)
 					?? throw new NotSupportedException($"A PolyType shape is required for optional interface '{optionalInterface.OptionalInterface}'.");
@@ -105,7 +110,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	internal T UnmarshalMarshalable<T>(JsonRpcValue value, ITypeShape<T> shape, RpcCallState? callState)
 	{
 		(long handle, int direction, bool callScopedLifetime, int[] optionalInterfaceIds) = ReadMarker(value);
-		RpcMarshalableAttribute attribute = shape.Type.GetCustomAttribute<RpcMarshalableAttribute>()
+		RpcMarshalableAttribute attribute = shape.GetTypeAttribute<RpcMarshalableAttribute>()
 			?? throw new InvalidOperationException($"The interface '{shape.Type}' is not marked with {nameof(RpcMarshalableAttribute)}.");
 		if (attribute.CallScopedLifetime != callScopedLifetime)
 		{
@@ -132,10 +137,10 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 		CallScopedHandle callScopedHandle = this.RegisterIncomingProxy(handle, callScopedLifetime, callState);
 		HashSet<int> advertisedInterfaces = [.. optionalInterfaceIds];
-		HashSet<int> knownAdvertisedInterfaces = [.. shape.Type.GetCustomAttributes<RpcMarshalableOptionalInterfaceAttribute>()
+		HashSet<int> knownAdvertisedInterfaces = [.. shape.GetTypeAttributes<RpcMarshalableOptionalInterfaceAttribute>()
 			.Where(attribute => advertisedInterfaces.Contains(attribute.InterfaceId))
 			.Select(attribute => attribute.InterfaceId)];
-		Type? proxyType = shape.Type.GetCustomAttributes<JsonRpcOptionalProxyImplementationAttribute>()
+		Type? proxyType = shape.GetTypeAttributes<JsonRpcOptionalProxyImplementationAttribute>()
 			.SingleOrDefault(attribute => attribute.InterfaceIds.Count == knownAdvertisedInterfaces.Count && attribute.InterfaceIds.All(knownAdvertisedInterfaces.Contains))
 			?.ProxyType;
 		if (knownAdvertisedInterfaces.Count > 0 && proxyType is null)

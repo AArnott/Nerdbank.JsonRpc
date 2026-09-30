@@ -57,7 +57,11 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 		=> new JsonSerializerPlugin(this.Serializer with
 		{
 			Converters = new Nerdbank.Json.ConverterCollection([new MarshaledDisposableJsonConverter(manager), .. this.Serializer.Converters]),
+#if NETWASM // NetWasm: out-of-band streams are unavailable.
+			ConverterFactories = [new AsyncEnumerableJsonConverterFactory(asyncEnumerables), new MarshaledInterfaceJsonConverterFactory(manager, progress), .. this.Serializer.ConverterFactories],
+#else
 			ConverterFactories = [new AsyncEnumerableJsonConverterFactory(asyncEnumerables), new OutOfBandStreamJsonConverterFactory(outOfBandStreams), new MarshaledInterfaceJsonConverterFactory(manager, progress), .. this.Serializer.ConverterFactories],
+#endif
 		});
 
 	/// <inheritdoc/>

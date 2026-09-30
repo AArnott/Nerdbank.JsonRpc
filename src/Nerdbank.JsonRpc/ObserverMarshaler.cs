@@ -62,10 +62,14 @@ internal static class ObserverMarshaler
 
 	private static ObserverContract GetObserverContract<T>(ITypeShape<T> shape)
 	{
+#if NETWASM
+		throw new PlatformNotSupportedException("IObserver<T>/IProgress<T> marshaling requires reflection over generic type arguments, which NetWasm does not support.");
+#else
 		Type valueType = shape.Type.GetGenericArguments()[0];
 		ITypeShape valueShape = shape.Provider.GetTypeShape(valueType)
 			?? throw new NotSupportedException($"A PolyType shape for observer value type '{valueType}' is required.");
 		return (ObserverContract)valueShape.Invoke(ObserverShapeFunc.Instance)!;
+#endif
 	}
 
 	private static string ReadErrorMessage(JsonRpcValue value)

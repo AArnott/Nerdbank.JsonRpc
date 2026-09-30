@@ -12,11 +12,20 @@ internal sealed class MarshaledInterfaceJsonConverterFactory(MarshaledObjectMana
 {
 	public Nerdbank.Json.JsonConverter? CreateConverter(Type type, ITypeShape? shape, in Nerdbank.Json.JsonConverterFactoryContext context)
 	{
+#if NETWASM
+		// NetWasm: Type has no IsGenericType/IsInterface/IsDefined. Detect [RpcMarshalable] via the PolyType shape's attributes.
+		// IObserver<T> and IProgress<T> marshaling is not supported on NetWasm.
+		if (shape is null || !shape.AttributeProvider.IsDefined<RpcMarshalableAttribute>(inherit: false))
+		{
+			return null;
+		}
+#else
 		bool specialInterface = type.IsGenericType && (type.GetGenericTypeDefinition() == typeof(IObserver<>) || type.GetGenericTypeDefinition() == typeof(IProgress<>));
 		if (!type.IsInterface || (!type.IsDefined(typeof(RpcMarshalableAttribute), inherit: false) && !specialInterface))
 		{
 			return null;
 		}
+#endif
 
 		return shape is not null
 			? (Nerdbank.Json.JsonConverter?)shape.Invoke(this, manager)
@@ -27,8 +36,13 @@ internal sealed class MarshaledInterfaceJsonConverterFactory(MarshaledObjectMana
 
 	private sealed class Converter<T>(MarshaledObjectManager manager, ProgressManager progress, ITypeShape<T> shape) : Nerdbank.Json.JsonConverter<T>
 	{
+#if NETWASM
+		private readonly bool typeIsObserver = false;
+		private readonly bool typeIsProgress = false;
+#else
 		private readonly bool typeIsObserver = typeof(T).IsGenericType && typeof(T).GetGenericTypeDefinition() == typeof(IObserver<>);
 		private readonly bool typeIsProgress = typeof(T).IsGenericType && typeof(T).GetGenericTypeDefinition() == typeof(IProgress<>);
+#endif
 
 		public override T? Read(ref Nerdbank.Json.JsonReader reader, Nerdbank.Json.SerializationContext context)
 		{

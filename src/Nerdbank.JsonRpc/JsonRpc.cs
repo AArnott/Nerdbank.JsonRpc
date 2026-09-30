@@ -14,7 +14,9 @@ using System.Threading.Channels;
 using Microsoft;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+#if !NETWASM
 using Microsoft.VisualStudio.Threading;
+#endif
 using Nerdbank.MessagePack;
 using Nerdbank.Streams;
 
@@ -88,6 +90,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+#if !NETWASM // NetWasm: Nerdbank.Streams (MultiplexingStream) is not ported, so out-of-band streams are unavailable.
 	/// <summary>Gets or sets the multiplexing stream used to send and receive out-of-band streams.</summary>
 	/// <remarks>This property must be set before <see cref="Start"/>.</remarks>
 	public MultiplexingStream? MultiplexingStream
@@ -99,6 +102,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			this.outOfBandStreams.MultiplexingStream = value;
 		}
 	}
+#endif
 
 	/// <summary>Gets or sets the options used for proxies implicitly created for RPC-marshalable objects.</summary>
 	/// <value>Defaults to <see cref="JsonRpcProxyOptions.Default"/>, the same naming convention used for ordinary RPC proxies.</value>
@@ -147,6 +151,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		init => this.logger = value ?? throw new ArgumentNullException(nameof(value));
 	}
 
+#if !NETWASM // NetWasm: Microsoft.VisualStudio.Threading is not ported.
 	/// <summary>
 	/// Gets or sets the <see cref="Microsoft.VisualStudio.Threading.JoinableTaskFactory"/> to participate in to mitigate deadlocks with the main thread.
 	/// </summary>
@@ -173,6 +178,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			field = value;
 		}
 	}
+#endif
 
 	/// <summary>
 	/// Gets or sets the <see cref="JoinableTaskTokenTracker"/> used to forward <see cref="JoinableTask"/> tokens
@@ -530,6 +536,10 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	{
 		Requires.NotNull(client);
 		Requires.NotNull(interfaceType);
+#if NETWASM
+		// NetWasm: no reflection-based type queries or constructor invocation.
+		throw new PlatformNotSupportedException("Attaching a proxy by interface type requires reflection, which NetWasm does not support. Construct the generated proxy class directly instead.");
+#else
 		Requires.Argument(interfaceType.IsInterface, nameof(interfaceType), "The requested proxy type must be an interface.");
 
 		JsonRpcProxyImplementationAttribute? implementation = interfaceType.GetCustomAttribute<JsonRpcProxyImplementationAttribute>();
@@ -547,6 +557,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 
 		return constructor.Invoke([client, options ?? JsonRpcProxyOptions.Default]);
+#endif
 	}
 
 	internal RequestId GetNextRequestId()
@@ -593,7 +604,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <param name="request">A request that expects a response.</param>
 	internal void ApplyJoinableTaskToken(JsonRpcRequest request)
 	{
+#if NETWASM
+		string? token = this.JoinableTaskTracker.Token;
+#else
 		string? token = this.JoinableTaskFactory is { } jtf ? jtf.Context.Capture() : this.JoinableTaskTracker.Token;
+#endif
 		if (token is not null)
 		{
 			request.JoinableTaskToken = token;
@@ -784,6 +799,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		request.Arguments.Release();
 	}
 
+#if !NETWASM
 	/// <summary>Invokes a request handler as a child of the caller's joinable task.</summary>
 	/// <param name="jtf">The joinable task factory.</param>
 	/// <param name="invoker">The request handler.</param>
@@ -793,6 +809,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <remarks>This is a separate method so that only requests that carry a token allocate the lambda's closure.</remarks>
 	private static JoinableTask<DispatchResponse> RunUnderJoinableTaskAsync(JoinableTaskFactory jtf, MethodInvoker invoker, DispatchRequest dispatchRequest, string parentToken)
 		=> jtf.RunAsync(() => invoker(dispatchRequest).AsTask(), parentToken, JoinableTaskCreationOptions.None);
+#endif
 
 	private ValueTask<JsonRpcResponse?> DispatchAsync(JsonRpcRequest request)
 	{
@@ -895,6 +912,10 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 			// Changes to the ambient tracker made here are scoped to this async method's execution context.
 			string? parentToken = request.JoinableTaskToken;
+#if NETWASM
+			this.JoinableTaskTracker.Token = parentToken;
+			DispatchResponse response = await invoker(dispatchRequest).ConfigureAwait(false);
+#else
 			JoinableTaskFactory? jtf = this.JoinableTaskFactory;
 			if (jtf is null)
 			{
@@ -904,6 +925,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			DispatchResponse response = jtf is not null && parentToken is not null
 				? await RunUnderJoinableTaskAsync(jtf, invoker, dispatchRequest, parentToken)
 				: await invoker(dispatchRequest).ConfigureAwait(false);
+#endif
 			await progressScope.CompleteAsync().ConfigureAwait(false);
 			Assumes.True(request.Id is null == response.Response is null, "A response is expected iff the request included an ID.");
 			inboundCallScope.Complete(response.Response is not JsonRpcError);
@@ -930,7 +952,22 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+#if NETWASM
+	// NetWasm has no TaskScheduler.
+	private async void FaultOnFailure(Task task)
+	{
+		try
+		{
+			await task.ConfigureAwait(false);
+		}
+		catch (Exception ex)
+		{
+			this.Fault(ex);
+		}
+	}
+#else
 	private void FaultOnFailure(Task task) => task.ContinueWith(static (t, s) => ((JsonRpc)s!).Fault(t.Exception!), this, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default).Forget();
+#endif
 
 	private void ThrowIfStarted() => Verify.Operation(this.readerTask is null, "This property may only be set before Start is called.");
 

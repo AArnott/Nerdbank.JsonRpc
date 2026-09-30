@@ -6,7 +6,9 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+#if !NETWASM
 using Microsoft.VisualStudio.Threading;
+#endif
 using Nerdbank.MessagePack;
 using Nerdbank.Streams;
 using PolyType.Abstractions;
@@ -617,7 +619,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 
 			return new DispatchResponse { Response = id is RequestId resultId ? new JsonRpcResult { Id = resultId, Result = result } : null };
 		}
-		catch (OperationCanceledException ex) when (dispatch.CancellationToken.IsCancellationRequested)
+		catch (OperationCanceledException ex) when (dispatch.IsCancellationRequested())
 		{
 			return new DispatchResponse
 			{

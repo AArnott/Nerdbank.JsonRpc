@@ -1,6 +1,6 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="NetWasm.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>net9.0;net8.0;net472;netstandard2.0</TargetFrameworks>
+    <TargetFrameworks>net9.0;net8.0;net472;netstandard2.0;netwasm0.1</TargetFrameworks>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsAotCompatible Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)','net8.0'))">true</IsAotCompatible>
     <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>
@@ -10,23 +10,65 @@
     <ProjectReference Include="..\Nerdbank.JsonRpc.SourceGeneration\Nerdbank.JsonRpc.SourceGeneration.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false"
+                      SetTargetFramework="TargetFramework=netstandard2.0"
+                      SkipGetTargetFrameworkProperties="true"
                       Pack="true"
                       PackagePath="analyzers/dotnet/cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="$(RepoRootPath)bin\Nerdbank.JsonRpc.SourceGeneration\$(Configuration)\netstandard2.0\Nerdbank.JsonRpc.SourceGeneration.dll"
           Pack="true"
-          PackagePath="analyzers/dotnet/cs"
+          PackagePath="analyzers/dotnet/cs/Nerdbank.JsonRpc.SourceGeneration.dll"
           Visible="false" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
-    <PackageReference Include="Microsoft.VisualStudio.Threading" />
     <PackageReference Include="Nerdbank.Json" />
     <PackageReference Include="Nerdbank.MessagePack" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)'!='netwasm0.1'">
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.VisualStudio.Threading" />
     <PackageReference Include="Nerdbank.Streams" />
   </ItemGroup>
-  <ItemGroup Condition="'$(TargetFrameworkIdentifier)'!='.NETCoreApp'">
+  <ItemGroup Condition="'$(TargetFrameworkIdentifier)'!='.NETCoreApp' and '$(TargetFramework)'!='netwasm0.1'">
     <PackageReference Include="System.Threading.Channels" />
   </ItemGroup>
+
+  <!--
+    NetWasm (netwasm0.1) proof of concept.
+    Not available on netwasm: out-of-band streams / MultiplexingStream (Nerdbank.Streams is not ported),
+    and JoinableTaskFactory integration (Microsoft.VisualStudio.Threading is not ported; JoinableTaskTokenTracker forwarding still works).
+  -->
+  <PropertyGroup Condition="'$(TargetFramework)'=='netwasm0.1'">
+    <EnablePackageValidation>false</EnablePackageValidation>
+    <IsAotCompatible>false</IsAotCompatible>
+    <!-- NetWasm reference assemblies are not strong-named (CS8002). -->
+    <SignAssembly>false</SignAssembly>
+    <NoWarn>$(NoWarn);CS1574;CS0162;SA1200;SA1202;SA1514;RS0016;RS0017;RS0026;RS0027;RS0036;RS0037;RS0041</NoWarn>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(TargetFramework)'=='netwasm0.1'">
+    <PackageReference Include="NetWasm.Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="NetWasm.System.IO.Pipelines" />
+    <PackageReference Include="NetWasm.System.Linq" />
+    <PackageReference Include="NetWasm.System.Linq.AsyncEnumerable" />
+    <PackageReference Include="NetWasm.System.Memory" />
+    <PackageReference Include="NetWasm.System.Text.Json" />
+    <Using Remove="System.Net.Http" />
+    <Compile Remove="OutOfBandStream*.cs" />
+  </ItemGroup>
+  <!--
+    NetWasm proof of concept workaround: NetWasm.Sdk 0.5.0's pack reads %(PackageReference.Version) directly,
+    which is empty under Central Package Management (NWPK006). Copy the central versions onto the references.
+  -->
+  <Target Name="NetWasmPocApplyCentralPackageVersions" BeforeTargets="NetWasmSdkCollectInnerPackageReferences" Condition="'$(ManagePackageVersionsCentrally)'=='true'">
+    <ItemGroup>
+      <_NetWasmPocPackageReferenceCross Include="@(PackageReference)">
+        <CentralId>%(PackageVersion.Identity)</CentralId>
+        <CentralVersion>%(PackageVersion.Version)</CentralVersion>
+      </_NetWasmPocPackageReferenceCross>
+      <_NetWasmPocPackageReferenceCross Remove="@(_NetWasmPocPackageReferenceCross)" Condition="'%(_NetWasmPocPackageReferenceCross.Identity)'!='%(_NetWasmPocPackageReferenceCross.CentralId)' or '%(_NetWasmPocPackageReferenceCross.Version)'!=''" />
+      <PackageReference Remove="@(_NetWasmPocPackageReferenceCross)" />
+      <PackageReference Include="@(_NetWasmPocPackageReferenceCross)" Version="%(_NetWasmPocPackageReferenceCross.CentralVersion)" />
+    </ItemGroup>
+  </Target>
 </Project>

@@ -558,22 +558,33 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.AppendLine();
 		}
 
-		builder.Append("\tinternal ").Append(proxyName).Append("(global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc, global::Nerdbank.JsonRpc.JsonRpcProxyOptions options)").AppendLine();
+		if (shapeFields.Length > 0)
+		{
+			// This overload resolves the type shape provider automatically.
+			builder.Append("\tinternal ").Append(proxyName).Append("(global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc, global::Nerdbank.JsonRpc.JsonRpcProxyOptions options)").AppendLine();
+			builder.Append("\t\t: this(jsonRpc, options, global::PolyType.Abstractions.TypeShapeResolver.")
+				.Append(info.HasStaticTypeShapeResolver ? KnownApis.TypeShapeResolve : KnownApis.TypeShapeResolveDynamicOrThrow)
+				.Append('<')
+				.Append(info.InterfaceName)
+				.AppendLine(">().Provider)");
+			builder.OpenBlock("\t");
+			builder.CloseBlock("\t");
+			builder.AppendLine();
+
+			// This overload lets callers supply the provider explicitly, for targets (such as NetWasm) where it cannot be resolved automatically.
+			builder.Append("\tinternal ").Append(proxyName).Append("(global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc, global::Nerdbank.JsonRpc.JsonRpcProxyOptions options, global::PolyType.ITypeShapeProvider typeShapeProvider)").AppendLine();
+		}
+		else
+		{
+			builder.Append("\tinternal ").Append(proxyName).Append("(global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc, global::Nerdbank.JsonRpc.JsonRpcProxyOptions options)").AppendLine();
+		}
+
 		builder.OpenBlock("\t");
 		builder.AppendLine("\t\tthis.jsonRpc = jsonRpc;");
 		builder.AppendLine("\t\tthis.useNamedArguments = options.UseNamedArguments;");
 		if (needsMethodNameTransform)
 		{
 			builder.Append("\t\tthis.").Append(methodNameTransformField).AppendLine(" = options.MethodNameTransform;");
-		}
-
-		if (shapeFields.Length > 0)
-		{
-			builder.Append("\t\tglobal::PolyType.ITypeShapeProvider typeShapeProvider = global::PolyType.Abstractions.TypeShapeResolver.")
-				.Append(info.HasStaticTypeShapeResolver ? KnownApis.TypeShapeResolve : KnownApis.TypeShapeResolveDynamicOrThrow)
-				.Append('<')
-				.Append(info.InterfaceName)
-				.AppendLine(">().Provider;");
 		}
 
 		foreach (ShapeFieldInfo shapeField in shapeFields)

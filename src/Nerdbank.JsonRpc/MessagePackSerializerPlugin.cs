@@ -44,7 +44,11 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 		=> new MessagePackSerializerPlugin(this.Serializer with
 		{
 			Converters = ConverterCollection.Create([new MarshaledDisposableMessagePackConverter(manager), .. this.Serializer.Converters]),
+#if NETWASM // NetWasm: out-of-band streams are unavailable.
+			ConverterFactories = [new AsyncEnumerableMessagePackConverterFactory(asyncEnumerables), new MarshaledInterfaceMessagePackConverterFactory(manager, progress), .. this.Serializer.ConverterFactories],
+#else
 			ConverterFactories = [new AsyncEnumerableMessagePackConverterFactory(asyncEnumerables), new OutOfBandStreamMessagePackConverterFactory(outOfBandStreams), new MarshaledInterfaceMessagePackConverterFactory(manager, progress), .. this.Serializer.ConverterFactories],
+#endif
 		});
 
 	/// <inheritdoc/>

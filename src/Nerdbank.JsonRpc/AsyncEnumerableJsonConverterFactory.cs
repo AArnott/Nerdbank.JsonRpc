@@ -11,7 +11,7 @@ internal sealed class AsyncEnumerableJsonConverterFactory(AsyncEnumerableManager
 {
 	/// <inheritdoc/>
 	public Nerdbank.Json.JsonConverter? CreateConverter(Type type, PolyType.ITypeShape? shape, in Nerdbank.Json.JsonConverterFactoryContext context)
-		=> AsyncEnumerableMarshaler.IsAsyncEnumerable(type) && shape is not null ? (Nerdbank.Json.JsonConverter?)shape.Invoke(new Factory(manager)) : null;
+		=> AsyncEnumerableMarshaler.IsAsyncEnumerable(type, shape) && shape is not null ? (Nerdbank.Json.JsonConverter?)shape.Invoke(new Factory(manager)) : null;
 
 	/// <summary>Creates a converter in a generic context for the sequence type.</summary>
 	/// <param name="manager">The manager that tracks generators.</param>

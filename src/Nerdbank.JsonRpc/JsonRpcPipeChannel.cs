@@ -16,7 +16,12 @@ namespace Nerdbank.JsonRpc;
 /// Derived classes select the encoding and implement serialization, deserialization, and any framing.
 /// This base class manages the pipe and message queues without choosing a wire format.
 /// </remarks>
+#if NETWASM
+// NetWasm: System.Threading.Channels is not available, and the internal polyfill cannot be a public base type.
+public abstract class JsonRpcPipeChannel : IAsyncDisposable
+#else
 public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDisposable
+#endif
 {
 	/// <summary>The default maximum encoded message size, in bytes.</summary>
 	internal const int DefaultMaximumMessageSize = 8 * 1024 * 1024;
@@ -38,7 +43,11 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	/// <param name="inboundChannel">The queue for received messages.</param>
 	/// <param name="outboundChannel">The queue for messages to send.</param>
 	/// <param name="logger">The transport logger.</param>
+#if NETWASM
+	private protected JsonRpcPipeChannel(IDuplexPipe pipe, Channel<JsonRpcMessage> inboundChannel, Channel<JsonRpcMessage> outboundChannel, ILogger logger)
+#else
 	protected JsonRpcPipeChannel(IDuplexPipe pipe, Channel<JsonRpcMessage> inboundChannel, Channel<JsonRpcMessage> outboundChannel, ILogger logger)
+#endif
 	{
 		Requires.NotNull(pipe);
 		Requires.NotNull(inboundChannel);
@@ -53,6 +62,14 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 		this.outboundTaskProcessor = this.HandleOutboundMessagesAsync(pipe.Output, this.disposalSource.Token);
 	}
 
+#if NETWASM
+	/// <summary>Gets the reader of received messages.</summary>
+	internal ChannelReader<JsonRpcMessage> Reader { get; }
+
+	/// <summary>Gets the writer of messages to send.</summary>
+	internal ChannelWriter<JsonRpcMessage> Writer { get; }
+
+#endif
 	/// <summary>Gets the encoding used by this transport.</summary>
 	public abstract JsonRpcEncoding Encoding { get; }
 
@@ -131,11 +148,21 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 		this.maximumMessageSize = value;
 	}
 
-	protected static Channel<JsonRpcMessage> CreateInboundChannel(int? capacity) => capacity is null
+#if NETWASM
+	private protected
+#else
+	protected
+#endif
+	static Channel<JsonRpcMessage> CreateInboundChannel(int? capacity) => capacity is null
 		? Channel.CreateUnbounded<JsonRpcMessage>(new UnboundedChannelOptions { SingleWriter = true })
 		: Channel.CreateBounded<JsonRpcMessage>(new BoundedChannelOptions(capacity.Value) { SingleWriter = true });
 
-	protected static Channel<JsonRpcMessage> CreateOutboundChannel(int? capacity) => capacity is null
+#if NETWASM
+	private protected
+#else
+	protected
+#endif
+	static Channel<JsonRpcMessage> CreateOutboundChannel(int? capacity) => capacity is null
 		? Channel.CreateUnbounded<JsonRpcMessage>(new UnboundedChannelOptions { SingleReader = true })
 		: Channel.CreateBounded<JsonRpcMessage>(new BoundedChannelOptions(capacity.Value) { SingleReader = true });
 

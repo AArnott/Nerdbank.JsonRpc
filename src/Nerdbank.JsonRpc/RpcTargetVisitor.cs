@@ -2,7 +2,9 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Runtime.CompilerServices;
+#if !NETWASM
 using Microsoft.VisualStudio.Threading;
+#endif
 using Nerdbank.MessagePack;
 using PolyType.Abstractions;
 
@@ -251,7 +253,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 					response = null;
 				}
 			}
-			catch (OperationCanceledException ex) when (dispatch.CancellationToken.IsCancellationRequested && dispatch.Request.Id is RequestId id)
+			catch (OperationCanceledException ex) when (dispatch.IsCanceledRequest(out RequestId id))
 			{
 				response = new JsonRpcError
 				{
@@ -363,7 +365,12 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			return true;
 		}
 
+#if NETWASM
+		// NetWasm: Type.IsGenericType/GetGenericTypeDefinition are unavailable, so EventHandler<T> is not recognized.
+		return false;
+#else
 		return delegateType.IsGenericType && delegateType.GetGenericTypeDefinition() == typeof(EventHandler<>);
+#endif
 	}
 
 	/// <summary>

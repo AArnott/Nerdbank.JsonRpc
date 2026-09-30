@@ -11,7 +11,7 @@ internal sealed class AsyncEnumerableMessagePackConverterFactory(AsyncEnumerable
 {
 	/// <inheritdoc/>
 	public MessagePackConverter? CreateConverter(Type type, PolyType.ITypeShape? shape, in ConverterContext context)
-		=> AsyncEnumerableMarshaler.IsAsyncEnumerable(type) && shape is not null ? (MessagePackConverter?)shape.Invoke(new Factory(manager)) : null;
+		=> AsyncEnumerableMarshaler.IsAsyncEnumerable(type, shape) && shape is not null ? (MessagePackConverter?)shape.Invoke(new Factory(manager)) : null;
 
 	/// <summary>Creates a converter in a generic context for the sequence type.</summary>
 	/// <param name="manager">The manager that tracks generators.</param>
