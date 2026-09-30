@@ -26,7 +26,6 @@ internal sealed class MockJsonRpcPipeChannel : JsonRpcPipeChannel
 		}
 
 		this.Serializer = serializer ?? new MessagePackSerializerPlugin(JsonRpcMessagePackChannel.DefaultSerializer);
-		this.StartTransport();
 	}
 
 	/// <inheritdoc/>

@@ -434,6 +434,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <remarks>Call this after registering initial targets with <see cref="AddRpcTarget{T}(T, ITypeShape{T}, JsonRpcTargetOptions?)"/> to avoid rejecting incoming requests or dropping notifications for which no RPC target has yet been registered.</remarks>
 	public void Start()
 	{
+		this.channel.Start();
 		this.readerTask = this.ReadAsync(this.channel.Reader);
 	}
 

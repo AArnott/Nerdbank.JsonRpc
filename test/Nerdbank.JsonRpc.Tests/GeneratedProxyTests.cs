@@ -18,7 +18,9 @@ public class GeneratedProxyTests
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 
 		JsonRpcMessagePackChannel clientChannel = new(clientPipe);
+		clientChannel.Start();
 		JsonRpcMessagePackChannel serverChannel = new(serverPipe);
+		serverChannel.Start();
 
 		JsonRpc clientRpc = new(clientChannel);
 		clientRpc.Start();
@@ -344,7 +346,9 @@ public class GeneratedProxyTests
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 
 		JsonRpcMessagePackChannel clientChannel = new(clientPipe);
+		clientChannel.Start();
 		JsonRpcMessagePackChannel serverChannel = new(serverPipe);
+		serverChannel.Start();
 
 		JsonRpc clientRpc = new(clientChannel);
 		clientRpc.Start();

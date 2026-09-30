@@ -350,6 +350,7 @@ public class WireCompatibilityTests : TestBase
 		private static JsonRpc Create(IDuplexPipe pipe, bool streamJsonRpcNaming, bool server)
 		{
 			JsonRpcPipeChannel channel = new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited);
+			channel.Start();
 			if (!streamJsonRpcNaming)
 			{
 				return new(channel);

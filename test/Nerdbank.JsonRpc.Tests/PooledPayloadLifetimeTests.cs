@@ -82,7 +82,9 @@ public partial class PooledPayloadLifetimeTests : TestBase
 	{
 		(IDuplexPipe local, IDuplexPipe remote) = FullDuplexStream.CreatePipePair();
 		await using JsonRpcPipeChannel sender = Fixture.CreateChannel(local, encoding);
+		sender.Start();
 		await using JsonRpcPipeChannel receiver = Fixture.CreateChannel(remote, encoding);
+		receiver.Start();
 		using JsonRpc rpc = new(sender);
 		rpc.Start();
 

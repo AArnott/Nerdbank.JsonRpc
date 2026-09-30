@@ -63,6 +63,12 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 
 	protected ILogger Logger => Volatile.Read(ref this.logger);
 
+#pragma warning disable SA1202 // Public API intentionally follows protected implementation properties.
+	/// <summary>Starts transport processing after the channel and its owning <see cref="JsonRpc"/> instance have been configured.</summary>
+	/// <remarks><see cref="JsonRpc.Start"/> calls this method automatically. Call it directly only when using the channel without a <see cref="JsonRpc"/> instance.</remarks>
+	public void Start() => this.transportReady.TrySetResult(true);
+#pragma warning restore SA1202
+
 	public async ValueTask DisposeAsync()
 	{
 #if NET
@@ -73,7 +79,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 
 		// The outbound queue is read without a cancellation token (see HandleOutboundMessagesAsync), so completing it is what wakes that reader.
 		this.Writer.TryComplete(new OperationCanceledException(this.disposalSource.Token));
-		this.StartTransport();
+		this.Start();
 
 #pragma warning disable VSTHRD003 // Avoid awaiting foreign Tasks - No main thread dependency.
 		await Task.WhenAll(this.inboundTaskProcessor, this.outboundTaskProcessor).ConfigureAwait(false);
@@ -145,9 +151,6 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	protected static Channel<JsonRpcMessage> CreateOutboundChannel(int? capacity) => capacity is null
 		? Channel.CreateUnbounded<JsonRpcMessage>(new UnboundedChannelOptions { SingleReader = true })
 		: Channel.CreateBounded<JsonRpcMessage>(new BoundedChannelOptions(capacity.Value) { SingleReader = true });
-
-	/// <summary>Starts transport processing after a derived channel has initialized its framing.</summary>
-	protected void StartTransport() => this.transportReady.TrySetResult(true);
 
 	protected abstract IAsyncEnumerable<JsonRpcMessage> ReceiveMessagesAsync(PipeReader reader, CancellationToken cancellationToken);
 

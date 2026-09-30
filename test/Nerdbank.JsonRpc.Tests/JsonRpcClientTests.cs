@@ -1,8 +1,11 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.IO.Pipelines;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
 using Microsoft.VisualStudio.Threading;
+using Nerdbank.Streams;
 using PolyType;
 
 /// <summary>
@@ -21,6 +24,20 @@ public partial class JsonRpcClientTests : TestBase
 		this.jsonRpc = new(new MockJsonRpcPipeChannel(jsonRpcChannel));
 
 		this.jsonRpc.Start();
+	}
+
+	[Test]
+	public async Task LoggerReceivesPreBufferedTransportMessage()
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcJsonChannel channel = new(local, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited);
+		await peer.Output.WriteAsync("{\"jsonrpc\":\"2.0\",\"method\":\"test\"}\n"u8.ToArray(), this.TimeoutToken);
+
+		RecordingLogger logger = new();
+		using JsonRpc rpc = new(channel) { Logger = logger };
+		rpc.Start();
+
+		Assert.Equal("JSON-RPC JsonRpcRequest", await logger.MessageReceived.Task.WithCancellation(this.TimeoutToken));
 	}
 
 	[Test]
@@ -219,4 +236,22 @@ public partial class JsonRpcClientTests : TestBase
 	[GenerateShapeFor<int>]
 	[GenerateShapeFor<int[]>]
 	private partial class Witness;
+
+	private sealed class RecordingLogger : ILogger
+	{
+		internal TaskCompletionSource<string> MessageReceived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public IDisposable? BeginScope<TState>(TState state)
+			where TState : notnull => null;
+
+		public bool IsEnabled(LogLevel logLevel) => true;
+
+		public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+		{
+			if (eventId.Id == 2)
+			{
+				this.MessageReceived.TrySetResult(formatter(state, exception));
+			}
+		}
+	}
 }

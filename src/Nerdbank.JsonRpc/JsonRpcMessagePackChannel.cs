@@ -66,7 +66,6 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 		this.messagePackSerializer = serializer;
 		this.framing = framing;
 		this.Serializer = new MessagePackSerializerPlugin(this.messagePackSerializer);
-		this.StartTransport();
 	}
 
 	/// <summary>Gets the default serializer for MessagePack channels.</summary>

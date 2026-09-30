@@ -44,7 +44,6 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 	{
 		this.Serializer = serializer;
 		this.framing = framing;
-		this.StartTransport();
 	}
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcJsonChannel"/> class.</summary>
