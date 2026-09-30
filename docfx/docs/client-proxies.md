@@ -4,9 +4,9 @@ The client proxy generator is included in the `Nerdbank.JsonRpc` NuGet package a
 
 ## Supported contracts
 
-Generated proxy contracts must be interfaces. Their methods may return `ValueTask<T>`, `Task<T>`, `ValueTask`, or `Task` for requests, or `void` for notifications. Properties and ordinary interface events are not remote method calls; see [Events as notifications](events.md) for supported event patterns.
+Generated proxy contracts must be `partial`, non-nested, non-generic interfaces. Their methods must be non-generic and may return `ValueTask<T>`, `Task<T>`, `ValueTask`, or `Task` for requests, `IAsyncEnumerable<T>` for streaming requests, or `void` for notifications. Properties and ordinary interface events are not remote method calls; see [Events as notifications](events.md) for supported event patterns.
 
-Method parameters and return values must have PolyType shapes so the connection's serializer can encode and decode them. A method may include one `CancellationToken`, which must be its final parameter. The token controls the complete RPC request and is not serialized as an argument. Cancellation after a request is sent propagates to the remote target using `$/cancelRequest`; see [Cancellation](protocol-behavior.md#cancellation).
+Parameters may not be optional, `params`, `ref`, `out`, or `in`. Method parameters and return values must have PolyType shapes so the connection's serializer can encode and decode them. A method may include one `CancellationToken`, which must be its final parameter and is not serialized as an argument. For requests, cancellation after sending propagates to the remote target using `$/cancelRequest`. Notifications have no request ID, so their token controls only local argument serialization and enqueueing. See [Cancellation](protocol-behavior.md#cancellation).
 
 The proxy resolves its type-shape provider once and caches the shapes it needs. <xref:Nerdbank.JsonRpc.JsonRpc.Attach*> and <xref:Nerdbank.JsonRpc.JsonRpcBatch.Attach*> accept an optional immutable <xref:Nerdbank.JsonRpc.JsonRpcProxyOptions> record for per-proxy argument encoding:
 
