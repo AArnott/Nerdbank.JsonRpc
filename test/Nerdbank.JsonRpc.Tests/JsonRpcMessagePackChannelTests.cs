@@ -356,13 +356,15 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 	[Arguments(JsonRpcEncoding.MessagePack)]
 	public async Task JsonRpcMaximumMessageSizeConfiguresBuiltInChannel(JsonRpcEncoding encoding)
 	{
+		(IDuplexPipe defaultLocal, _) = FullDuplexStream.CreatePipePair();
+		using JsonRpc defaultRpc = new(CreateChannel(defaultLocal, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader));
+		Assert.Equal(8 * 1024 * 1024, defaultRpc.MaximumMessageSize);
+
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
 		JsonRpcPipeChannel channel = encoding == JsonRpcEncoding.Json
 			? new JsonRpcJsonChannel(local, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger<JsonRpcPipeChannel>())
 			: CreateChannel(local, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader);
-		using JsonRpc rpc = new(channel);
-		Assert.Equal(8 * 1024 * 1024, rpc.MaximumMessageSize);
-		rpc.MaximumMessageSize = 32;
+		using JsonRpc rpc = new(channel) { MaximumMessageSize = 32 };
 
 		if (encoding == JsonRpcEncoding.Json)
 		{
@@ -381,9 +383,9 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 	public void JsonRpcMaximumMessageSizeMustBePositive()
 	{
 		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
-		using JsonRpc rpc = new(CreateChannel(local, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader));
-		Assert.Throws<ArgumentOutOfRangeException>(() => rpc.MaximumMessageSize = 0);
-		Assert.Throws<ArgumentOutOfRangeException>(() => rpc.MaximumMessageSize = -1);
+		JsonRpcPipeChannel channel = CreateChannel(local, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader);
+		Assert.Throws<ArgumentOutOfRangeException>(() => new JsonRpc(channel) { MaximumMessageSize = 0 });
+		Assert.Throws<ArgumentOutOfRangeException>(() => new JsonRpc(channel) { MaximumMessageSize = -1 });
 	}
 
 	[Test]

@@ -296,11 +296,7 @@ public class WireCompatibilityTests : TestBase
 		internal static WirePeer ConnectToNerdbankServer(IWireService target, bool streamJsonRpcNaming = false)
 		{
 			(IDuplexPipe peerPipe, IDuplexPipe rpcPipe) = FullDuplexStream.CreatePipePair();
-			JsonRpc rpc = Create(rpcPipe);
-			if (streamJsonRpcNaming)
-			{
-				rpc.MarshaledTargetOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity };
-			}
+			JsonRpc rpc = Create(rpcPipe, streamJsonRpcNaming, server: true);
 
 			rpc.AddRpcTarget<IWireService>(target);
 			rpc.Start();
@@ -310,11 +306,7 @@ public class WireCompatibilityTests : TestBase
 		internal static WirePeer ConnectToNerdbankClient(bool streamJsonRpcNaming = false)
 		{
 			(IDuplexPipe peerPipe, IDuplexPipe rpcPipe) = FullDuplexStream.CreatePipePair();
-			JsonRpc rpc = Create(rpcPipe);
-			if (streamJsonRpcNaming)
-			{
-				rpc.MarshaledProxyOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity };
-			}
+			JsonRpc rpc = Create(rpcPipe, streamJsonRpcNaming, server: false);
 
 			rpc.Start();
 			return new(rpc, peerPipe, rpc.Attach<IWireService>());
@@ -355,7 +347,17 @@ public class WireCompatibilityTests : TestBase
 			}
 		}
 
-		private static JsonRpc Create(IDuplexPipe pipe)
-			=> new(new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
+		private static JsonRpc Create(IDuplexPipe pipe, bool streamJsonRpcNaming, bool server)
+		{
+			JsonRpcPipeChannel channel = new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance);
+			if (!streamJsonRpcNaming)
+			{
+				return new(channel);
+			}
+
+			return server
+				? new(channel) { MarshaledTargetOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity } }
+				: new(channel) { MarshaledProxyOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity } };
+		}
 	}
 }

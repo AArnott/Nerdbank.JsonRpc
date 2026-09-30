@@ -234,18 +234,14 @@ public partial class JoinableTaskTokenTests : TestBase
 	}
 
 	[Test]
-	public async Task ConfigurationIsLockedAfterStart()
+	public async Task ConfigurationUsesObjectInitializer()
 	{
 		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
 		await using JsonRpcPipeChannel channel = CreateChannel(local, WireEncoding.Json);
-		using JsonRpc rpc = new(channel);
 		JoinableTaskTokenTracker tracker = new();
-		rpc.JoinableTaskTracker = tracker;
+		using JsonRpc rpc = new(channel) { JoinableTaskTracker = tracker };
 		Assert.Same(tracker, rpc.JoinableTaskTracker);
-		Assert.Throws<ArgumentNullException>(() => rpc.JoinableTaskTracker = null!);
-		rpc.Start();
-		Assert.Throws<InvalidOperationException>(() => rpc.JoinableTaskFactory = CreateJoinableTaskContext().Factory);
-		Assert.Throws<InvalidOperationException>(() => rpc.JoinableTaskTracker = new());
+		Assert.Throws<ArgumentNullException>(() => new JsonRpc(channel) { JoinableTaskTracker = null! });
 	}
 
 	/// <summary>
@@ -289,17 +285,12 @@ public partial class JoinableTaskTokenTests : TestBase
 		await using JsonRpcPipeChannel upstreamChannel = CreateChannel(upstreamLocal, WireEncoding.Json);
 		await using JsonRpcPipeChannel downstreamChannel = CreateChannel(downstreamLocal, WireEncoding.Json);
 		JoinableTaskTokenTracker? tracker = isolatedTracker ? new() : null;
-		using JsonRpc downstream = new(downstreamChannel);
-		using JsonRpc upstream = new(upstreamChannel);
-		if (tracker is not null)
-		{
-			upstream.JoinableTaskTracker = tracker;
-			if (shareTracker)
-			{
-				downstream.JoinableTaskTracker = tracker;
-			}
-		}
-
+		using JsonRpc downstream = tracker is not null && shareTracker
+			? new(downstreamChannel) { JoinableTaskTracker = tracker }
+			: new(downstreamChannel);
+		using JsonRpc upstream = tracker is not null
+			? new(upstreamChannel) { JoinableTaskTracker = tracker }
+			: new(upstreamChannel);
 		Intermediary intermediary = new(downstream, expectedConcurrency: 3);
 		upstream.AddRpcTarget(intermediary);
 		downstream.Start();
@@ -593,12 +584,10 @@ public partial class JoinableTaskTokenTests : TestBase
 			{
 				SynchronizationContext.SetSynchronizationContext(new SingleThreadedSynchronizationContext());
 				JoinableTaskContext context = new();
-				using JsonRpc a = new(aChannel);
-				if (configureJoinableTaskFactory)
+				using JsonRpc a = new(aChannel)
 				{
-					a.JoinableTaskFactory = context.Factory;
-				}
-
+					JoinableTaskFactory = configureJoinableTaskFactory ? context.Factory : null,
+				};
 				a.AddRpcTarget(new ProcessA(context));
 				a.Start();
 
