@@ -75,7 +75,12 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		// Store a delegate we can reuse to avoid allocations.
 		this.cancelOutboundRequestDelegate = this.CancelOutboundRequest;
 
+#if NETWASM
+		// NetWasm: dynamic (attribute-based) shape resolution is unavailable, so use the source-generated provider directly.
+		this.AddRpcTarget(new SpecialMethodsTarget(this), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc.Default.GetTypeShapeOrThrow<SpecialMethodsTarget>());
+#else
 		this.AddRpcTarget(new SpecialMethodsTarget(this));
+#endif
 	}
 
 	/// <summary>Gets or sets the maximum encoded message size, in bytes.</summary>
