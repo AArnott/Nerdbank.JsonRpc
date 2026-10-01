@@ -1403,6 +1403,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+	/// <summary>Associates a contract interface with either a generated factory or legacy proxy metadata.</summary>
 	internal sealed class ProxyFactoryRegistration
 	{
 		/// <summary>Initializes a new instance of the <see cref="ProxyFactoryRegistration"/> class.</summary>

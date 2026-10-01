@@ -42,6 +42,24 @@ public class OptionalInterfaceTests
 	}
 
 	[Test]
+	public async Task LegacyOptionalProxyMetadataIsUsedForMarshaledRoundTrip()
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, JsonRpcEncoding.MessagePack));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, JsonRpcEncoding.MessagePack));
+		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
+		serverRpc.Start();
+		clientRpc.Start();
+		IOptionalInterfaceService client = clientRpc.Attach<IOptionalInterfaceService>();
+
+		IOptionalObject result = await client.GetObjectAsync(1, CancellationToken.None);
+
+		Assert.IsType<LegacyOptionalObjectProxy>(result);
+		Assert.Equal(7, await ((ISubtractCapability)result).CalculateAsync(3, CancellationToken.None));
+		result.Dispose();
+	}
+
+	[Test]
 	public async Task UnknownCapabilitiesAreIgnored()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();

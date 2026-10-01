@@ -138,9 +138,8 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		JsonRpcOptionalProxyFactoryAttribute? optionalProxyFactory = knownAdvertisedInterfaces.Count == 0 ? null : MarshalableCache<T>.OptionalProxyFactories
 			.SingleOrDefault(attribute => attribute.InterfaceIds.Count == knownAdvertisedInterfaces.Count && attribute.InterfaceIds.All(knownAdvertisedInterfaces.Contains));
 #pragma warning disable CS0618 // Support proxy metadata emitted by previous versions of the source generator.
-		JsonRpcOptionalProxyImplementationAttribute? legacyOptionalProxy = optionalProxyFactory is null && knownAdvertisedInterfaces.Count > 0
-			? MarshalableCache<T>.LegacyOptionalProxyImplementations.SingleOrDefault(attribute => attribute.InterfaceIds.Count == knownAdvertisedInterfaces.Count && attribute.InterfaceIds.All(knownAdvertisedInterfaces.Contains))
-			: null;
+		JsonRpcOptionalProxyImplementationAttribute? legacyOptionalProxy = knownAdvertisedInterfaces.Count == 0 ? null : MarshalableCache<T>.LegacyOptionalProxyImplementations
+			.SingleOrDefault(attribute => attribute.InterfaceIds.Count == knownAdvertisedInterfaces.Count && attribute.InterfaceIds.All(knownAdvertisedInterfaces.Contains));
 #pragma warning restore CS0618
 		if (knownAdvertisedInterfaces.Count > 0 && optionalProxyFactory is null && legacyOptionalProxy is null)
 		{
@@ -148,10 +147,12 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		}
 
 		MarshaledObjectProxyClient client = new(owner, handle, callScopedHandle);
-		T proxy = optionalProxyFactory is not null
-			? JsonRpc.CastProxy<T>(optionalProxyFactory.CreateProxy(client, owner.MarshaledProxyOptions))
-			: legacyOptionalProxy is not null
-				? JsonRpc.CastProxy<T>(JsonRpc.CreateLegacyProxy(legacyOptionalProxy.ProxyType, client, owner.MarshaledProxyOptions))
+
+		// Prefer explicit legacy metadata when present. Old assemblies have no factory attributes, but this also makes the compatibility behavior deterministic if both are applied.
+		T proxy = legacyOptionalProxy is not null
+			? JsonRpc.CastProxy<T>(JsonRpc.CreateLegacyProxy(legacyOptionalProxy.ProxyType, client, owner.MarshaledProxyOptions))
+			: optionalProxyFactory is not null
+				? JsonRpc.CastProxy<T>(optionalProxyFactory.CreateProxy(client, owner.MarshaledProxyOptions))
 				: JsonRpc.AttachCore<T>(client, owner.MarshaledProxyOptions);
 		RemoteHandles.Add(proxy!, new(this, handle, callScopedLifetime, callScopedHandle));
 		return proxy;

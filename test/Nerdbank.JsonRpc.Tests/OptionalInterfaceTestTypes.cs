@@ -13,6 +13,9 @@ internal partial interface IOptionalInterfaceService
 [RpcMarshalable]
 [RpcMarshalableOptionalInterface(-7, typeof(ISubtractCapability))]
 [RpcMarshalableOptionalInterface(42, typeof(IMultiplyCapability))]
+#pragma warning disable CS0618 // Exercise compatibility with metadata emitted by the previous source generator.
+[JsonRpcOptionalProxyImplementation(typeof(LegacyOptionalObjectProxy), -7)]
+#pragma warning restore CS0618
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IOptionalObject : IDisposable
 {
