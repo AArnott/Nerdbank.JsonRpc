@@ -27,14 +27,14 @@ public partial class EventNotificationTests : TestBase
 
 		// The server hosts the event source and raises events as ordinary CLR event invocations.
 		EventfulTarget eventSource = new();
-		JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe, NullLogger.Instance));
+		JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe));
 		serverRpc.AddRpcTarget(eventSource);
 		serverRpc.Start();
 
 		// The client hosts an ordinary RPC target whose method names/signatures match the notifications
 		// the server will send, and it's registered the same way any other RPC target would be.
 		EventReceiver receiver = new();
-		JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe, NullLogger.Instance));
+		JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe));
 		clientRpc.AddRpcTarget(receiver);
 		clientRpc.Start();
 

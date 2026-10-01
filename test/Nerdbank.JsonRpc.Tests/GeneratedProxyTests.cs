@@ -17,8 +17,10 @@ public class GeneratedProxyTests
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 
-		JsonRpcMessagePackChannel clientChannel = new(clientPipe, NullLogger.Instance);
-		JsonRpcMessagePackChannel serverChannel = new(serverPipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel clientChannel = new(clientPipe);
+		clientChannel.Start();
+		JsonRpcMessagePackChannel serverChannel = new(serverPipe);
+		serverChannel.Start();
 
 		JsonRpc clientRpc = new(clientChannel);
 		clientRpc.Start();
@@ -343,8 +345,10 @@ public class GeneratedProxyTests
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 
-		JsonRpcMessagePackChannel clientChannel = new(clientPipe, NullLogger.Instance);
-		JsonRpcMessagePackChannel serverChannel = new(serverPipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel clientChannel = new(clientPipe);
+		clientChannel.Start();
+		JsonRpcMessagePackChannel serverChannel = new(serverPipe);
+		serverChannel.Start();
 
 		JsonRpc clientRpc = new(clientChannel);
 		clientRpc.Start();
@@ -505,6 +509,79 @@ public class GeneratedProxyTests
 		Assert.Contains("interface", ex.Message, StringComparison.OrdinalIgnoreCase);
 	}
 
+	[Test]
+	public void GeneratedProxy_AttachSupportsLegacyMetadata()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
+
+		Assert.IsType<LegacyGeneratedProxy>(clientRpc.Attach(typeof(ILegacyGeneratedProxyContract)));
+		Assert.IsType<LegacyGeneratedProxy>(clientRpc.Attach<ILegacyGeneratedProxyContract>());
+	}
+
+	[Test]
+	public void GeneratedProxy_AttachGenericRequiresInterfaceType()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
+
+		ArgumentException ex = Assert.Throws<ArgumentException>(() => clientRpc.Attach<string>());
+		Assert.Contains("interface", ex.Message, StringComparison.OrdinalIgnoreCase);
+	}
+
+	[Test]
+	public void GeneratedProxy_AttachFailuresAreRepeatable()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
+
+		// Failures must not be cached as a type initialization failure that changes the exception on later calls.
+		for (int i = 0; i < 2; i++)
+		{
+			Assert.Throws<NotSupportedException>(() => clientRpc.Attach<INotGeneratedProxy>());
+			Assert.Throws<NotSupportedException>(() => clientRpc.Attach(typeof(INotGeneratedProxy)));
+			Assert.Throws<ArgumentException>(() => clientRpc.Attach<string>());
+		}
+	}
+
+	[Test]
+	public void GeneratedProxy_FactoryReturningNullThrowsProxyMismatchException()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
+
+		InvalidOperationException byType = Assert.Throws<InvalidOperationException>(() => clientRpc.Attach(typeof(INullFactoryProxy)));
+		Assert.Contains("returned null", byType.Message);
+
+		InvalidOperationException generic = Assert.Throws<InvalidOperationException>(() => clientRpc.Attach<INullFactoryProxy>());
+		Assert.Contains("returned null", generic.Message);
+	}
+
+	[Test]
+	public void GeneratedProxy_AttachByTypeCreatesProxy()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
+
+		object proxy = clientRpc.Attach(typeof(ICalculator));
+
+		Assert.IsAssignableFrom<ICalculator>(proxy);
+		Assert.NotSame(proxy, clientRpc.Attach(typeof(ICalculator)));
+	}
+
+	[Test]
+	public void GeneratedProxy_AttachFromGenericContext()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
+
+		Assert.IsAssignableFrom<ICalculator>(AttachGeneric<ICalculator>(clientRpc));
+		Assert.IsAssignableFrom<IPositionalCalculator>(AttachGeneric<IPositionalCalculator>(clientRpc));
+
+		static T AttachGeneric<T>(JsonRpc rpc)
+			where T : class => rpc.Attach<T>();
+	}
+
 	private static JsonRpcValue CreateEmptyArguments(JsonRpc rpc)
 	{
 		using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named: false, count: 0);
@@ -514,8 +591,8 @@ public class GeneratedProxyTests
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
 		=> encoding switch
 		{
-			JsonRpcEncoding.MessagePack => new JsonRpcMessagePackChannel(pipe, NullLogger.Instance),
-			JsonRpcEncoding.Json => new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance),
+			JsonRpcEncoding.MessagePack => new JsonRpcMessagePackChannel(pipe),
+			JsonRpcEncoding.Json => new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited),
 			_ => throw new ArgumentOutOfRangeException(nameof(encoding)),
 		};
 }

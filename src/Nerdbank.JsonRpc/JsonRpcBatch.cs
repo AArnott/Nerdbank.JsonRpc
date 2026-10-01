@@ -50,7 +50,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	/// <typeparam name="T">The RPC contract interface to proxy.</typeparam>
 	/// <param name="options">Options controlling argument encoding for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <typeparamref name="T"/>.</returns>
-	public T Attach<T>(JsonRpcProxyOptions? options = null) => (T)this.Attach(typeof(T), options);
+	public T Attach<T>(JsonRpcProxyOptions? options = null) => JsonRpc.AttachCore<T>(this, options);
 
 	/// <summary>
 	/// Attaches a generated client proxy for an RPC contract interface to this batch.

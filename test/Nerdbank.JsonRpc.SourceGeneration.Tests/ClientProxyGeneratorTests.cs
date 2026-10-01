@@ -363,6 +363,25 @@ public class ClientProxyGeneratorTests
 	}
 
 	[Test]
+	public async Task ProxyFactoryNameAvoidsCollisionWithInterfaceMembers()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			[GenerateJsonRpcProxy]
+			internal partial interface ICollidingNames
+			{
+				Task NerdbankJsonRpc_ProxyFactoryAttribute();
+
+				Task NerdbankJsonRpc_ProxyFactoryAttribute_();
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, validateGeneratedCode: true);
+	}
+
+	[Test]
 	public async Task UnchangedOutputsAreCachedAndOnlyChangedProxyIsRegenerated()
 	{
 		const string Contracts = /* lang=c#-test */ """

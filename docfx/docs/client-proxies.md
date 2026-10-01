@@ -1,12 +1,18 @@
 # Generated client proxies
 
-The experimental client proxy generator is included in the `Nerdbank.JsonRpc` NuGet package as a C# analyzer. It creates a typed implementation of an interface annotated with <xref:Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute>. It uses PolyType-generated method shapes for arguments and results. [Getting Started](getting-started.md) shows the contract declaration and how to call <xref:Nerdbank.JsonRpc.JsonRpc.Attach*> on a connection to obtain the proxy; you do not need to construct the generated implementation yourself.
+The client proxy generator is included in the `Nerdbank.JsonRpc` NuGet package as a C# analyzer. It creates a typed implementation of an interface annotated with <xref:Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute>. It uses PolyType-generated method shapes for arguments and results. [Getting Started](getting-started.md) shows the contract declaration and how to call <xref:Nerdbank.JsonRpc.JsonRpc.Attach*> on a connection to obtain the proxy; you do not need to construct the generated implementation yourself.
+
+## Supported contracts
+
+Generated proxy contracts must be `partial`, non-nested, non-generic interfaces. Their methods must be non-generic and may return `ValueTask<T>`, `Task<T>`, `ValueTask`, or `Task` for requests, `IAsyncEnumerable<T>` for streaming requests, or `void` for notifications. Generated proxies do not implement properties or events, so omit abstract properties and events from the contract (or provide default interface implementations). To receive remote event notifications, register methods that match their names and arguments; see [Events as notifications](events.md#receiving-the-notifications).
+
+Parameters may not be optional, `params`, `ref`, `out`, or `in`. Method parameters and return values must have PolyType shapes so the connection's serializer can encode and decode them. A method may include one `CancellationToken`, which must be its final parameter and is not serialized as an argument. For requests, cancellation after sending propagates to the remote target using `$/cancelRequest`. Notifications have no request ID, so their token controls only local argument serialization and enqueueing. See [Cancellation](protocol-behavior.md#cancellation).
 
 The proxy resolves its type-shape provider once and caches the shapes it needs. <xref:Nerdbank.JsonRpc.JsonRpc.Attach*> and <xref:Nerdbank.JsonRpc.JsonRpcBatch.Attach*> accept an optional immutable <xref:Nerdbank.JsonRpc.JsonRpcProxyOptions> record for per-proxy argument encoding:
 
 [!code-csharp[](../../samples/cs/client-proxies.cs#proxy-options)]
 
-Generated methods support `ValueTask<T>`, `Task<T>`, `ValueTask`, `Task`, and `void` notifications. Arguments are positional arrays by default; set <xref:Nerdbank.JsonRpc.JsonRpcProxyOptions.UseNamedArguments> to send named object/map arguments when attaching a proxy. The same generated contract can be attached in either mode, including to a batch. For example, attach `ICalculator` with the named setting:
+Arguments are positional arrays by default; set <xref:Nerdbank.JsonRpc.JsonRpcProxyOptions.UseNamedArguments> to send named object/map arguments when attaching a proxy. The same generated contract can be attached in either mode, including to a batch. For example, attach `ICalculator` with the named setting:
 
 [!code-csharp[](../../samples/cs/client-proxies.cs#named-arguments)]
 

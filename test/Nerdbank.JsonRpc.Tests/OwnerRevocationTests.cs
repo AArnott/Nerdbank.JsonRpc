@@ -92,8 +92,8 @@ public class OwnerRevocationTests
 	public async Task InvocationDispatchedBeforeRevocationMayComplete()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
-		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe, NullLogger.Instance));
-		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe, NullLogger.Instance));
+		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe));
+		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe));
 		RemoteCounterService target = new();
 		target.Counter.IncrementStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
 		target.Counter.ContinueIncrement = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -114,8 +114,8 @@ public class OwnerRevocationTests
 	public async Task ReceiverDisposalRacingRevocationIsSafe()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
-		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe, NullLogger.Instance));
-		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe, NullLogger.Instance));
+		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe));
+		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe));
 		RemoteCounterService target = new();
 		serverRpc.AddRpcTarget<IRemoteCounterService>(target);
 		serverRpc.Start();
@@ -135,6 +135,6 @@ public class OwnerRevocationTests
 
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
 		=> encoding == JsonRpcEncoding.Json
-			? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance)
-			: new JsonRpcMessagePackChannel(pipe, NullLogger.Instance);
+			? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
+			: new JsonRpcMessagePackChannel(pipe);
 }

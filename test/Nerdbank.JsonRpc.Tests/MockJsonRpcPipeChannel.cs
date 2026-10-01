@@ -4,7 +4,6 @@
 using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
-using Microsoft.Extensions.Logging.Abstractions;
 using Nerdbank.Streams;
 
 namespace Nerdbank.JsonRpc.Tests;
@@ -18,7 +17,7 @@ internal sealed class MockJsonRpcPipeChannel : JsonRpcPipeChannel
 	/// <param name="serializer">The serializer to bind to this channel.</param>
 	/// <param name="writeDirectly">Whether writes should bypass the transport queue to observe writer failures synchronously.</param>
 	internal MockJsonRpcPipeChannel(Channel<JsonRpcMessage> messages, JsonRpcSerializer? serializer = null, bool writeDirectly = false)
-		: base(FullDuplexStream.CreatePipePair().Item1, CreateInboundChannel(null), CreateOutboundChannel(null), NullLogger.Instance)
+		: base(FullDuplexStream.CreatePipePair().Item1, CreateInboundChannel(null), CreateOutboundChannel(null))
 	{
 		this.messages = messages;
 		if (writeDirectly)
@@ -27,7 +26,6 @@ internal sealed class MockJsonRpcPipeChannel : JsonRpcPipeChannel
 		}
 
 		this.Serializer = serializer ?? new MessagePackSerializerPlugin(JsonRpcMessagePackChannel.DefaultSerializer);
-		this.StartTransport();
 	}
 
 	/// <inheritdoc/>

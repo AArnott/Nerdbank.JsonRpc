@@ -19,8 +19,8 @@ public partial class MarshaledObjectManagerTests : TestBase
 	public async Task MessagePackMarkerRejectsNilLifetime()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
-		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe, NullLogger.Instance));
-		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe, NullLogger.Instance));
+		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe));
+		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe));
 		serverRpc.AddRpcTarget<IRemoteCounterService>(new RemoteCounterService());
 		serverRpc.Start();
 		clientRpc.Start();
@@ -44,8 +44,8 @@ public partial class MarshaledObjectManagerTests : TestBase
 	public async Task JsonMarkerRejectsNonStringLifetime()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
-		using JsonRpc clientRpc = new(new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
-		using JsonRpc serverRpc = new(new JsonRpcJsonChannel(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
+		using JsonRpc clientRpc = new(new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited));
+		using JsonRpc serverRpc = new(new JsonRpcJsonChannel(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited));
 		serverRpc.AddRpcTarget<IRemoteCounterService>(new RemoteCounterService());
 		serverRpc.Start();
 		clientRpc.Start();
@@ -58,7 +58,7 @@ public partial class MarshaledObjectManagerTests : TestBase
 	public async Task RejectedRawNotificationReleasesMarshaledArguments()
 	{
 		(IDuplexPipe localPipe, _) = FullDuplexStream.CreatePipePair();
-		using JsonRpc rpc = new(new JsonRpcMessagePackChannel(localPipe, NullLogger.Instance));
+		using JsonRpc rpc = new(new JsonRpcMessagePackChannel(localPipe));
 		TestDisposable disposable = new();
 		JsonRpcValue arguments;
 		using (JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named: false, count: 1, this.TimeoutToken))
@@ -75,7 +75,7 @@ public partial class MarshaledObjectManagerTests : TestBase
 	public void DisposingArgumentsBuilderTwiceDoesNotAffectLaterBuilder()
 	{
 		(IDuplexPipe localPipe, _) = FullDuplexStream.CreatePipePair();
-		using JsonRpc rpc = new(new JsonRpcMessagePackChannel(localPipe, NullLogger.Instance));
+		using JsonRpc rpc = new(new JsonRpcMessagePackChannel(localPipe));
 		ITypeShape<IDisposable> shape = TypeShapeResolver.ResolveDynamicOrThrow<IDisposable, Witness>();
 
 		JsonRpcArgumentsBuilder first = rpc.CreateArguments(named: false, count: 0, this.TimeoutToken);
@@ -102,7 +102,7 @@ public partial class MarshaledObjectManagerTests : TestBase
 	public void RejectedRawBatchNotificationReleasesMarshaledArguments()
 	{
 		(IDuplexPipe localPipe, _) = FullDuplexStream.CreatePipePair();
-		using JsonRpc rpc = new(new JsonRpcMessagePackChannel(localPipe, NullLogger.Instance));
+		using JsonRpc rpc = new(new JsonRpcMessagePackChannel(localPipe));
 		TestDisposable disposable = new();
 		JsonRpcValue arguments;
 		using (JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named: false, count: 1, this.TimeoutToken))
@@ -120,8 +120,8 @@ public partial class MarshaledObjectManagerTests : TestBase
 	public async Task DisposingRemoteProxySendsReleaseNotification()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
-		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe, NullLogger.Instance));
-		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe, NullLogger.Instance));
+		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe));
+		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe));
 		DisposableTarget target = new();
 		serverRpc.AddRpcTarget<IDisposableContract>(target);
 		serverRpc.Start();
@@ -139,8 +139,8 @@ public partial class MarshaledObjectManagerTests : TestBase
 	public async Task ReleasingOneOfMultipleRemoteProxiesKeepsLocalObjectAlive()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
-		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe, NullLogger.Instance));
-		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe, NullLogger.Instance));
+		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe));
+		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe));
 		DisposableTarget target = new();
 		serverRpc.AddRpcTarget<IDisposableContract>(target);
 		serverRpc.Start();
@@ -164,8 +164,8 @@ public partial class MarshaledObjectManagerTests : TestBase
 	public async Task DisposeReleasesLocallyOwnedObjects()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
-		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe, NullLogger.Instance));
-		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe, NullLogger.Instance));
+		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe));
+		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe));
 		DisposableTarget target = new();
 		serverRpc.AddRpcTarget<IDisposableContract>(target);
 		serverRpc.Start();
@@ -183,8 +183,8 @@ public partial class MarshaledObjectManagerTests : TestBase
 	public async Task NamedReleaseNotificationReleasesLocalObject()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
-		using JsonRpc clientRpc = new(new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
-		using JsonRpc serverRpc = new(new JsonRpcJsonChannel(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
+		using JsonRpc clientRpc = new(new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited));
+		using JsonRpc serverRpc = new(new JsonRpcJsonChannel(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited));
 		DisposableTarget target = new();
 		serverRpc.AddRpcTarget<IDisposableContract>(target);
 		serverRpc.Start();
@@ -205,8 +205,8 @@ public partial class MarshaledObjectManagerTests : TestBase
 	public async Task ReleaseNotificationForSenderOwnedHandleDoesNotReleaseLocalObject()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
-		using JsonRpc clientRpc = new(new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
-		using JsonRpc serverRpc = new(new JsonRpcJsonChannel(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
+		using JsonRpc clientRpc = new(new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited));
+		using JsonRpc serverRpc = new(new JsonRpcJsonChannel(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited));
 		DisposableTarget target = new();
 		serverRpc.AddRpcTarget<IDisposableContract>(target);
 		serverRpc.Start();
@@ -233,7 +233,7 @@ public partial class MarshaledObjectManagerTests : TestBase
 	public void DisposingUnsentRawBatchDoesNotScanMarkerShapedPayload()
 	{
 		(IDuplexPipe localPipe, _) = FullDuplexStream.CreatePipePair();
-		using JsonRpc rpc = new(new JsonRpcJsonChannel(localPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance));
+		using JsonRpc rpc = new(new JsonRpcJsonChannel(localPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited));
 		TestDisposable disposable = new();
 		using (JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named: false, count: 1, this.TimeoutToken))
 		{
@@ -256,7 +256,7 @@ public partial class MarshaledObjectManagerTests : TestBase
 	public async Task DisposingUnsentBatchReleasesDisposableArgument()
 	{
 		(IDuplexPipe localPipe, _) = FullDuplexStream.CreatePipePair();
-		using JsonRpc rpc = new(new JsonRpcMessagePackChannel(localPipe, NullLogger.Instance));
+		using JsonRpc rpc = new(new JsonRpcMessagePackChannel(localPipe));
 		using JsonRpcBatch batch = rpc.CreateBatch();
 		IDisposableContract client = batch.Attach<IDisposableContract>();
 		TestDisposable disposable = new();

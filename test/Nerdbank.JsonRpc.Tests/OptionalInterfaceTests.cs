@@ -42,6 +42,24 @@ public class OptionalInterfaceTests
 	}
 
 	[Test]
+	public async Task LegacyOptionalProxyMetadataIsUsedForMarshaledRoundTrip()
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, JsonRpcEncoding.MessagePack));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, JsonRpcEncoding.MessagePack));
+		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
+		serverRpc.Start();
+		clientRpc.Start();
+		IOptionalInterfaceService client = clientRpc.Attach<IOptionalInterfaceService>();
+
+		IOptionalObject result = await client.GetObjectAsync(1, CancellationToken.None);
+
+		Assert.IsType<LegacyOptionalObjectProxy>(result);
+		Assert.Equal(7, await ((ISubtractCapability)result).CalculateAsync(3, CancellationToken.None));
+		result.Dispose();
+	}
+
+	[Test]
 	public async Task UnknownCapabilitiesAreIgnored()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
@@ -76,6 +94,6 @@ public class OptionalInterfaceTests
 
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
 		=> encoding == JsonRpcEncoding.Json
-			? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance)
-			: new JsonRpcMessagePackChannel(pipe, NullLogger.Instance);
+			? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
+			: new JsonRpcMessagePackChannel(pipe);
 }

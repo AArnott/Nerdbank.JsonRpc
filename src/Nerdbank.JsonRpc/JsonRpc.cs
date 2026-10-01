@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 #if NET
@@ -13,7 +13,6 @@ using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.Threading;
 using Nerdbank.MessagePack;
 using Nerdbank.Streams;
@@ -24,6 +23,19 @@ namespace Nerdbank.JsonRpc;
 public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArgumentsBuilderContext
 {
 	internal const string SpecialCancelMethodName = "$/cancelRequest";
+
+	/// <summary>
+	/// A <see cref="System.Threading.SynchronizationContext"/> that schedules work to the thread pool with no ordering guarantees.
+	/// </summary>
+	/// <remarks>Used when <see cref="SynchronizationContext"/> is set to <see langword="null"/>. A base <see cref="System.Threading.SynchronizationContext"/> posts to the thread pool, so no two dispatches are serialized against each other.</remarks>
+	private static readonly SynchronizationContext UnorderedDispatchSynchronizationContext = new();
+
+	/// <summary>
+	/// Proxy factories found by <see cref="Attach(Type, JsonRpcProxyOptions?)"/>, keyed by interface.
+	/// A <see langword="null"/> value records that the interface has no generated proxy.
+	/// </summary>
+	/// <remarks>Allocated on first use so that apps that only use <see cref="Attach{T}(JsonRpcProxyOptions?)"/> never pay for it.</remarks>
+	private static ConcurrentDictionary<Type, ProxyFactoryRegistration?>? proxyFactoriesByType;
 
 	/// <summary>Requests being dispatched, keyed by ID. Guarded by locking the dictionary itself.</summary>
 	/// <remarks>A locked <see cref="Dictionary{TKey, TValue}"/> stores entries inline, where a concurrent dictionary would allocate a node per request.</remarks>
@@ -47,7 +59,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private readonly JsonRpcPipeChannel channel;
 	private readonly JsonRpcSerializer userDataSerializer;
 	private bool disposed;
-	private ILogger logger = NullLogger.Instance;
 	private Task? readerTask;
 	private int nextRequestId;
 
@@ -76,79 +87,62 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		this.AddRpcTarget(new SpecialMethodsTarget(this));
 	}
 
-	/// <summary>Gets or sets the maximum encoded message size, in bytes.</summary>
+	/// <summary>Gets or initializes the maximum encoded message size, in bytes.</summary>
 	/// <value>Defaults to 8 MiB. The built-in JSON and MessagePack channels apply this limit to received messages; the JSON channel also applies it to sent messages.</value>
 	/// <exception cref="ArgumentOutOfRangeException">Thrown when set to zero or a negative value.</exception>
 	public int MaximumMessageSize
 	{
 		get => this.channel.GetMaximumMessageSize();
-		set
-		{
-			this.channel.SetMaximumMessageSize(value);
-		}
+		init => this.channel.SetMaximumMessageSize(value);
 	}
 
-	/// <summary>Gets or sets the multiplexing stream used to send and receive out-of-band streams.</summary>
-	/// <remarks>This property must be set before <see cref="Start"/>.</remarks>
+	/// <summary>Gets or initializes the multiplexing stream used to send and receive out-of-band streams.</summary>
+	/// <remarks>Initialize this property before calling <see cref="Start"/>.</remarks>
 	public MultiplexingStream? MultiplexingStream
 	{
 		get => this.outOfBandStreams.MultiplexingStream;
-		set
-		{
-			this.ThrowIfStarted();
-			this.outOfBandStreams.MultiplexingStream = value;
-		}
+		init => this.outOfBandStreams.MultiplexingStream = value;
 	}
 
-	/// <summary>Gets or sets the options used for proxies implicitly created for RPC-marshalable objects.</summary>
+	/// <summary>Gets or initializes the options used for proxies implicitly created for RPC-marshalable objects.</summary>
 	/// <value>Defaults to <see cref="JsonRpcProxyOptions.Default"/>, the same naming convention used for ordinary RPC proxies.</value>
 	/// <remarks>
 	/// To communicate with StreamJsonRpc's default RPC-marshalable objects, set this property to
-	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> before <see cref="Start"/>.
+	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> in the <see cref="JsonRpc"/> object initializer.
 	/// This does not change options for proxies attached through <see cref="Attach{T}(JsonRpcProxyOptions?)"/>.
 	/// </remarks>
 	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
-	/// <exception cref="InvalidOperationException">Thrown when set after <see cref="Start"/>.</exception>
 	public JsonRpcProxyOptions MarshaledProxyOptions
 	{
 		get => field ??= JsonRpcProxyOptions.Default;
-		set
-		{
-			Requires.NotNull(value);
-			this.ThrowIfStarted();
-			field = value;
-		}
+		init => field = Requires.NotNull(value);
 	}
 
-	/// <summary>Gets or sets the options used when implicitly registering RPC-marshalable targets.</summary>
+	/// <summary>Gets or initializes the options used when implicitly registering RPC-marshalable targets.</summary>
 	/// <value>Defaults to <see cref="JsonRpcTargetOptions.Default"/>, the same naming convention used for ordinary RPC targets.</value>
 	/// <remarks>
 	/// To communicate with StreamJsonRpc's default RPC-marshalable objects, set this property to
-	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> before <see cref="Start"/>.
+	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> in the <see cref="JsonRpc"/> object initializer.
 	/// This does not change options for targets registered through <see cref="AddRpcTarget{T}(T, ITypeShape{T}, JsonRpcTargetOptions?)"/>.
 	/// </remarks>
 	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
-	/// <exception cref="InvalidOperationException">Thrown when set after <see cref="Start"/>.</exception>
 	public JsonRpcTargetOptions MarshaledTargetOptions
 	{
 		get => field ??= JsonRpcTargetOptions.Default;
-		set
-		{
-			Requires.NotNull(value);
-			this.ThrowIfStarted();
-			field = value;
-		}
+		init => field = Requires.NotNull(value);
 	}
 
-	/// <summary>Gets the logger for request and connection failures. Defaults to <see cref="NullLogger.Instance"/>.</summary>
+	/// <summary>Gets or initializes the logger for request, connection, and transport diagnostics.</summary>
+	/// <value>Defaults to <see cref="Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance"/>.</value>
+	/// <remarks>Setting this property also configures the underlying channel to use the same logger.</remarks>
 	public ILogger Logger
 	{
-		get => this.logger;
-		init => this.logger = value ?? throw new ArgumentNullException(nameof(value));
+		get => this.channel.GetLogger();
+		init => this.channel.SetLogger(value);
 	}
 
 	/// <summary>
-	/// Gets or sets the <see cref="Microsoft.VisualStudio.Threading.JoinableTaskFactory"/> to participate in to mitigate deadlocks with the main thread.
+	/// Gets or initializes the <see cref="Microsoft.VisualStudio.Threading.JoinableTaskFactory"/> to participate in to mitigate deadlocks with the main thread.
 	/// </summary>
 	/// <value>Defaults to <see langword="null"/>.</value>
 	/// <remarks>
@@ -160,22 +154,17 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// </para>
 	/// <para>
 	/// The token is exchanged as the top-level <c>joinableTaskToken</c> JSON-RPC envelope property, compatible with StreamJsonRpc.
-	/// This property may only be set before <see cref="Start"/> is called.
+	/// Initialize this property before calling <see cref="Start"/>.
 	/// </para>
 	/// </remarks>
-	/// <exception cref="InvalidOperationException">Thrown when setting this property after <see cref="Start"/> has been called.</exception>
 	public JoinableTaskFactory? JoinableTaskFactory
 	{
 		get => field;
-		set
-		{
-			this.ThrowIfStarted();
-			field = value;
-		}
+		init => field = value;
 	}
 
 	/// <summary>
-	/// Gets or sets the <see cref="JoinableTaskTokenTracker"/> used to forward <see cref="JoinableTask"/> tokens
+	/// Gets or initializes the <see cref="JoinableTaskTokenTracker"/> used to forward <see cref="JoinableTask"/> tokens
 	/// from inbound requests to outbound requests when <see cref="JoinableTaskFactory"/> is <see langword="null"/>.
 	/// </summary>
 	/// <value>Defaults to an instance shared with all other <see cref="JsonRpc"/> instances that do not set this property.</value>
@@ -184,20 +173,55 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <para>
 	/// Set this only in advanced scenarios where one process has many <see cref="JsonRpc"/> instances connected to different
 	/// remote parties and correlating tokens across them is undesirable.
-	/// This property may only be set before <see cref="Start"/> is called.
+	/// Initialize this property before calling <see cref="Start"/>.
 	/// </para>
 	/// </remarks>
-	/// <exception cref="InvalidOperationException">Thrown when setting this property after <see cref="Start"/> has been called.</exception>
 	public JoinableTaskTokenTracker JoinableTaskTracker
 	{
 		get => field ??= JoinableTaskTokenTracker.Default;
-		set
-		{
-			Requires.NotNull(value);
-			this.ThrowIfStarted();
-			field = value;
-		}
+		init => field = Requires.NotNull(value);
 	}
+
+	/// <summary>
+	/// Gets or initializes the <see cref="System.Threading.SynchronizationContext"/> that schedules the start of each inbound RPC method invocation.
+	/// </summary>
+	/// <value>
+	/// Defaults to a private <see cref="NonConcurrentSynchronizationContext"/> instance (configured as non-sticky)
+	/// that guarantees inbound method invocations <em>begin</em> in the order the remote party sent the requests.
+	/// </value>
+	/// <remarks>
+	/// <para>
+	/// With the default value, inbound requests are dispatched on the thread pool, one at a time, in the order they arrive.
+	/// Because the default context is non-sticky, it does not become <see cref="System.Threading.SynchronizationContext.Current"/>
+	/// while a method runs. As soon as a method yields at its first <see langword="await"/> (or returns), the next queued method
+	/// may begin. Long-running methods therefore execute and complete concurrently with each other and in any order;
+	/// only the order in which they <em>start</em> is guaranteed to match the order the client sent them.
+	/// </para>
+	/// <para>
+	/// Set this property to <see langword="null"/> to remove the ordering guarantee entirely. Each inbound invocation is then
+	/// queued to the thread pool independently, so invocations may begin in any order and with full concurrency.
+	/// This offers the highest throughput and is appropriate when the order in which methods start does not matter.
+	/// </para>
+	/// <para>
+	/// Alternatively, initialize this property with your own <see cref="System.Threading.SynchronizationContext"/> (for example, one that
+	/// marshals to an application's main thread) to have every inbound method invocation begin execution on that context.
+	/// A context that runs callbacks one at a time preserves the ordering guarantee described above; one that runs them
+	/// concurrently does not. As with the default, a method's continuations after its first <see langword="await"/> are
+	/// subject to normal <see langword="await"/> semantics and only return to this context if the context applies itself
+	/// as <see cref="System.Threading.SynchronizationContext.Current"/> and the method does not use
+	/// <see cref="Task.ConfigureAwait(bool)"/> with <see langword="false"/>.
+	/// </para>
+	/// <para>
+	/// Work that precedes the invocation (such as request parsing and cancellation bookkeeping) always runs on the reader
+	/// loop in message order and is unaffected by this property.
+	/// </para>
+	/// <para>
+	/// Inbound <c>$/cancelRequest</c> notifications are exempt from this property and always begin on the thread pool.
+	/// Because their purpose is to interrupt work that is already running, queueing them behind that work would prevent
+	/// a handler that occupies the dispatcher without yielding from ever being canceled.
+	/// </para>
+	/// </remarks>
+	public SynchronizationContext? SynchronizationContext { get; init; } = new NonConcurrentSynchronizationContext(sticky: false);
 
 	JsonRpcSerializer IJsonRpcClient.Serializer => this.userDataSerializer;
 
@@ -237,6 +261,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <summary>Gets the manager that tracks <see cref="IAsyncEnumerable{T}"/> generators for this connection.</summary>
 	internal AsyncEnumerableManager AsyncEnumerables => this.asyncEnumerables;
 
+	/// <summary>Gets the <see cref="System.Threading.SynchronizationContext"/> that dispatch should use, falling back to a thread pool context that imposes no ordering when <see cref="SynchronizationContext"/> is <see langword="null"/>.</summary>
+	private SynchronizationContext DispatchSynchronizationContext => this.SynchronizationContext ?? UnorderedDispatchSynchronizationContext;
+
 	/// <inheritdoc/>
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);
 
@@ -247,6 +274,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <typeparam name="T">The statically shaped type describing which members of <paramref name="target"/> to register.</typeparam>
 	/// <param name="target">The object whose methods should be invoked in response to matching incoming requests and notifications.</param>
 	/// <param name="options">Options controlling method name resolution for this target. When <see langword="null"/>, default options are used.</param>
+	/// <remarks>Register all initial targets before calling <see cref="Start"/> so the listener is ready to dispatch every method as soon as it begins reading messages.</remarks>
 	public void AddRpcTarget<T>(T target, JsonRpcTargetOptions? options = null)
 		where T : IShapeable<T> => this.AddRpcTarget(target, T.GetTypeShape(), options);
 #endif
@@ -258,6 +286,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <param name="target">The object whose methods should be invoked in response to matching incoming requests and notifications.</param>
 	/// <param name="shape">The type shape describing <paramref name="target"/>'s methods.</param>
 	/// <param name="options">Options controlling method name resolution for this target. When <see langword="null"/>, default options are used.</param>
+	/// <remarks>Register all initial targets before calling <see cref="Start"/> so the listener is ready to dispatch every method as soon as it begins reading messages.</remarks>
 	public void AddRpcTarget<T>(T target, ITypeShape<T> shape, JsonRpcTargetOptions? options = null)
 	{
 		Requires.NotNull(shape);
@@ -302,7 +331,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <typeparam name="T">The RPC contract interface to proxy.</typeparam>
 	/// <param name="options">Options controlling argument encoding for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <typeparamref name="T"/>.</returns>
-	public T Attach<T>(JsonRpcProxyOptions? options = null) => (T)this.Attach(typeof(T), options);
+	public T Attach<T>(JsonRpcProxyOptions? options = null) => AttachCore<T>(this, options);
 
 	/// <summary>
 	/// Attaches a generated client proxy for an RPC contract interface to this JSON-RPC connection.
@@ -310,7 +339,12 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <param name="interfaceType">The RPC contract interface to proxy.</param>
 	/// <param name="options">Options controlling argument encoding for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <paramref name="interfaceType"/>.</returns>
-	public object Attach(Type interfaceType, JsonRpcProxyOptions? options = null) => AttachCore(this, interfaceType, options ?? JsonRpcProxyOptions.Default);
+	/// <remarks>
+	/// The generated proxy factory is looked up once per interface and cached.
+	/// When the interface is known at compile time, <see cref="Attach{T}(JsonRpcProxyOptions?)"/> is slightly faster
+	/// because it avoids the dictionary lookup.
+	/// </remarks>
+	public object Attach(Type interfaceType, JsonRpcProxyOptions? options = null) => AttachCore(this, interfaceType, options);
 
 #if NET
 	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, CancellationToken cancellationToken)
@@ -458,8 +492,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+	/// <summary>Starts listening for and dispatching incoming messages.</summary>
+	/// <remarks>Call this after registering initial targets with <see cref="AddRpcTarget{T}(T, ITypeShape{T}, JsonRpcTargetOptions?)"/> to avoid rejecting incoming requests or dropping notifications for which no RPC target has yet been registered.</remarks>
 	public void Start()
 	{
+		this.channel.Start();
 		this.readerTask = this.ReadAsync(this.channel.Reader);
 	}
 
@@ -518,35 +555,76 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		return this.marshaledObjects.Revoke(target);
 	}
 
-	internal static object AttachCore(
-		IJsonRpcClient client,
-		Type interfaceType,
-		JsonRpcProxyOptions? options = null,
-#if NET
-		[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] Type? implementationType = null)
-#else
-		Type? implementationType = null)
-#endif
+	/// <summary>
+	/// Creates a generated client proxy for an RPC contract interface, using a factory that is discovered once per interface.
+	/// </summary>
+	/// <typeparam name="T">The RPC contract interface to proxy.</typeparam>
+	/// <param name="client">The client the proxy sends requests through.</param>
+	/// <param name="options">Options controlling the proxy's behavior.</param>
+	/// <returns>The new proxy.</returns>
+	internal static T AttachCore<T>(IJsonRpcClient client, JsonRpcProxyOptions? options)
+	{
+		Requires.NotNull(client);
+
+		// When no factory is cached, defer to the non-generic path to throw the appropriate exception.
+		return ProxyFactoryCache<T>.Registration is { } registration
+			? CastProxy<T>(registration.CreateProxy(client, options ?? JsonRpcProxyOptions.Default))
+			: (T)AttachCore(client, typeof(T), options);
+	}
+
+	/// <summary>
+	/// Creates a generated client proxy for an RPC contract interface.
+	/// </summary>
+	/// <param name="client">The client the proxy sends requests through.</param>
+	/// <param name="interfaceType">The RPC contract interface to proxy.</param>
+	/// <param name="options">Options controlling the proxy's behavior.</param>
+	/// <returns>The new proxy.</returns>
+	internal static object AttachCore(IJsonRpcClient client, Type interfaceType, JsonRpcProxyOptions? options)
 	{
 		Requires.NotNull(client);
 		Requires.NotNull(interfaceType);
 		Requires.Argument(interfaceType.IsInterface, nameof(interfaceType), "The requested proxy type must be an interface.");
 
-		JsonRpcProxyImplementationAttribute? implementation = interfaceType.GetCustomAttribute<JsonRpcProxyImplementationAttribute>();
-		Type proxyType = implementationType ?? implementation?.ProxyType
+		ProxyFactoryRegistration registration = GetCachedProxyFactory(interfaceType)
 			?? throw new NotSupportedException($"No generated JSON-RPC proxy was found for interface '{interfaceType.FullName}'. Add GenerateJsonRpcProxyAttribute to the interface or request an annotated composite interface.");
-		if (!interfaceType.IsAssignableFrom(proxyType))
+		object proxy = registration.CreateProxy(client, options ?? JsonRpcProxyOptions.Default);
+		if (!interfaceType.IsInstanceOfType(proxy))
 		{
-			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not implement requested interface '{interfaceType.FullName}'.");
+			throw CreateProxyMismatchException(proxy, interfaceType);
 		}
 
+		return proxy;
+	}
+
+	/// <summary>
+	/// Casts a newly created proxy to the interface it was expected to implement.
+	/// </summary>
+	/// <typeparam name="T">The RPC contract interface the proxy should implement.</typeparam>
+	/// <param name="proxy">The proxy.</param>
+	/// <returns>The proxy, typed as <typeparamref name="T"/>.</returns>
+	/// <exception cref="InvalidOperationException">Thrown when <paramref name="proxy"/> does not implement <typeparamref name="T"/>.</exception>
+	internal static T CastProxy<T>(object proxy) => proxy is T typed ? typed : throw CreateProxyMismatchException(proxy, typeof(T));
+
+	/// <summary>Creates a proxy identified by legacy metadata emitted by an earlier source generator.</summary>
+	/// <param name="proxyType">The generated proxy type.</param>
+	/// <param name="client">The client the proxy sends requests through.</param>
+	/// <param name="options">Options controlling the proxy's behavior.</param>
+	/// <returns>The generated proxy instance.</returns>
+	internal static object CreateLegacyProxy(
+#if NET
+		[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)]
+#endif
+		Type proxyType,
+		IJsonRpcClient client,
+		JsonRpcProxyOptions options)
+	{
 		ConstructorInfo? constructor = proxyType.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null, types: [typeof(IJsonRpcClient), typeof(JsonRpcProxyOptions)], modifiers: null);
 		if (constructor is null)
 		{
 			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not have a constructor that accepts an IJsonRpcClient and JsonRpcProxyOptions instance.");
 		}
 
-		return constructor.Invoke([client, options ?? JsonRpcProxyOptions.Default]);
+		return constructor.Invoke([client, options]);
 	}
 
 	internal RequestId GetNextRequestId()
@@ -794,6 +872,63 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private static JoinableTask<DispatchResponse> RunUnderJoinableTaskAsync(JoinableTaskFactory jtf, MethodInvoker invoker, DispatchRequest dispatchRequest, string parentToken)
 		=> jtf.RunAsync(() => invoker(dispatchRequest).AsTask(), parentToken, JoinableTaskCreationOptions.None);
 
+	/// <summary>
+	/// Finds the source-generated factory for an RPC contract interface's proxy.
+	/// </summary>
+	/// <param name="interfaceType">The RPC contract interface.</param>
+	/// <returns>The factory, or <see langword="null"/> if <paramref name="interfaceType"/> is not an interface with a generated proxy.</returns>
+	private static ProxyFactoryRegistration? FindProxyFactory(Type interfaceType)
+	{
+		if (!interfaceType.IsInterface)
+		{
+			return null;
+		}
+
+		if (interfaceType.GetCustomAttribute<JsonRpcProxyFactoryAttribute>(inherit: false) is { } factory)
+		{
+			return new(factory, legacyProxyType: null);
+		}
+
+#pragma warning disable CS0618 // Support proxy metadata emitted by previous versions of the source generator.
+		return interfaceType.GetCustomAttribute<JsonRpcProxyImplementationAttribute>(inherit: false) is { } legacyFactory
+			? new(factory: null, legacyFactory.ProxyType)
+			: null;
+#pragma warning restore CS0618
+	}
+
+	/// <summary>
+	/// Gets the generated factory or legacy proxy type for an RPC contract interface, searching only on first request.
+	/// </summary>
+	/// <param name="interfaceType">The RPC contract interface.</param>
+	/// <returns>The proxy registration, or <see langword="null"/> if <paramref name="interfaceType"/> has no generated proxy.</returns>
+	private static ProxyFactoryRegistration? GetCachedProxyFactory(Type interfaceType)
+	{
+		ConcurrentDictionary<Type, ProxyFactoryRegistration?> cache = Volatile.Read(ref proxyFactoriesByType)
+			?? Interlocked.CompareExchange(ref proxyFactoriesByType, new(), null)
+			?? proxyFactoriesByType!;
+		return cache.GetOrAdd(interfaceType, FindProxyFactory);
+	}
+
+	private static InvalidOperationException CreateProxyMismatchException(object? proxy, Type interfaceType)
+		=> new($"The generated proxy factory returned {(proxy is null ? "null" : $"an instance of '{proxy.GetType().FullName}'")} which does not implement requested interface '{interfaceType.FullName}'.");
+
+	/// <summary>Gets the <see cref="System.Threading.SynchronizationContext"/> to dispatch a particular request on.</summary>
+	/// <param name="request">The inbound request.</param>
+	/// <returns>The context to begin the invocation on.</returns>
+	/// <remarks>
+	/// <para>
+	/// <c>$/cancelRequest</c> notifications always go to the thread pool rather than to <see cref="SynchronizationContext"/>.
+	/// Their entire purpose is to interrupt work that is already running, so queueing them behind that work would be
+	/// self-defeating: a handler that occupies the ordered dispatcher without yielding could never be canceled.
+	/// </para>
+	/// <para>
+	/// They are not run on the reader loop itself because cancellation invokes arbitrary user callbacks,
+	/// which must not be given the opportunity to stall message processing.
+	/// </para>
+	/// </remarks>
+	private SynchronizationContext GetDispatchSynchronizationContext(JsonRpcRequest request)
+		=> request.Method == SpecialCancelMethodName ? UnorderedDispatchSynchronizationContext : this.DispatchSynchronizationContext;
+
 	private ValueTask<JsonRpcResponse?> DispatchAsync(JsonRpcRequest request)
 	{
 		if (request.Id is null && (this.progress.TryHandleNotification(request) || this.marshaledObjects.TryHandleNotification(request)))
@@ -901,6 +1036,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				this.JoinableTaskTracker.Token = parentToken;
 			}
 
+			// IMPORTANT: This must remain the first await in this method, with no other await between it and
+			// invoking the handler. It is what guarantees that handlers *begin* executing in the order the
+			// remote party sent the requests (per the SynchronizationContext property).
+			// Awaiting a SynchronizationContext does not allocate a delegate or closure of its own: the awaiter
+			// posts the state machine's existing continuation using a cached, static SendOrPostCallback.
+			await this.GetDispatchSynchronizationContext(request);
+
 			DispatchResponse response = jtf is not null && parentToken is not null
 				? await RunUnderJoinableTaskAsync(jtf, invoker, dispatchRequest, parentToken)
 				: await invoker(dispatchRequest).ConfigureAwait(false);
@@ -931,8 +1073,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	}
 
 	private void FaultOnFailure(Task task) => task.ContinueWith(static (t, s) => ((JsonRpc)s!).Fault(t.Exception!), this, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default).Forget();
-
-	private void ThrowIfStarted() => Verify.Operation(this.readerTask is null, "This property may only be set before Start is called.");
 
 	private void ProcessResponse(JsonRpcResponse response)
 	{
@@ -1229,7 +1369,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 		[Key(0)]
 		[PropertyShape(IsRequired = true)]
-		public RequestId Id { get; set; }
+		public RequestId Id { get; init; }
 	}
 
 	private struct PendingInboundRequest : IDisposable
@@ -1261,5 +1401,56 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				tracker.CancellationTokenSource?.Cancel();
 			}
 		}
+	}
+
+	/// <summary>Associates a contract interface with either a generated factory or legacy proxy metadata.</summary>
+	internal sealed class ProxyFactoryRegistration
+	{
+		/// <summary>Initializes a new instance of the <see cref="ProxyFactoryRegistration"/> class.</summary>
+		/// <param name="factory">The source-generated factory, if available.</param>
+		/// <param name="legacyProxyType">The proxy type from legacy metadata, if available.</param>
+		internal ProxyFactoryRegistration(
+			JsonRpcProxyFactoryAttribute? factory,
+#if NET
+			[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)]
+#endif
+			Type? legacyProxyType)
+		{
+			this.Factory = factory;
+			this.LegacyProxyType = legacyProxyType;
+		}
+
+		/// <summary>Gets the source-generated factory, if the proxy was emitted by the current generator.</summary>
+		internal JsonRpcProxyFactoryAttribute? Factory { get; }
+
+		/// <summary>Gets the legacy proxy type, if the proxy was emitted by an earlier generator.</summary>
+#if NET
+		[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)]
+#endif
+		internal Type? LegacyProxyType { get; }
+
+		/// <summary>Creates a proxy using either its generated factory or legacy constructor metadata.</summary>
+		/// <param name="client">The client the proxy sends requests through.</param>
+		/// <param name="options">Options controlling the proxy's behavior.</param>
+		/// <returns>The generated proxy instance.</returns>
+		internal object CreateProxy(IJsonRpcClient client, JsonRpcProxyOptions options)
+			=> this.Factory is not null
+				? this.Factory.CreateProxy(client, options)
+				: CreateLegacyProxy(this.LegacyProxyType!, client, options);
+	}
+
+	/// <summary>
+	/// Caches the source-generated proxy factory for an RPC contract interface.
+	/// </summary>
+	/// <typeparam name="T">The RPC contract interface.</typeparam>
+	/// <remarks>
+	/// The runtime initializes this type's field once per <typeparamref name="T"/>, thread-safely,
+	/// so attaching a proxy needs only a field read instead of a reflection lookup.
+	/// The initializer never throws, so a failed lookup isn't cached as a permanent <see cref="TypeInitializationException"/>.
+	/// </remarks>
+	private static class ProxyFactoryCache<T>
+	{
+		/// <summary>The factory registration, or <see langword="null"/> if <typeparamref name="T"/> has no generated proxy.</summary>
+		internal static readonly ProxyFactoryRegistration? Registration = FindProxyFactory(typeof(T));
 	}
 }

@@ -20,7 +20,7 @@
     <PackageVersion Include="MessagePack" Version="3.1.10" />
     <PackageVersion Include="Microsoft.VisualStudio.DiagnosticsHub.BenchmarkDotNetDiagnosers" Version="18.7.37220.1" />
     <PackageVersion Include="Microsoft.VisualStudio.Threading" Version="18.7.23" />
-    <PackageVersion Include="Nerdbank.Json" Version="0.1.1057-alpha" />
+    <PackageVersion Include="Nerdbank.Json" Version="0.1.1066-alpha" />
     <PackageVersion Include="Nerdbank.MessagePack" Version="1.4.52-alpha" />
     <PackageVersion Include="Nerdbank.Streams" Version="2.15.4-alpha" />
     <PackageVersion Include="System.Threading.Channels" Version="10.0.12" />

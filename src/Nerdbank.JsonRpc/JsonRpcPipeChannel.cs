@@ -5,6 +5,7 @@ using System.IO.Pipelines;
 using System.Threading.Channels;
 using Microsoft;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Nerdbank.JsonRpc;
 
@@ -31,20 +32,18 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	private readonly ChannelWriter<JsonRpcMessage> inboundMessageWriter;
 	private readonly ChannelReader<JsonRpcMessage> outboundMessageReader;
 	private volatile int maximumMessageSize = DefaultMaximumMessageSize;
+	private ILogger logger = NullLogger.Instance;
 	private volatile bool inboundAborted;
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcPipeChannel"/> class with deferred transport startup.</summary>
 	/// <param name="pipe">The connected duplex pipe.</param>
 	/// <param name="inboundChannel">The queue for received messages.</param>
 	/// <param name="outboundChannel">The queue for messages to send.</param>
-	/// <param name="logger">The transport logger.</param>
-	protected JsonRpcPipeChannel(IDuplexPipe pipe, Channel<JsonRpcMessage> inboundChannel, Channel<JsonRpcMessage> outboundChannel, ILogger logger)
+	protected JsonRpcPipeChannel(IDuplexPipe pipe, Channel<JsonRpcMessage> inboundChannel, Channel<JsonRpcMessage> outboundChannel)
 	{
 		Requires.NotNull(pipe);
 		Requires.NotNull(inboundChannel);
 		Requires.NotNull(outboundChannel);
-
-		this.Logger = logger;
 
 		(this.Reader, this.inboundMessageWriter) = (inboundChannel.Reader, inboundChannel.Writer);
 		(this.Writer, this.outboundMessageReader) = (outboundChannel.Writer, outboundChannel.Reader);
@@ -62,7 +61,13 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	/// <summary>Gets the configured maximum size, in bytes, of a message.</summary>
 	protected int MaximumMessageSize => this.maximumMessageSize;
 
-	protected ILogger Logger { get; }
+	protected ILogger Logger => Volatile.Read(ref this.logger);
+
+#pragma warning disable SA1202 // Public API intentionally follows protected implementation properties.
+	/// <summary>Starts transport processing after the channel and its owning <see cref="JsonRpc"/> instance have been configured.</summary>
+	/// <remarks><see cref="JsonRpc.Start"/> calls this method automatically. Call it directly only when using the channel without a <see cref="JsonRpc"/> instance.</remarks>
+	public void Start() => this.transportReady.TrySetResult(true);
+#pragma warning restore SA1202
 
 	public async ValueTask DisposeAsync()
 	{
@@ -74,7 +79,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 
 		// The outbound queue is read without a cancellation token (see HandleOutboundMessagesAsync), so completing it is what wakes that reader.
 		this.Writer.TryComplete(new OperationCanceledException(this.disposalSource.Token));
-		this.StartTransport();
+		this.Start();
 
 #pragma warning disable VSTHRD003 // Avoid awaiting foreign Tasks - No main thread dependency.
 		await Task.WhenAll(this.inboundTaskProcessor, this.outboundTaskProcessor).ConfigureAwait(false);
@@ -107,6 +112,14 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	/// <returns>The maximum encoded message size in bytes.</returns>
 	internal int GetMaximumMessageSize() => this.maximumMessageSize;
 
+	/// <summary>Gets the logger used by this channel.</summary>
+	/// <returns>The logger used for transport diagnostics.</returns>
+	internal ILogger GetLogger() => this.Logger;
+
+	/// <summary>Sets the logger used by this channel.</summary>
+	/// <param name="value">The logger to use for transport diagnostics.</param>
+	internal void SetLogger(ILogger value) => Volatile.Write(ref this.logger, Requires.NotNull(value));
+
 	/// <summary>Completes the queue of received messages so that a consumer waiting on it without a cancellation token wakes up.</summary>
 	/// <param name="cancellationToken">The canceled token that ended the consumer's interest in received messages.</param>
 	/// <remarks>
@@ -138,9 +151,6 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	protected static Channel<JsonRpcMessage> CreateOutboundChannel(int? capacity) => capacity is null
 		? Channel.CreateUnbounded<JsonRpcMessage>(new UnboundedChannelOptions { SingleReader = true })
 		: Channel.CreateBounded<JsonRpcMessage>(new BoundedChannelOptions(capacity.Value) { SingleReader = true });
-
-	/// <summary>Starts transport processing after a derived channel has initialized its framing.</summary>
-	protected void StartTransport() => this.transportReady.TrySetResult(true);
 
 	protected abstract IAsyncEnumerable<JsonRpcMessage> ReceiveMessagesAsync(PipeReader reader, CancellationToken cancellationToken);
 
