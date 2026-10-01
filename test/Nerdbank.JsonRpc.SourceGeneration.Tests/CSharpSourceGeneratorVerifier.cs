@@ -18,14 +18,19 @@ internal static class CSharpSourceGeneratorVerifier
 	internal static DiagnosticResult Diagnostic(string diagnosticId)
 		=> new(diagnosticId, DiagnosticSeverity.Warning);
 
-	internal static async Task VerifyGeneratorAsync([StringSyntax("c#-test")] string source, params DiagnosticResult[] expected)
+	internal static Task VerifyGeneratorAsync([StringSyntax("c#-test")] string source, params DiagnosticResult[] expected)
+		=> VerifyGeneratorAsync(source, validateGeneratedCode: false, expected);
+
+	internal static async Task VerifyGeneratorAsync([StringSyntax("c#-test")] string source, bool validateGeneratedCode, params DiagnosticResult[] expected)
 	{
 		Test test = new()
 		{
-			CompilerDiagnostics = CompilerDiagnostics.None,
+			CompilerDiagnostics = validateGeneratedCode ? CompilerDiagnostics.Errors : CompilerDiagnostics.None,
 			TestCode = source,
 			ReferenceAssemblies = ReferenceAssemblies.Net.Net90,
-			TestBehaviors = TestBehaviors.SkipGeneratedCodeCheck | TestBehaviors.SkipGeneratedSourcesCheck,
+			TestBehaviors = validateGeneratedCode
+				? TestBehaviors.SkipGeneratedSourcesCheck
+				: TestBehaviors.SkipGeneratedCodeCheck | TestBehaviors.SkipGeneratedSourcesCheck,
 		};
 
 		test.TestState.AdditionalReferences.Add(typeof(GenerateJsonRpcProxyAttribute).Assembly);

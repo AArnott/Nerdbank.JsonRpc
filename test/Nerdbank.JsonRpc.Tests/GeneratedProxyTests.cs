@@ -535,6 +535,19 @@ public class GeneratedProxyTests
 	}
 
 	[Test]
+	public void GeneratedProxy_FactoryReturningNullThrowsProxyMismatchException()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
+
+		InvalidOperationException byType = Assert.Throws<InvalidOperationException>(() => clientRpc.Attach(typeof(INullFactoryProxy)));
+		Assert.Contains("returned null", byType.Message);
+
+		InvalidOperationException generic = Assert.Throws<InvalidOperationException>(() => clientRpc.Attach<INullFactoryProxy>());
+		Assert.Contains("returned null", generic.Message);
+	}
+
+	[Test]
 	public void GeneratedProxy_AttachByTypeCreatesProxy()
 	{
 		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();

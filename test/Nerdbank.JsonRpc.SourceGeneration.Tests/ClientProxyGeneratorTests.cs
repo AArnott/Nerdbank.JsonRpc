@@ -378,7 +378,7 @@ public class ClientProxyGeneratorTests
 			}
 			""";
 
-		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source);
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, validateGeneratedCode: true);
 	}
 
 	[Test]

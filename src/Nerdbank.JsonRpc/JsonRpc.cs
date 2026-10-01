@@ -871,8 +871,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		return cache.GetOrAdd(interfaceType, FindProxyFactory);
 	}
 
-	private static InvalidOperationException CreateProxyMismatchException(object proxy, Type interfaceType)
-		=> new($"The generated proxy type '{proxy.GetType().FullName}' does not implement requested interface '{interfaceType.FullName}'.");
+	private static InvalidOperationException CreateProxyMismatchException(object? proxy, Type interfaceType)
+		=> new($"The generated proxy factory returned {(proxy is null ? "null" : $"an instance of '{proxy.GetType().FullName}'")} which does not implement requested interface '{interfaceType.FullName}'.");
 
 	/// <summary>Gets the <see cref="System.Threading.SynchronizationContext"/> to dispatch a particular request on.</summary>
 	/// <param name="request">The inbound request.</param>
