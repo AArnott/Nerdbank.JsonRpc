@@ -25,6 +25,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 {
 	internal const string SpecialCancelMethodName = "$/cancelRequest";
 
+	/// <summary>
+	/// Proxy factories found by <see cref="Attach(Type, JsonRpcProxyOptions?)"/>, keyed by interface.
+	/// A <see langword="null"/> value records that the interface has no generated proxy.
+	/// </summary>
+	/// <remarks>Allocated on first use so that apps that only use <see cref="Attach{T}(JsonRpcProxyOptions?)"/> never pay for it.</remarks>
+	private static ConcurrentDictionary<Type, JsonRpcProxyFactoryAttribute?>? proxyFactoriesByType;
+
 	/// <summary>Requests being dispatched, keyed by ID. Guarded by locking the dictionary itself.</summary>
 	/// <remarks>A locked <see cref="Dictionary{TKey, TValue}"/> stores entries inline, where a concurrent dictionary would allocate a node per request.</remarks>
 	private readonly Dictionary<RequestId, PendingInboundRequest> pendingInboundRequests = [];
@@ -311,8 +318,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <param name="options">Options controlling argument encoding for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <paramref name="interfaceType"/>.</returns>
 	/// <remarks>
-	/// Prefer <see cref="Attach{T}(JsonRpcProxyOptions?)"/> when the interface is known at compile time,
-	/// since it caches the generated proxy factory where this method must look it up on each call.
+	/// The generated proxy factory is looked up once per interface and cached.
+	/// When the interface is known at compile time, <see cref="Attach{T}(JsonRpcProxyOptions?)"/> is slightly faster
+	/// because it avoids the dictionary lookup.
 	/// </remarks>
 	public object Attach(Type interfaceType, JsonRpcProxyOptions? options = null) => AttachCore(this, interfaceType, options);
 
@@ -552,7 +560,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		Requires.NotNull(interfaceType);
 		Requires.Argument(interfaceType.IsInterface, nameof(interfaceType), "The requested proxy type must be an interface.");
 
-		JsonRpcProxyFactoryAttribute factory = FindProxyFactory(interfaceType)
+		JsonRpcProxyFactoryAttribute factory = GetCachedProxyFactory(interfaceType)
 			?? throw new NotSupportedException($"No generated JSON-RPC proxy was found for interface '{interfaceType.FullName}'. Add GenerateJsonRpcProxyAttribute to the interface or request an annotated composite interface.");
 		object proxy = factory.CreateProxy(client, options ?? JsonRpcProxyOptions.Default);
 		if (!interfaceType.IsInstanceOfType(proxy))
@@ -824,6 +832,19 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <returns>The factory, or <see langword="null"/> if <paramref name="interfaceType"/> is not an interface with a generated proxy.</returns>
 	private static JsonRpcProxyFactoryAttribute? FindProxyFactory(Type interfaceType)
 		=> interfaceType.IsInterface ? interfaceType.GetCustomAttribute<JsonRpcProxyFactoryAttribute>(inherit: false) : null;
+
+	/// <summary>
+	/// Gets the source-generated factory for an RPC contract interface's proxy, searching for it only on first request.
+	/// </summary>
+	/// <param name="interfaceType">The RPC contract interface.</param>
+	/// <returns>The factory, or <see langword="null"/> if <paramref name="interfaceType"/> is not an interface with a generated proxy.</returns>
+	private static JsonRpcProxyFactoryAttribute? GetCachedProxyFactory(Type interfaceType)
+	{
+		ConcurrentDictionary<Type, JsonRpcProxyFactoryAttribute?> cache = Volatile.Read(ref proxyFactoriesByType)
+			?? Interlocked.CompareExchange(ref proxyFactoriesByType, new(), null)
+			?? proxyFactoriesByType!;
+		return cache.GetOrAdd(interfaceType, FindProxyFactory);
+	}
 
 	private static InvalidOperationException CreateProxyMismatchException(object proxy, Type interfaceType)
 		=> new($"The generated proxy type '{proxy.GetType().FullName}' does not implement requested interface '{interfaceType.FullName}'.");
