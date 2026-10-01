@@ -84,8 +84,12 @@ public abstract class RpcRoundTripBenchmarksBase
 		}
 	}
 
-	// The default MessagePack framing (a big-endian length header) matches StreamJsonRpc's LengthHeaderMessageHandler.
-	private static JsonRpcPipeChannel CreateNerdbankChannel(IDuplexPipe pipe, RpcEncoding encoding) => encoding switch
+	/// <summary>Creates a channel with the benchmark's framing and serializer for the chosen encoding.</summary>
+	/// <remarks>The default MessagePack framing (a big-endian length header) matches StreamJsonRpc's LengthHeaderMessageHandler.</remarks>
+	/// <param name="pipe">The connected transport.</param>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <returns>A channel ready for an RPC instance.</returns>
+	internal static JsonRpcPipeChannel CreateNerdbankChannel(IDuplexPipe pipe, RpcEncoding encoding) => encoding switch
 	{
 		RpcEncoding.Json => new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited),
 		RpcEncoding.MessagePack => new JsonRpcMessagePackChannel(pipe),

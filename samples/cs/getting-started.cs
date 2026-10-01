@@ -31,6 +31,29 @@ public static class Example
     }
     #endregion
 
+    #region shared-memory-connection
+
+    /// <summary>Calls the calculator over a shared-memory connection whose endpoints are both in this process.</summary>
+    /// <param name="cancellationToken">Cancels endpoint setup or the RPC request.</param>
+    /// <returns>The sum returned by the calculator.</returns>
+    public static async Task<int> CallOverSharedMemoryAsync(CancellationToken cancellationToken)
+    {
+        string name = Guid.NewGuid().ToString("N");
+        (SharedMemoryDuplexPipe clientPipe, SharedMemoryDuplexPipe serverPipe) = await ConnectSharedMemoryEndpointsAsync(name, cancellationToken);
+        using (clientPipe)
+        using (serverPipe)
+        {
+            using JsonRpc server = new(new JsonRpcMessagePackChannel(serverPipe));
+            server.AddRpcTarget<ICalculator>(new Calculator());
+            server.Start();
+
+            using JsonRpc client = new(new JsonRpcMessagePackChannel(clientPipe));
+            client.Start();
+            return await client.Attach<ICalculator>().AddAsync(1, 2, cancellationToken);
+        }
+    }
+    #endregion
+
     public static async Task ExposeCalculatorAsync(Stream stream, ILogger logger)
     {
         #region expose-target
@@ -53,6 +76,44 @@ public static class Example
         #endregion
 
         return sum;
+    }
+
+    private static async Task<(SharedMemoryDuplexPipe Client, SharedMemoryDuplexPipe Server)> ConnectSharedMemoryEndpointsAsync(string name, CancellationToken cancellationToken)
+    {
+        using CancellationTokenSource setupCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task<SharedMemoryDuplexPipe> listener = SharedMemoryDuplexPipe.ListenAsync(name, cancellationToken: setupCancellation.Token);
+        SharedMemoryDuplexPipe client;
+        try
+        {
+            client = await SharedMemoryDuplexPipe.ConnectAsync(name, cancellationToken: setupCancellation.Token);
+        }
+        catch (Exception connectionException)
+        {
+            await setupCancellation.CancelAsync();
+            try
+            {
+                (await listener).Dispose();
+            }
+            catch (OperationCanceledException) when (setupCancellation.IsCancellationRequested)
+            {
+            }
+            catch (Exception listenerException)
+            {
+                throw new AggregateException("Shared-memory connection setup and listener cleanup both failed.", connectionException, listenerException);
+            }
+
+            throw;
+        }
+
+        try
+        {
+            return (client, await listener);
+        }
+        catch
+        {
+            client.Dispose();
+            throw;
+        }
     }
 }
 
