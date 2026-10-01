@@ -40,4 +40,4 @@ These limits do not stop a peer from making many valid but expensive requests. T
 
 ## Error details
 
-When an RPC method throws an exception, the peer receives only a generic error ("The request could not be completed."). The exception details are not sent. Set <xref:Nerdbank.JsonRpc.JsonRpc.Logger> to record them locally instead. One case differs: the message of an exception thrown while producing items for an <xref:System.Collections.Generic.IAsyncEnumerable`1> result is currently sent to the peer, so avoid putting sensitive information in such messages.
+When an RPC method throws an exception, the peer receives only a generic error ("The request could not be completed."). The exception details are not sent. Set <xref:Nerdbank.JsonRpc.JsonRpc.Logger> to record them locally instead. One case differs: the message of an exception thrown while producing items for an <xref:System.Collections.Generic.IAsyncEnumerable`1> result is currently sent to the peer. This includes cancellation exception messages, so avoid putting sensitive information in those messages.

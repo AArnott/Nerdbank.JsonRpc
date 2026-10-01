@@ -135,6 +135,12 @@ public class RpcTransportBenchmarks
 			while (received < actual.Length)
 			{
 				ReadResult read = await server.Input.ReadAsync(timeout.Token);
+				if (read.Buffer.IsEmpty && read.IsCompleted)
+				{
+					server.Input.AdvanceTo(read.Buffer.End);
+					throw new InvalidOperationException("The shared-memory pipe completed before the transfer finished.");
+				}
+
 				int count = checked((int)Math.Min(read.Buffer.Length, actual.Length - received));
 				read.Buffer.Slice(0, count).CopyTo(actual.AsSpan(received));
 				server.Input.AdvanceTo(read.Buffer.GetPosition(count));
