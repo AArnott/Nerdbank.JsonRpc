@@ -35,8 +35,8 @@ public class ArgumentBuilderBenchmarks
 		JsonRpcSerializer serializer = this.Encoding == JsonRpcEncoding.Json ? new JsonSerializerPlugin(new Nerdbank.Json.JsonSerializer()) : new MessagePackSerializerPlugin(new MessagePackSerializer());
 		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
 		this.channel = this.Encoding == JsonRpcEncoding.Json
-			? new JsonRpcJsonChannel(local, (JsonSerializerPlugin)serializer, JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance)
-			: new JsonRpcMessagePackChannel(local, NullLogger.Instance, serializer: ((MessagePackSerializerPlugin)serializer).Serializer);
+			? new JsonRpcJsonChannel(local, (JsonSerializerPlugin)serializer, JsonRpcJsonFraming.NewlineDelimited)
+			: new JsonRpcMessagePackChannel(local, serializer: ((MessagePackSerializerPlugin)serializer).Serializer);
 		this.rpc = new JsonRpc(this.channel);
 		if (!this.Build().HasValue)
 		{

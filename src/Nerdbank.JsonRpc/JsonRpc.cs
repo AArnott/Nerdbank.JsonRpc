@@ -13,7 +13,6 @@ using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.Threading;
 using Nerdbank.MessagePack;
 using Nerdbank.Streams;
@@ -24,6 +23,12 @@ namespace Nerdbank.JsonRpc;
 public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArgumentsBuilderContext
 {
 	internal const string SpecialCancelMethodName = "$/cancelRequest";
+
+	/// <summary>
+	/// A <see cref="System.Threading.SynchronizationContext"/> that schedules work to the thread pool with no ordering guarantees.
+	/// </summary>
+	/// <remarks>Used when <see cref="SynchronizationContext"/> is set to <see langword="null"/>. A base <see cref="System.Threading.SynchronizationContext"/> posts to the thread pool, so no two dispatches are serialized against each other.</remarks>
+	private static readonly SynchronizationContext UnorderedDispatchSynchronizationContext = new();
 
 	/// <summary>
 	/// Proxy factories found by <see cref="Attach(Type, JsonRpcProxyOptions?)"/>, keyed by interface.
@@ -54,7 +59,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private readonly JsonRpcPipeChannel channel;
 	private readonly JsonRpcSerializer userDataSerializer;
 	private bool disposed;
-	private ILogger logger = NullLogger.Instance;
 	private Task? readerTask;
 	private int nextRequestId;
 
@@ -83,79 +87,62 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		this.AddRpcTarget(new SpecialMethodsTarget(this));
 	}
 
-	/// <summary>Gets or sets the maximum encoded message size, in bytes.</summary>
+	/// <summary>Gets or initializes the maximum encoded message size, in bytes.</summary>
 	/// <value>Defaults to 8 MiB. The built-in JSON and MessagePack channels apply this limit to received messages; the JSON channel also applies it to sent messages.</value>
 	/// <exception cref="ArgumentOutOfRangeException">Thrown when set to zero or a negative value.</exception>
 	public int MaximumMessageSize
 	{
 		get => this.channel.GetMaximumMessageSize();
-		set
-		{
-			this.channel.SetMaximumMessageSize(value);
-		}
+		init => this.channel.SetMaximumMessageSize(value);
 	}
 
-	/// <summary>Gets or sets the multiplexing stream used to send and receive out-of-band streams.</summary>
-	/// <remarks>This property must be set before <see cref="Start"/>.</remarks>
+	/// <summary>Gets or initializes the multiplexing stream used to send and receive out-of-band streams.</summary>
+	/// <remarks>Initialize this property before calling <see cref="Start"/>.</remarks>
 	public MultiplexingStream? MultiplexingStream
 	{
 		get => this.outOfBandStreams.MultiplexingStream;
-		set
-		{
-			this.ThrowIfStarted();
-			this.outOfBandStreams.MultiplexingStream = value;
-		}
+		init => this.outOfBandStreams.MultiplexingStream = value;
 	}
 
-	/// <summary>Gets or sets the options used for proxies implicitly created for RPC-marshalable objects.</summary>
+	/// <summary>Gets or initializes the options used for proxies implicitly created for RPC-marshalable objects.</summary>
 	/// <value>Defaults to <see cref="JsonRpcProxyOptions.Default"/>, the same naming convention used for ordinary RPC proxies.</value>
 	/// <remarks>
 	/// To communicate with StreamJsonRpc's default RPC-marshalable objects, set this property to
-	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> before <see cref="Start"/>.
+	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> in the <see cref="JsonRpc"/> object initializer.
 	/// This does not change options for proxies attached through <see cref="Attach{T}(JsonRpcProxyOptions?)"/>.
 	/// </remarks>
 	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
-	/// <exception cref="InvalidOperationException">Thrown when set after <see cref="Start"/>.</exception>
 	public JsonRpcProxyOptions MarshaledProxyOptions
 	{
 		get => field ??= JsonRpcProxyOptions.Default;
-		set
-		{
-			Requires.NotNull(value);
-			this.ThrowIfStarted();
-			field = value;
-		}
+		init => field = Requires.NotNull(value);
 	}
 
-	/// <summary>Gets or sets the options used when implicitly registering RPC-marshalable targets.</summary>
+	/// <summary>Gets or initializes the options used when implicitly registering RPC-marshalable targets.</summary>
 	/// <value>Defaults to <see cref="JsonRpcTargetOptions.Default"/>, the same naming convention used for ordinary RPC targets.</value>
 	/// <remarks>
 	/// To communicate with StreamJsonRpc's default RPC-marshalable objects, set this property to
-	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> before <see cref="Start"/>.
+	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> in the <see cref="JsonRpc"/> object initializer.
 	/// This does not change options for targets registered through <see cref="AddRpcTarget{T}(T, ITypeShape{T}, JsonRpcTargetOptions?)"/>.
 	/// </remarks>
 	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
-	/// <exception cref="InvalidOperationException">Thrown when set after <see cref="Start"/>.</exception>
 	public JsonRpcTargetOptions MarshaledTargetOptions
 	{
 		get => field ??= JsonRpcTargetOptions.Default;
-		set
-		{
-			Requires.NotNull(value);
-			this.ThrowIfStarted();
-			field = value;
-		}
+		init => field = Requires.NotNull(value);
 	}
 
-	/// <summary>Gets the logger for request and connection failures. Defaults to <see cref="NullLogger.Instance"/>.</summary>
+	/// <summary>Gets or initializes the logger for request, connection, and transport diagnostics.</summary>
+	/// <value>Defaults to <see cref="Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance"/>.</value>
+	/// <remarks>Setting this property also configures the underlying channel to use the same logger.</remarks>
 	public ILogger Logger
 	{
-		get => this.logger;
-		init => this.logger = value ?? throw new ArgumentNullException(nameof(value));
+		get => this.channel.GetLogger();
+		init => this.channel.SetLogger(value);
 	}
 
 	/// <summary>
-	/// Gets or sets the <see cref="Microsoft.VisualStudio.Threading.JoinableTaskFactory"/> to participate in to mitigate deadlocks with the main thread.
+	/// Gets or initializes the <see cref="Microsoft.VisualStudio.Threading.JoinableTaskFactory"/> to participate in to mitigate deadlocks with the main thread.
 	/// </summary>
 	/// <value>Defaults to <see langword="null"/>.</value>
 	/// <remarks>
@@ -167,22 +154,17 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// </para>
 	/// <para>
 	/// The token is exchanged as the top-level <c>joinableTaskToken</c> JSON-RPC envelope property, compatible with StreamJsonRpc.
-	/// This property may only be set before <see cref="Start"/> is called.
+	/// Initialize this property before calling <see cref="Start"/>.
 	/// </para>
 	/// </remarks>
-	/// <exception cref="InvalidOperationException">Thrown when setting this property after <see cref="Start"/> has been called.</exception>
 	public JoinableTaskFactory? JoinableTaskFactory
 	{
 		get => field;
-		set
-		{
-			this.ThrowIfStarted();
-			field = value;
-		}
+		init => field = value;
 	}
 
 	/// <summary>
-	/// Gets or sets the <see cref="JoinableTaskTokenTracker"/> used to forward <see cref="JoinableTask"/> tokens
+	/// Gets or initializes the <see cref="JoinableTaskTokenTracker"/> used to forward <see cref="JoinableTask"/> tokens
 	/// from inbound requests to outbound requests when <see cref="JoinableTaskFactory"/> is <see langword="null"/>.
 	/// </summary>
 	/// <value>Defaults to an instance shared with all other <see cref="JsonRpc"/> instances that do not set this property.</value>
@@ -191,20 +173,55 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <para>
 	/// Set this only in advanced scenarios where one process has many <see cref="JsonRpc"/> instances connected to different
 	/// remote parties and correlating tokens across them is undesirable.
-	/// This property may only be set before <see cref="Start"/> is called.
+	/// Initialize this property before calling <see cref="Start"/>.
 	/// </para>
 	/// </remarks>
-	/// <exception cref="InvalidOperationException">Thrown when setting this property after <see cref="Start"/> has been called.</exception>
 	public JoinableTaskTokenTracker JoinableTaskTracker
 	{
 		get => field ??= JoinableTaskTokenTracker.Default;
-		set
-		{
-			Requires.NotNull(value);
-			this.ThrowIfStarted();
-			field = value;
-		}
+		init => field = Requires.NotNull(value);
 	}
+
+	/// <summary>
+	/// Gets or initializes the <see cref="System.Threading.SynchronizationContext"/> that schedules the start of each inbound RPC method invocation.
+	/// </summary>
+	/// <value>
+	/// Defaults to a private <see cref="NonConcurrentSynchronizationContext"/> instance (configured as non-sticky)
+	/// that guarantees inbound method invocations <em>begin</em> in the order the remote party sent the requests.
+	/// </value>
+	/// <remarks>
+	/// <para>
+	/// With the default value, inbound requests are dispatched on the thread pool, one at a time, in the order they arrive.
+	/// Because the default context is non-sticky, it does not become <see cref="System.Threading.SynchronizationContext.Current"/>
+	/// while a method runs. As soon as a method yields at its first <see langword="await"/> (or returns), the next queued method
+	/// may begin. Long-running methods therefore execute and complete concurrently with each other and in any order;
+	/// only the order in which they <em>start</em> is guaranteed to match the order the client sent them.
+	/// </para>
+	/// <para>
+	/// Set this property to <see langword="null"/> to remove the ordering guarantee entirely. Each inbound invocation is then
+	/// queued to the thread pool independently, so invocations may begin in any order and with full concurrency.
+	/// This offers the highest throughput and is appropriate when the order in which methods start does not matter.
+	/// </para>
+	/// <para>
+	/// Alternatively, initialize this property with your own <see cref="System.Threading.SynchronizationContext"/> (for example, one that
+	/// marshals to an application's main thread) to have every inbound method invocation begin execution on that context.
+	/// A context that runs callbacks one at a time preserves the ordering guarantee described above; one that runs them
+	/// concurrently does not. As with the default, a method's continuations after its first <see langword="await"/> are
+	/// subject to normal <see langword="await"/> semantics and only return to this context if the context applies itself
+	/// as <see cref="System.Threading.SynchronizationContext.Current"/> and the method does not use
+	/// <see cref="Task.ConfigureAwait(bool)"/> with <see langword="false"/>.
+	/// </para>
+	/// <para>
+	/// Work that precedes the invocation (such as request parsing and cancellation bookkeeping) always runs on the reader
+	/// loop in message order and is unaffected by this property.
+	/// </para>
+	/// <para>
+	/// Inbound <c>$/cancelRequest</c> notifications are exempt from this property and always begin on the thread pool.
+	/// Because their purpose is to interrupt work that is already running, queueing them behind that work would prevent
+	/// a handler that occupies the dispatcher without yielding from ever being canceled.
+	/// </para>
+	/// </remarks>
+	public SynchronizationContext? SynchronizationContext { get; init; } = new NonConcurrentSynchronizationContext(sticky: false);
 
 	JsonRpcSerializer IJsonRpcClient.Serializer => this.userDataSerializer;
 
@@ -244,6 +261,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <summary>Gets the manager that tracks <see cref="IAsyncEnumerable{T}"/> generators for this connection.</summary>
 	internal AsyncEnumerableManager AsyncEnumerables => this.asyncEnumerables;
 
+	/// <summary>Gets the <see cref="System.Threading.SynchronizationContext"/> that dispatch should use, falling back to a thread pool context that imposes no ordering when <see cref="SynchronizationContext"/> is <see langword="null"/>.</summary>
+	private SynchronizationContext DispatchSynchronizationContext => this.SynchronizationContext ?? UnorderedDispatchSynchronizationContext;
+
 	/// <inheritdoc/>
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);
 
@@ -254,6 +274,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <typeparam name="T">The statically shaped type describing which members of <paramref name="target"/> to register.</typeparam>
 	/// <param name="target">The object whose methods should be invoked in response to matching incoming requests and notifications.</param>
 	/// <param name="options">Options controlling method name resolution for this target. When <see langword="null"/>, default options are used.</param>
+	/// <remarks>Register all initial targets before calling <see cref="Start"/> so the listener is ready to dispatch every method as soon as it begins reading messages.</remarks>
 	public void AddRpcTarget<T>(T target, JsonRpcTargetOptions? options = null)
 		where T : IShapeable<T> => this.AddRpcTarget(target, T.GetTypeShape(), options);
 #endif
@@ -265,6 +286,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <param name="target">The object whose methods should be invoked in response to matching incoming requests and notifications.</param>
 	/// <param name="shape">The type shape describing <paramref name="target"/>'s methods.</param>
 	/// <param name="options">Options controlling method name resolution for this target. When <see langword="null"/>, default options are used.</param>
+	/// <remarks>Register all initial targets before calling <see cref="Start"/> so the listener is ready to dispatch every method as soon as it begins reading messages.</remarks>
 	public void AddRpcTarget<T>(T target, ITypeShape<T> shape, JsonRpcTargetOptions? options = null)
 	{
 		Requires.NotNull(shape);
@@ -470,8 +492,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+	/// <summary>Starts listening for and dispatching incoming messages.</summary>
+	/// <remarks>Call this after registering initial targets with <see cref="AddRpcTarget{T}(T, ITypeShape{T}, JsonRpcTargetOptions?)"/> to avoid rejecting incoming requests or dropping notifications for which no RPC target has yet been registered.</remarks>
 	public void Start()
 	{
+		this.channel.Start();
 		this.readerTask = this.ReadAsync(this.channel.Reader);
 	}
 
@@ -849,6 +874,23 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private static InvalidOperationException CreateProxyMismatchException(object proxy, Type interfaceType)
 		=> new($"The generated proxy type '{proxy.GetType().FullName}' does not implement requested interface '{interfaceType.FullName}'.");
 
+	/// <summary>Gets the <see cref="System.Threading.SynchronizationContext"/> to dispatch a particular request on.</summary>
+	/// <param name="request">The inbound request.</param>
+	/// <returns>The context to begin the invocation on.</returns>
+	/// <remarks>
+	/// <para>
+	/// <c>$/cancelRequest</c> notifications always go to the thread pool rather than to <see cref="SynchronizationContext"/>.
+	/// Their entire purpose is to interrupt work that is already running, so queueing them behind that work would be
+	/// self-defeating: a handler that occupies the ordered dispatcher without yielding could never be canceled.
+	/// </para>
+	/// <para>
+	/// They are not run on the reader loop itself because cancellation invokes arbitrary user callbacks,
+	/// which must not be given the opportunity to stall message processing.
+	/// </para>
+	/// </remarks>
+	private SynchronizationContext GetDispatchSynchronizationContext(JsonRpcRequest request)
+		=> request.Method == SpecialCancelMethodName ? UnorderedDispatchSynchronizationContext : this.DispatchSynchronizationContext;
+
 	private ValueTask<JsonRpcResponse?> DispatchAsync(JsonRpcRequest request)
 	{
 		if (request.Id is null && (this.progress.TryHandleNotification(request) || this.marshaledObjects.TryHandleNotification(request)))
@@ -956,6 +998,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				this.JoinableTaskTracker.Token = parentToken;
 			}
 
+			// IMPORTANT: This must remain the first await in this method, with no other await between it and
+			// invoking the handler. It is what guarantees that handlers *begin* executing in the order the
+			// remote party sent the requests (per the SynchronizationContext property).
+			// Awaiting a SynchronizationContext does not allocate a delegate or closure of its own: the awaiter
+			// posts the state machine's existing continuation using a cached, static SendOrPostCallback.
+			await this.GetDispatchSynchronizationContext(request);
+
 			DispatchResponse response = jtf is not null && parentToken is not null
 				? await RunUnderJoinableTaskAsync(jtf, invoker, dispatchRequest, parentToken)
 				: await invoker(dispatchRequest).ConfigureAwait(false);
@@ -986,8 +1035,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	}
 
 	private void FaultOnFailure(Task task) => task.ContinueWith(static (t, s) => ((JsonRpc)s!).Fault(t.Exception!), this, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default).Forget();
-
-	private void ThrowIfStarted() => Verify.Operation(this.readerTask is null, "This property may only be set before Start is called.");
 
 	private void ProcessResponse(JsonRpcResponse response)
 	{
@@ -1284,7 +1331,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 		[Key(0)]
 		[PropertyShape(IsRequired = true)]
-		public RequestId Id { get; set; }
+		public RequestId Id { get; init; }
 	}
 
 	private struct PendingInboundRequest : IDisposable

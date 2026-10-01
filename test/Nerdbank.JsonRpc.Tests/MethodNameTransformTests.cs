@@ -97,8 +97,8 @@ public class MethodNameTransformTests : TestBase
 	public async Task AddRpcTarget_ExplicitName_IsAuthoritativeAndDispatchesVerbatim()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
-		using JsonRpc client = new(new JsonRpcMessagePackChannel(clientPipe, NullLogger.Instance));
-		using JsonRpc server = new(new JsonRpcMessagePackChannel(serverPipe, NullLogger.Instance));
+		using JsonRpc client = new(new JsonRpcMessagePackChannel(clientPipe));
+		using JsonRpc server = new(new JsonRpcMessagePackChannel(serverPipe));
 
 		// Even with a transform that would otherwise mangle the name, the explicit name must be used verbatim.
 		server.AddRpcTarget<IExplicitNameCalculator>(new ExplicitNameCalculator(), new JsonRpcTargetOptions { MethodNameTransform = name => name.ToUpperInvariant() });
@@ -224,8 +224,10 @@ public class MethodNameTransformTests : TestBase
 	private async Task<JsonRpc> ConnectCalculatorAsync(Calculator calculator, JsonRpcTargetOptions options)
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
-		JsonRpcMessagePackChannel clientChannel = new(clientPipe, NullLogger.Instance);
-		JsonRpcMessagePackChannel serverChannel = new(serverPipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel clientChannel = new(clientPipe);
+		clientChannel.Start();
+		JsonRpcMessagePackChannel serverChannel = new(serverPipe);
+		serverChannel.Start();
 
 		JsonRpc clientRpc = new(clientChannel);
 		clientRpc.Start();

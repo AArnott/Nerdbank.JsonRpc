@@ -316,8 +316,8 @@ public partial class AsyncEnumerableTests
 		// but the request fails before AsyncEnumerableManager.RegisterOutboundRequest ever runs.
 		(IDuplexPipe clientPipe, _) = FullDuplexStream.CreatePipePair();
 		using JsonRpc clientRpc = new(encoding == JsonRpcEncoding.Json
-			? new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance)
-			: new JsonRpcMessagePackChannel(clientPipe, NullLogger.Instance));
+			? new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
+			: new JsonRpcMessagePackChannel(clientPipe));
 		IAsyncEnumerableService client = clientRpc.Attach<IAsyncEnumerableService>();
 		TrackingSequence argument = new();
 		await Assert.ThrowsAnyAsync<InvalidOperationException>(
@@ -395,7 +395,7 @@ public partial class AsyncEnumerableTests
 
 		private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
 			=> encoding == JsonRpcEncoding.Json
-				? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance)
-				: new JsonRpcMessagePackChannel(pipe, NullLogger.Instance);
+				? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
+				: new JsonRpcMessagePackChannel(pipe);
 	}
 }

@@ -497,8 +497,7 @@ public class StreamJsonRpcInteropTests : TestBase
 			streamJsonRpc.AddLocalRpcTarget<IInteropContract>(new InteropTarget(), null);
 			streamJsonRpc.StartListening();
 
-			JsonRpc nerdbankRpc = CreateNerdbankRpc(nerdbankPipe);
-			nerdbankRpc.MultiplexingStream = nerdbankMx;
+			JsonRpc nerdbankRpc = CreateNerdbankRpc(nerdbankPipe, nerdbankMx);
 			nerdbankRpc.Start();
 			return new(nerdbankRpc, streamJsonRpc, nerdbankRpc.Attach<IInteropContract>(NerdbankProxyOptions), nerdbankMx, streamMx);
 		}
@@ -507,8 +506,7 @@ public class StreamJsonRpcInteropTests : TestBase
 		internal static async Task<InteropFixture> NerdbankServerAsync()
 		{
 			(MultiplexingStream nerdbankMx, MultiplexingStream streamMx, IDuplexPipe nerdbankPipe, IDuplexPipe streamPipe) = await CreateMultiplexedPairAsync();
-			JsonRpc nerdbankRpc = CreateNerdbankRpc(nerdbankPipe);
-			nerdbankRpc.MultiplexingStream = nerdbankMx;
+			JsonRpc nerdbankRpc = CreateNerdbankRpc(nerdbankPipe, nerdbankMx);
 			nerdbankRpc.AddRpcTarget<IInteropContract>(new InteropTarget(), NerdbankTargetOptions);
 			nerdbankRpc.Start();
 
@@ -533,9 +531,10 @@ public class StreamJsonRpcInteropTests : TestBase
 			return (nerdbankMx, streamMx, nerdbankChannel, streamChannel);
 		}
 
-		private static JsonRpc CreateNerdbankRpc(IDuplexPipe pipe) => new(
-			new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance))
+		private static JsonRpc CreateNerdbankRpc(IDuplexPipe pipe, MultiplexingStream? multiplexingStream = null) => new(
+			new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited))
 		{
+			MultiplexingStream = multiplexingStream,
 			MarshaledProxyOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity },
 			MarshaledTargetOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity },
 		};

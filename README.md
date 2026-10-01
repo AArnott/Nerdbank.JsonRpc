@@ -46,6 +46,7 @@ MessagePack is the default encoding. By default each MessagePack message is prec
 - **MessagePack or JSON:** Select MessagePack or UTF-8 JSON; choose length-header or self-delimiting framing for MessagePack, and newline-delimited or `Content-Length` framing for JSON.
 - **Batching:** Send independent requests and notifications in one JSON-RPC payload.
 - **Robust protocol behavior:** Propagate cancellation and distinguish malformed protocol messages from application value failures.
+- **Ordered dispatch:** Inbound requests start executing in the order they were sent, while still running concurrently and on the thread pool. Configurable via `JsonRpc.SynchronizationContext`.
 - **Deadlock mitigation:** Propagate `JoinableTaskFactory` context across processes, compatible with StreamJsonRpc.
 
 ## Documentation

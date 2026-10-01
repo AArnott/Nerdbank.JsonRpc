@@ -3,7 +3,6 @@
 
 using System.IO.Pipelines;
 using BenchmarkDotNet.Attributes;
-using Microsoft.Extensions.Logging.Abstractions;
 using Nerdbank.Streams;
 
 namespace Benchmarks;
@@ -21,7 +20,7 @@ public class AttachBenchmarks
 	public void Setup()
 	{
 		(IDuplexPipe pipe, _) = FullDuplexStream.CreatePipePair();
-		this.channel = new JsonRpcMessagePackChannel(pipe, NullLogger.Instance);
+		this.channel = new JsonRpcMessagePackChannel(pipe);
 		this.rpc = new JsonRpc(this.channel);
 		this.batch = this.rpc.CreateBatch();
 	}
