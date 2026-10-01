@@ -11,7 +11,4 @@ public enum RpcTransport
 
 	/// <summary>An operating-system named pipe, with both endpoints in this process.</summary>
 	NamedPipe,
-
-	/// <summary>The zero-copy mapping, woken by the fastest cross-process signal available: named events on Windows, otherwise a doorbell.</summary>
-	SharedMemoryIpc,
 }

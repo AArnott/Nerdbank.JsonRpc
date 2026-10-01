@@ -17,7 +17,7 @@ Common ways to authenticate a connection first:
 
 ## Confidentiality and integrity
 
-Nerdbank.JsonRpc does not encrypt or sign messages. It relies on the transport for that. Across machines, use TLS or a similarly protected transport. Within a machine, use transports whose access is limited to the intended accounts (see [Shared memory](#shared-memory) below).
+Nerdbank.JsonRpc does not encrypt or sign messages. It relies on the transport for that. Across machines, use TLS or a similarly protected transport. Within a machine, use transports whose access is limited to the intended accounts, such as a named pipe with a restrictive ACL.
 
 ## What a peer can invoke
 
@@ -41,12 +41,3 @@ These limits do not stop a peer from making many valid but expensive requests. T
 ## Error details
 
 When an RPC method throws an exception, the peer receives only a generic error ("The request could not be completed."). The exception details are not sent. Set <xref:Nerdbank.JsonRpc.JsonRpc.Logger> to record them locally instead. One case differs: the message of an exception thrown while producing items for an <xref:System.Collections.Generic.IAsyncEnumerable`1> result is currently sent to the peer, so avoid putting sensitive information in such messages.
-
-## Shared memory
-
-<xref:Nerdbank.JsonRpc.SharedMemoryDuplexPipe> is designed for processes that run as the same user and trust each other. It protects the channel from other users of the machine, but not from other processes running as the same user.
-
-- **Other users:** on Windows, the shared memory and its events are created in the current logon session's namespace, with the default security of the creating process. That generally grants access only to the same user, administrators and the system. On Linux and macOS the backing file is created with owner-only (0600) permissions on supported runtimes. On .NET 8 and later, the rendezvous pipe enforces current-user-only access. On .NET Framework, the listener limits its pipe ACL to the current user and the client verifies the pipe owner SID before opening shared memory. The `netstandard2.0` assembly rejects shared-memory transport on all platforms because it cannot guarantee these peer-identity checks; deploy the .NET Framework assembly on Windows or the .NET 8+ assembly instead.
-- **Same-user processes:** any process running as the same user that learns the channel name can try to connect first. Use an unguessable channel name, such as a new GUID, and give it to the intended peer through a trusted path.
-- **Name squatting:** creating the shared memory fails if the name is already in use, so a listener never adopts memory that another process prepared in advance. On .NET 8 and later and on .NET Framework, a connecting client also verifies that the listener runs as the same user.
-- **Peer trust:** both processes can write to the shared memory at any time, including while the other is reading. A misbehaving peer can therefore change a message while it is being deserialized, or corrupt the buffer's bookkeeping. Nerdbank.JsonRpc keeps all of its own memory accesses within the shared buffer, so this results in malformed messages or a faulted connection rather than memory corruption in your process. Even so, do not use shared memory between processes at different privilege levels; use a conventional pipe or socket instead.

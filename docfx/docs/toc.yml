@@ -5,8 +5,6 @@ items:
   href: getting-started.md
 - name: Encodings and framing
   href: encodings.md
-- name: Shared memory transport
-  href: shared-memory.md
 - name: Generated client proxies
   href: client-proxies.md
 - name: RPC-marshalable interfaces
