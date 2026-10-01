@@ -6,37 +6,48 @@ using System.Text;
 
 namespace Nerdbank.JsonRpc.SourceGeneration;
 
-/// <summary>Writes deterministic UTF-8 C# source with LF newlines and balanced code blocks.</summary>
+/// <summary>Writes deterministic UTF-8 C# source with LF newlines, balanced code blocks, and automatic indentation.</summary>
+/// <remarks>
+/// Each non-empty line is prefixed with one tab per open block (plus any <see cref="Indent"/> levels),
+/// so callers should not include leading indentation in the text they append.
+/// </remarks>
 internal sealed class SourceWriter
 {
 	private readonly StringBuilder builder = new();
 
-	/// <summary>Gets the current nested block depth.</summary>
+	private bool atLineStart = true;
+
+	/// <summary>Gets the current indentation depth.</summary>
 	public int Indentation { get; private set; }
+
+	/// <summary>Gets the current nested block depth.</summary>
+	public int BlockDepth { get; private set; }
 
 	/// <summary>Appends text without changing its contents.</summary>
 	/// <param name="value">The text to append.</param>
 	/// <returns>This writer.</returns>
 	public SourceWriter Append(string? value)
 	{
-		this.builder.Append(value);
+		if (!string.IsNullOrEmpty(value))
+		{
+			this.WriteIndentationIfAtLineStart();
+			this.builder.Append(value);
+		}
+
 		return this;
 	}
 
 	/// <summary>Appends an integer using invariant culture.</summary>
 	/// <param name="value">The integer to append.</param>
 	/// <returns>This writer.</returns>
-	public SourceWriter Append(int value)
-	{
-		this.builder.Append(value.ToString(CultureInfo.InvariantCulture));
-		return this;
-	}
+	public SourceWriter Append(int value) => this.Append(value.ToString(CultureInfo.InvariantCulture));
 
 	/// <summary>Appends a character without changing its contents.</summary>
 	/// <param name="value">The character to append.</param>
 	/// <returns>This writer.</returns>
 	public SourceWriter Append(char value)
 	{
+		this.WriteIndentationIfAtLineStart();
 		this.builder.Append(value);
 		return this;
 	}
@@ -46,52 +57,73 @@ internal sealed class SourceWriter
 	public SourceWriter AppendLine()
 	{
 		this.builder.Append('\n');
+		this.atLineStart = true;
 		return this;
 	}
 
 	/// <summary>Appends text followed by a platform-independent LF newline.</summary>
 	/// <param name="value">The text to append.</param>
 	/// <returns>This writer.</returns>
-	public SourceWriter AppendLine(string? value)
+	public SourceWriter AppendLine(string? value) => this.Append(value).AppendLine();
+
+	/// <summary>Increases the indentation for subsequent lines without opening a block.</summary>
+	/// <returns>A value that restores the previous indentation when disposed.</returns>
+	public IndentScope Indent()
 	{
-		this.builder.Append(value).Append('\n');
-		return this;
+		this.Indentation++;
+		return new IndentScope(this);
 	}
 
-	/// <summary>Writes an opening brace and increases the block depth.</summary>
-	/// <param name="prefix">Optional existing indentation prefix.</param>
+	/// <summary>Writes an opening brace and increases the block depth and indentation.</summary>
 	/// <returns>This writer.</returns>
-	public SourceWriter OpenBlock(string prefix = "")
+	public SourceWriter OpenBlock()
 	{
-		this.Append(prefix).AppendLine("{");
+		this.AppendLine("{");
+		this.BlockDepth++;
 		this.Indentation++;
 		return this;
 	}
 
-	/// <summary>Writes a closing brace and decreases the block depth.</summary>
-	/// <param name="prefix">Optional existing indentation prefix.</param>
+	/// <summary>Writes a closing brace and decreases the block depth and indentation.</summary>
 	/// <returns>This writer.</returns>
-	public SourceWriter CloseBlock(string prefix = "")
+	public SourceWriter CloseBlock()
 	{
-		if (this.Indentation == 0)
+		if (this.BlockDepth == 0)
 		{
 			throw new InvalidOperationException("No open source block is available to close.");
 		}
 
+		this.BlockDepth--;
 		this.Indentation--;
-		this.Append(prefix).AppendLine("}");
-		return this;
+		return this.AppendLine("}");
 	}
 
 	/// <summary>Returns the generated source, verifying that all opened blocks were closed.</summary>
 	/// <returns>The generated source.</returns>
 	public override string ToString()
 	{
-		if (this.Indentation != 0)
+		if (this.BlockDepth != 0)
 		{
 			throw new InvalidOperationException("Generated source contains an unclosed block.");
 		}
 
 		return this.builder.ToString();
+	}
+
+	private void WriteIndentationIfAtLineStart()
+	{
+		if (this.atLineStart)
+		{
+			this.builder.Append('\t', this.Indentation);
+			this.atLineStart = false;
+		}
+	}
+
+	/// <summary>Restores the indentation of a <see cref="SourceWriter"/> when disposed.</summary>
+	/// <param name="writer">The writer whose indentation to restore.</param>
+	internal readonly struct IndentScope(SourceWriter writer) : IDisposable
+	{
+		/// <summary>Decreases the indentation of the writer.</summary>
+		public void Dispose() => writer.Indentation--;
 	}
 }
