@@ -31,6 +31,24 @@ public static class Example
     }
     #endregion
 
+    #region shared-memory-connection
+    public static async Task<int> CallOverSharedMemoryAsync(CancellationToken cancellationToken)
+    {
+        string name = Guid.NewGuid().ToString("N");
+        Task<SharedMemoryDuplexPipe> listener = SharedMemoryDuplexPipe.ListenAsync(name, cancellationToken: cancellationToken);
+        using SharedMemoryDuplexPipe clientPipe = await SharedMemoryDuplexPipe.ConnectAsync(name, cancellationToken: cancellationToken);
+        using SharedMemoryDuplexPipe serverPipe = await listener;
+
+        using JsonRpc server = new(new JsonRpcMessagePackChannel(serverPipe));
+        server.AddRpcTarget<ICalculator>(new Calculator());
+        server.Start();
+
+        using JsonRpc client = new(new JsonRpcMessagePackChannel(clientPipe));
+        client.Start();
+        return await client.Attach<ICalculator>().AddAsync(1, 2, cancellationToken);
+    }
+    #endregion
+
     public static async Task ExposeCalculatorAsync(Stream stream, ILogger logger)
     {
         #region expose-target

@@ -24,7 +24,11 @@ The channel defines the wire encoding and framing. This example uses MessagePack
 
 The application is responsible for establishing the connected stream and managing its lifetime. For in-process tests, <xref:Nerdbank.Streams.FullDuplexStream.CreatePipePair*> creates two connected <xref:System.IO.Pipelines.IDuplexPipe> instances that can be given directly to two channels.
 
-For high-throughput communication between processes on the same machine, consider <xref:Nerdbank.Streams.SharedMemoryDuplexPipe> from Nerdbank.Streams instead of an OS pipe. Connect endpoints with <xref:Nerdbank.Streams.SharedMemoryDuplexPipe.ListenAsync*> and <xref:Nerdbank.Streams.SharedMemoryDuplexPipe.ConnectAsync*>, then pass each <xref:System.IO.Pipelines.IDuplexPipe> directly to a JSON-RPC channel. Benchmark against named pipes with your own workload before choosing a transport, and review the [security considerations](security.md) for authenticating peers.
+For same-machine IPC, consider <xref:Nerdbank.Streams.SharedMemoryDuplexPipe> from Nerdbank.Streams. This example connects both endpoints in one process for simplicity; separate processes can use the same shared name:
+
+[!code-csharp[](../../samples/cs/getting-started.cs#shared-memory-connection)]
+
+Benchmark against named pipes for your workload, and [authenticate peers](security.md) before exposing RPC methods.
 
 ## Expose local methods to the remote party
 
