@@ -510,6 +510,16 @@ public class GeneratedProxyTests
 	}
 
 	[Test]
+	public void GeneratedProxy_AttachSupportsLegacyMetadata()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
+
+		Assert.IsType<LegacyGeneratedProxy>(clientRpc.Attach(typeof(ILegacyGeneratedProxyContract)));
+		Assert.IsType<LegacyGeneratedProxy>(clientRpc.Attach<ILegacyGeneratedProxyContract>());
+	}
+
+	[Test]
 	public void GeneratedProxy_AttachGenericRequiresInterfaceType()
 	{
 		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
