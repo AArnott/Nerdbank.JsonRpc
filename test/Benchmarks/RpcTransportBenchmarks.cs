@@ -1,6 +1,7 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.Buffers;
 using System.IO.Pipelines;
 using System.IO.Pipes;
 using BenchmarkDotNet.Attributes;
@@ -11,6 +12,7 @@ namespace Benchmarks;
 /// <summary>
 /// Compares end-to-end RPC costs over in-memory pipes and OS named pipes with both peers in the same process.
 /// Named pipes exercise kernel IPC but not cross-process scheduling or address-space copying.
+/// Shared-memory endpoints map the same memory independently and rendezvous through <see cref="SharedMemoryDuplexPipe.ListenAsync"/>.
 /// </summary>
 [MemoryDiagnoser]
 public class RpcTransportBenchmarks
@@ -21,11 +23,13 @@ public class RpcTransportBenchmarks
 	private JsonRpc? serverRpc;
 	private NamedPipeServerStream? serverStream;
 	private NamedPipeClientStream? clientStream;
+	private SharedMemoryDuplexPipe? sharedMemoryClient;
+	private SharedMemoryDuplexPipe? sharedMemoryServer;
 	private IRpcBenchmarkContract client = null!;
 	private WorkspaceGraph largeGraph = null!;
 
 	/// <summary>Gets or sets the transport for both endpoints.</summary>
-	[Params(RpcTransport.InMemory, RpcTransport.NamedPipe)]
+	[Params(RpcTransport.InMemory, RpcTransport.NamedPipe, RpcTransport.SharedMemoryIpc)]
 	public RpcTransport Transport { get; set; }
 
 	/// <summary>Gets or sets the encoding and framing for both endpoints.</summary>
@@ -37,12 +41,18 @@ public class RpcTransportBenchmarks
 	public async Task SetupAsync()
 	{
 		this.largeGraph = WorkspaceGraphFactory.CreateLarge();
+		if (this.Transport == RpcTransport.SharedMemoryIpc)
+		{
+			await ValidateZeroCopyWraparoundAsync();
+		}
+
 		try
 		{
 			(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = this.Transport switch
 			{
 				RpcTransport.InMemory => FullDuplexStream.CreatePipePair(),
 				RpcTransport.NamedPipe => await this.CreateNamedPipePairAsync(),
+				RpcTransport.SharedMemoryIpc => await this.CreateSharedMemoryPairAsync(),
 				_ => throw new ArgumentOutOfRangeException(nameof(this.Transport)),
 			};
 
@@ -85,6 +95,8 @@ public class RpcTransportBenchmarks
 
 		this.clientStream?.Dispose();
 		this.serverStream?.Dispose();
+		this.sharedMemoryClient?.Dispose();
+		this.sharedMemoryServer?.Dispose();
 	}
 
 	/// <summary>Measures a no-argument request and response.</summary>
@@ -101,6 +113,66 @@ public class RpcTransportBenchmarks
 	/// <returns>The server's checksum of the graph.</returns>
 	[Benchmark]
 	public Task<long> ProcessGraph() => this.client.ProcessGraphAsync(this.largeGraph, CancellationToken.None);
+
+	private static async Task ValidateZeroCopyWraparoundAsync()
+	{
+		using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+		(SharedMemoryDuplexPipe client, SharedMemoryDuplexPipe server) = await CreateSharedMemoryEndpointsAsync(64, timeout.Token);
+		using SharedMemoryDuplexPipe clientScope = client;
+		using SharedMemoryDuplexPipe serverScope = server;
+		byte[] expected = new byte[200];
+		for (int i = 0; i < expected.Length; i++)
+		{
+			expected[i] = (byte)((i * 31) & 0xff);
+		}
+
+		// Several transfers force the ring to wrap and to stage an oversized message.
+		for (int round = 0; round < 4; round++)
+		{
+			Task<FlushResult> send = client.Output.WriteAsync(expected, timeout.Token).AsTask();
+			byte[] actual = new byte[expected.Length];
+			int received = 0;
+			while (received < actual.Length)
+			{
+				ReadResult read = await server.Input.ReadAsync(timeout.Token);
+				int count = checked((int)Math.Min(read.Buffer.Length, actual.Length - received));
+				read.Buffer.Slice(0, count).CopyTo(actual.AsSpan(received));
+				server.Input.AdvanceTo(read.Buffer.GetPosition(count));
+				received += count;
+			}
+
+			await send;
+			if (!expected.AsSpan().SequenceEqual(actual))
+			{
+				throw new InvalidOperationException("The zero-copy ring corrupted a wrapped transfer.");
+			}
+		}
+	}
+
+	/// <summary>Creates connected shared-memory endpoints over the production IPC signaling path.</summary>
+	private static async Task<(SharedMemoryDuplexPipe Client, SharedMemoryDuplexPipe Server)> CreateSharedMemoryEndpointsAsync(int capacity, CancellationToken cancellationToken)
+	{
+		SharedMemoryPipeOptions options = new() { Capacity = capacity };
+		string channel = Guid.NewGuid().ToString("N");
+		Task<SharedMemoryDuplexPipe> listen = SharedMemoryDuplexPipe.ListenAsync(channel, options, cancellationToken);
+		SharedMemoryDuplexPipe client = await SharedMemoryDuplexPipe.ConnectAsync(channel, options, cancellationToken);
+		try
+		{
+			return (client, await listen);
+		}
+		catch
+		{
+			client.Dispose();
+			throw;
+		}
+	}
+
+	private async Task<(IDuplexPipe Client, IDuplexPipe Server)> CreateSharedMemoryPairAsync()
+	{
+		using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(30));
+		(this.sharedMemoryClient, this.sharedMemoryServer) = await CreateSharedMemoryEndpointsAsync(1024 * 1024, timeout.Token);
+		return (this.sharedMemoryClient, this.sharedMemoryServer);
+	}
 
 	private async Task<(IDuplexPipe Client, IDuplexPipe Server)> CreateNamedPipePairAsync()
 	{
