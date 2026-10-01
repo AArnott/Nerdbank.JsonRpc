@@ -21,11 +21,11 @@ Nerdbank.JsonRpc does not encrypt or sign messages. It relies on the transport f
 
 ## What a peer can invoke
 
-A connected peer can call every method in the contract you register with <xref:Nerdbank.JsonRpc.JsonRpc.AddRpcTarget*?displayProperty=nameWithType>. It cannot call anything else. Register a narrow interface that contains only the methods you intend to expose, rather than a class whose other public methods would then also be callable.
+A connected peer can call the methods exposed by targets registered with <xref:Nerdbank.JsonRpc.JsonRpc.AddRpcTarget*?displayProperty=nameWithType>. The callable surface also includes built-in protocol methods such as `$/cancelRequest` and methods on objects you marshal by reference. Register a narrow interface containing only the application methods you intend to expose; if you register a class contract, its shaped public methods may be exposed as well. Account for the built-in and marshaled-object surfaces when reviewing the connection's attack surface.
 
 Treat every argument as untrusted input, just as you would for a web API: validate sizes, ranges, paths and identifiers before you act on them.
 
-Objects passed by reference stay callable by the peer until they are released. These include [RPC-marshalable interfaces](rpc-marshalable-interfaces.md), <xref:System.IProgress`1>, <xref:System.IObserver`1>, <xref:System.Collections.Generic.IAsyncEnumerable`1> and <xref:System.IO.Stream> instances. Marshal only objects that are safe for the peer to use. Use <xref:Nerdbank.JsonRpc.JsonRpc.RevokeMarshaledObject(System.Object)> to withdraw access early. Handles are local to their connection, so a peer cannot use a handle to reach objects that were marshaled over other connections.
+Objects passed by reference are callable by the peer according to their protocol-defined lifetimes. These include [RPC-marshalable interfaces](rpc-marshalable-interfaces.md), <xref:System.IProgress`1>, <xref:System.IObserver`1>, <xref:System.Collections.Generic.IAsyncEnumerable`1> and <xref:System.IO.Stream> instances. Marshal only objects that are safe for the peer to use. <xref:Nerdbank.JsonRpc.JsonRpc.RevokeMarshaledObject(System.Object)> revokes active handles for RPC-marshalable objects and observers; it does not revoke progress values, asynchronous enumerables or streams, which have their own lifetimes. Handles are local to their connection, so a peer cannot use a handle to reach objects that were marshaled over other connections.
 
 ## Resource limits
 

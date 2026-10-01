@@ -32,6 +32,10 @@ public static class Example
     #endregion
 
     #region shared-memory-connection
+
+    /// <summary>Calls the calculator over a shared-memory connection whose endpoints are both in this process.</summary>
+    /// <param name="cancellationToken">Cancels endpoint setup or the RPC request.</param>
+    /// <returns>The sum returned by the calculator.</returns>
     public static async Task<int> CallOverSharedMemoryAsync(CancellationToken cancellationToken)
     {
         string name = Guid.NewGuid().ToString("N");

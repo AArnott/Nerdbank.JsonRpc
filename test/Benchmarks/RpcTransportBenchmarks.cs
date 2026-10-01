@@ -11,7 +11,7 @@ namespace Benchmarks;
 
 /// <summary>
 /// Compares end-to-end RPC costs over in-memory pipes and OS named pipes with both peers in the same process.
-/// Named pipes exercise kernel IPC but not cross-process scheduling or address-space copying.
+/// Named pipes still copy payload bytes through kernel buffers; this same-process comparison excludes cross-process scheduling and address-space effects.
 /// Shared-memory endpoints map the same memory independently and rendezvous through <see cref="SharedMemoryDuplexPipe.ListenAsync"/>.
 /// </summary>
 [MemoryDiagnoser]
