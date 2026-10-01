@@ -154,8 +154,31 @@ public class RpcTransportBenchmarks
 	{
 		SharedMemoryPipeOptions options = new() { Capacity = capacity };
 		string channel = Guid.NewGuid().ToString("N");
-		Task<SharedMemoryDuplexPipe> listen = SharedMemoryDuplexPipe.ListenAsync(channel, options, cancellationToken);
-		SharedMemoryDuplexPipe client = await SharedMemoryDuplexPipe.ConnectAsync(channel, options, cancellationToken);
+		using CancellationTokenSource setupCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		Task<SharedMemoryDuplexPipe> listen = SharedMemoryDuplexPipe.ListenAsync(channel, options, setupCancellation.Token);
+		SharedMemoryDuplexPipe client;
+		try
+		{
+			client = await SharedMemoryDuplexPipe.ConnectAsync(channel, options, setupCancellation.Token);
+		}
+		catch (Exception connectionException)
+		{
+			await setupCancellation.CancelAsync();
+			try
+			{
+				(await listen).Dispose();
+			}
+			catch (OperationCanceledException) when (setupCancellation.IsCancellationRequested)
+			{
+			}
+			catch (Exception listenerException)
+			{
+				throw new AggregateException("Shared-memory connection setup and listener cleanup both failed.", connectionException, listenerException);
+			}
+
+			throw;
+		}
+
 		try
 		{
 			return (client, await listen);

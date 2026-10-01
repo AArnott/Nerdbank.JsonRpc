@@ -35,17 +35,18 @@ public static class Example
     public static async Task<int> CallOverSharedMemoryAsync(CancellationToken cancellationToken)
     {
         string name = Guid.NewGuid().ToString("N");
-        Task<SharedMemoryDuplexPipe> listener = SharedMemoryDuplexPipe.ListenAsync(name, cancellationToken: cancellationToken);
-        using SharedMemoryDuplexPipe clientPipe = await SharedMemoryDuplexPipe.ConnectAsync(name, cancellationToken: cancellationToken);
-        using SharedMemoryDuplexPipe serverPipe = await listener;
+        (SharedMemoryDuplexPipe clientPipe, SharedMemoryDuplexPipe serverPipe) = await ConnectSharedMemoryEndpointsAsync(name, cancellationToken);
+        using (clientPipe)
+        using (serverPipe)
+        {
+            using JsonRpc server = new(new JsonRpcMessagePackChannel(serverPipe));
+            server.AddRpcTarget<ICalculator>(new Calculator());
+            server.Start();
 
-        using JsonRpc server = new(new JsonRpcMessagePackChannel(serverPipe));
-        server.AddRpcTarget<ICalculator>(new Calculator());
-        server.Start();
-
-        using JsonRpc client = new(new JsonRpcMessagePackChannel(clientPipe));
-        client.Start();
-        return await client.Attach<ICalculator>().AddAsync(1, 2, cancellationToken);
+            using JsonRpc client = new(new JsonRpcMessagePackChannel(clientPipe));
+            client.Start();
+            return await client.Attach<ICalculator>().AddAsync(1, 2, cancellationToken);
+        }
     }
     #endregion
 
@@ -71,6 +72,44 @@ public static class Example
         #endregion
 
         return sum;
+    }
+
+    private static async Task<(SharedMemoryDuplexPipe Client, SharedMemoryDuplexPipe Server)> ConnectSharedMemoryEndpointsAsync(string name, CancellationToken cancellationToken)
+    {
+        using CancellationTokenSource setupCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task<SharedMemoryDuplexPipe> listener = SharedMemoryDuplexPipe.ListenAsync(name, cancellationToken: setupCancellation.Token);
+        SharedMemoryDuplexPipe client;
+        try
+        {
+            client = await SharedMemoryDuplexPipe.ConnectAsync(name, cancellationToken: setupCancellation.Token);
+        }
+        catch (Exception connectionException)
+        {
+            await setupCancellation.CancelAsync();
+            try
+            {
+                (await listener).Dispose();
+            }
+            catch (OperationCanceledException) when (setupCancellation.IsCancellationRequested)
+            {
+            }
+            catch (Exception listenerException)
+            {
+                throw new AggregateException("Shared-memory connection setup and listener cleanup both failed.", connectionException, listenerException);
+            }
+
+            throw;
+        }
+
+        try
+        {
+            return (client, await listener);
+        }
+        catch
+        {
+            client.Dispose();
+            throw;
+        }
     }
 }
 
