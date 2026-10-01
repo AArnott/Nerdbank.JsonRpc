@@ -12,6 +12,7 @@ using System.Security.Principal;
 #endif
 using System.Runtime.InteropServices;
 #if NET
+using System.Runtime.CompilerServices;
 using System.Runtime.Versioning;
 #endif
 using System.Threading.Tasks.Sources;
@@ -923,6 +924,10 @@ public sealed class SharedMemoryDuplexPipe : IDuplexPipe, IDisposable
 			}
 		}
 
+#if NET
+		// IPC reads usually suspend; pool the async state machine rather than allocate one for each message.
+		[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
 		public override async ValueTask<ReadResult> ReadAsync(CancellationToken cancellationToken = default)
 		{
 			owner.ThrowIfDisposed();

@@ -31,6 +31,31 @@ public class SharedMemoryDuplexPipeTests
 		}
 	}
 
+	/// <summary>Verifies that repeatedly suspended reads recover after cancellation and deliver later messages.</summary>
+	[Test]
+	public async Task PendingReadsRecoverAfterCancellation()
+	{
+		(SharedMemoryDuplexPipe client, SharedMemoryDuplexPipe server) = await SharedMemoryDuplexPipe.CreatePairAsync();
+		using (client)
+		using (server)
+		using (CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10)))
+		{
+			for (byte value = 0; value < 32; value++)
+			{
+				using CancellationTokenSource canceled = new();
+				Task<ReadResult> pending = server.Input.ReadAsync(canceled.Token).AsTask();
+				canceled.Cancel();
+				await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+
+				Task<ReadResult> next = server.Input.ReadAsync(timeout.Token).AsTask();
+				await client.Output.WriteAsync(new byte[] { value }, timeout.Token);
+				ReadResult read = await next;
+				Assert.Equal(new byte[] { value }, read.Buffer.ToArray());
+				server.Input.AdvanceTo(read.Buffer.End);
+			}
+		}
+	}
+
 	[Test]
 	public async Task JsonRpcOverSharedMemoryChannel()
 	{
