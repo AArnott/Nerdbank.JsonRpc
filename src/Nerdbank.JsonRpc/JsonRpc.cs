@@ -823,7 +823,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <param name="interfaceType">The RPC contract interface.</param>
 	/// <returns>The factory, or <see langword="null"/> if <paramref name="interfaceType"/> is not an interface with a generated proxy.</returns>
 	private static JsonRpcProxyFactoryAttribute? FindProxyFactory(Type interfaceType)
-		=> interfaceType.IsInterface ? interfaceType.GetCustomAttributes<JsonRpcProxyFactoryAttribute>(inherit: false).FirstOrDefault() : null;
+		=> interfaceType.IsInterface ? interfaceType.GetCustomAttribute<JsonRpcProxyFactoryAttribute>(inherit: false) : null;
 
 	private static InvalidOperationException CreateProxyMismatchException(object proxy, Type interfaceType)
 		=> new($"The generated proxy type '{proxy.GetType().FullName}' does not implement requested interface '{interfaceType.FullName}'.");
