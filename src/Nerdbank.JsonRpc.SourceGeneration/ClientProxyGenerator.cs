@@ -456,7 +456,8 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.AppendLine();
 		}
 
-		builder.Append("[global::Nerdbank.JsonRpc.JsonRpcProxyImplementationAttribute(typeof(").Append(info.ProxyTypeName).AppendLine("))]");
+		string factoryName = GetGeneratedMemberName(info, "NerdbankJsonRpc_ProxyFactoryAttribute");
+		builder.Append('[').Append(info.ProxyTypeName).Append('.').Append(factoryName).AppendLine("]");
 		ImmutableArray<OptionalInterfaceInfo> optionalInterfaces = info.OptionalInterfaces.OrderBy(static optional => optional.InterfaceId).ToImmutableArray();
 		int variantCount = 1 << optionalInterfaces.Length;
 		for (int mask = 1; mask < variantCount; mask++)
@@ -464,16 +465,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			string proxyTypeName = info.Symbol.ContainingNamespace.IsGlobalNamespace
 				? "global::" + GetVariantProxyName(info, mask)
 				: "global::" + info.Symbol.ContainingNamespace.ToDisplayString() + "." + GetVariantProxyName(info, mask);
-			builder.Append("[global::Nerdbank.JsonRpc.JsonRpcOptionalProxyImplementationAttribute(typeof(").Append(proxyTypeName).Append(')');
-			for (int index = 0; index < optionalInterfaces.Length; index++)
-			{
-				if ((mask & (1 << index)) != 0)
-				{
-					builder.Append(", ").Append(optionalInterfaces[index].InterfaceId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-				}
-			}
-
-			builder.AppendLine(")]");
+			builder.Append('[').Append(proxyTypeName).Append('.').Append(factoryName).AppendLine("]");
 		}
 
 		builder.Append(GetAccessibility(info.Symbol.DeclaredAccessibility)).Append(" partial interface ").Append(info.Symbol.Name).AppendLine();
@@ -481,7 +473,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		builder.CloseBlock();
 		builder.AppendLine();
 
-		RenderProxyClass(builder, info, info.ProxyName, info.Methods, []);
+		RenderProxyClass(builder, info, info.ProxyName, factoryName, info.Methods, []);
 		for (int mask = 1; mask < variantCount; mask++)
 		{
 			ImmutableArray<OptionalInterfaceInfo> implemented = optionalInterfaces.Where((_, index) => (mask & (1 << index)) != 0).ToImmutableArray();
@@ -504,13 +496,13 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			}
 
 			builder.AppendLine();
-			RenderProxyClass(builder, info, GetVariantProxyName(info, mask), methods.ToImmutable(), implemented);
+			RenderProxyClass(builder, info, GetVariantProxyName(info, mask), factoryName, methods.ToImmutable(), implemented);
 		}
 
 		return builder.ToString();
 	}
 
-	private static void RenderProxyClass(SourceWriter builder, InterfaceInfo info, string proxyName, ImmutableArray<MethodInfo> methods, ImmutableArray<OptionalInterfaceInfo> optionalInterfaces)
+	private static void RenderProxyClass(SourceWriter builder, InterfaceInfo info, string proxyName, string factoryName, ImmutableArray<MethodInfo> methods, ImmutableArray<OptionalInterfaceInfo> optionalInterfaces)
 	{
 		ImmutableArray<ShapeFieldInfo> shapeFields = GetShapeFields(methods);
 		bool needsMethodNameTransform = methods.Any(m => m.ExplicitRpcName is null && m.Kind is not ProxyMethodKind.Unsupported && !(info.IsMarshalable && IsDisposeMethod(m)));
@@ -587,6 +579,8 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 
 		builder.CloseBlock("\t");
+		builder.AppendLine();
+		RenderProxyFactory(builder, proxyName, factoryName, optionalInterfaces);
 		for (int i = 0; i < methods.Length; i++)
 		{
 			builder.AppendLine();
@@ -594,6 +588,41 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 
 		builder.CloseBlock();
+	}
+
+	/// <summary>
+	/// Renders a nested attribute that creates the proxy with a direct constructor call,
+	/// so the runtime can activate the proxy without constructor reflection.
+	/// </summary>
+	private static void RenderProxyFactory(SourceWriter builder, string proxyName, string factoryName, ImmutableArray<OptionalInterfaceInfo> optionalInterfaces)
+	{
+		builder.Append("\tinternal sealed class ").Append(factoryName).Append(" : global::Nerdbank.JsonRpc.");
+		builder.AppendLine(optionalInterfaces.IsEmpty ? "JsonRpcProxyFactoryAttribute" : "JsonRpcOptionalProxyFactoryAttribute");
+		builder.OpenBlock("\t");
+		if (!optionalInterfaces.IsEmpty)
+		{
+			builder.Append("\t\tpublic ").Append(factoryName).Append("()").AppendLine();
+			builder.Append("\t\t\t: base(");
+			for (int i = 0; i < optionalInterfaces.Length; i++)
+			{
+				if (i > 0)
+				{
+					builder.Append(", ");
+				}
+
+				builder.Append(optionalInterfaces[i].InterfaceId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+			}
+
+			builder.AppendLine(")");
+			builder.OpenBlock("\t\t");
+			builder.CloseBlock("\t\t");
+			builder.AppendLine();
+		}
+
+		builder.Append("\t\tpublic override object CreateProxy(global::Nerdbank.JsonRpc.IJsonRpcClient client, global::Nerdbank.JsonRpc.JsonRpcProxyOptions options) => new ")
+			.Append(proxyName)
+			.AppendLine("(client, options);");
+		builder.CloseBlock("\t");
 	}
 
 	private static string GetVariantProxyName(InterfaceInfo info, int mask) => $"{info.ProxyName}_Optional{mask}";

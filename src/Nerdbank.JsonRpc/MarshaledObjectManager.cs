@@ -43,7 +43,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new ArgumentNullException(nameof(value));
 		}
 
-		RpcMarshalableAttribute attribute = shape.Type.GetCustomAttribute<RpcMarshalableAttribute>()
+		RpcMarshalableAttribute attribute = MarshalableCache<T>.Marshalable
 			?? throw new InvalidOperationException($"The interface '{shape.Type}' is not marked with {nameof(RpcMarshalableAttribute)}.");
 		object target = value;
 		if (!attribute.CallScopedLifetime && target is not IDisposable)
@@ -54,7 +54,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		TargetRegistration registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, owner.MarshaledTargetOptions)!;
 		List<(int InterfaceId, TargetRegistration Registration)> optionalRegistrations = [];
 		HashSet<int> interfaceIds = [];
-		foreach (RpcMarshalableOptionalInterfaceAttribute optionalInterface in shape.Type.GetCustomAttributes<RpcMarshalableOptionalInterfaceAttribute>())
+		foreach (RpcMarshalableOptionalInterfaceAttribute optionalInterface in MarshalableCache<T>.OptionalInterfaces)
 		{
 			if (!interfaceIds.Add(optionalInterface.InterfaceId))
 			{
@@ -105,7 +105,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	internal T UnmarshalMarshalable<T>(JsonRpcValue value, ITypeShape<T> shape, RpcCallState? callState)
 	{
 		(long handle, int direction, bool callScopedLifetime, int[] optionalInterfaceIds) = ReadMarker(value);
-		RpcMarshalableAttribute attribute = shape.Type.GetCustomAttribute<RpcMarshalableAttribute>()
+		RpcMarshalableAttribute attribute = MarshalableCache<T>.Marshalable
 			?? throw new InvalidOperationException($"The interface '{shape.Type}' is not marked with {nameof(RpcMarshalableAttribute)}.");
 		if (attribute.CallScopedLifetime != callScopedLifetime)
 		{
@@ -132,20 +132,19 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 		CallScopedHandle callScopedHandle = this.RegisterIncomingProxy(handle, callScopedLifetime, callState);
 		HashSet<int> advertisedInterfaces = [.. optionalInterfaceIds];
-		HashSet<int> knownAdvertisedInterfaces = [.. shape.Type.GetCustomAttributes<RpcMarshalableOptionalInterfaceAttribute>()
+		HashSet<int> knownAdvertisedInterfaces = [.. MarshalableCache<T>.OptionalInterfaces
 			.Where(attribute => advertisedInterfaces.Contains(attribute.InterfaceId))
 			.Select(attribute => attribute.InterfaceId)];
-		Type? proxyType = shape.Type.GetCustomAttributes<JsonRpcOptionalProxyImplementationAttribute>()
+		JsonRpcOptionalProxyFactoryAttribute? optionalProxyFactory = knownAdvertisedInterfaces.Count == 0 ? null : MarshalableCache<T>.OptionalProxyFactories
 			.SingleOrDefault(attribute => attribute.InterfaceIds.Count == knownAdvertisedInterfaces.Count && attribute.InterfaceIds.All(knownAdvertisedInterfaces.Contains))
-			?.ProxyType;
-		if (knownAdvertisedInterfaces.Count > 0 && proxyType is null)
-		{
-			throw new NotSupportedException($"No generated proxy supports the advertised optional interfaces on '{shape.Type}'.");
-		}
+			?? throw new NotSupportedException($"No generated proxy supports the advertised optional interfaces on '{shape.Type}'.");
 
-		object proxy = JsonRpc.AttachCore(new MarshaledObjectProxyClient(owner, handle, callScopedHandle), typeof(T), owner.MarshaledProxyOptions, proxyType);
-		RemoteHandles.Add(proxy, new(this, handle, callScopedLifetime, callScopedHandle));
-		return (T)proxy;
+		MarshaledObjectProxyClient client = new(owner, handle, callScopedHandle);
+		T proxy = optionalProxyFactory is null
+			? JsonRpc.AttachCore<T>(client, owner.MarshaledProxyOptions)
+			: JsonRpc.CastProxy<T>(optionalProxyFactory.CreateProxy(client, owner.MarshaledProxyOptions));
+		RemoteHandles.Add(proxy!, new(this, handle, callScopedLifetime, callScopedHandle));
+		return proxy;
 	}
 
 	internal JsonRpcValue MarshalObserver<T>(IObserver<T> observer, ITypeShape<T> valueShape, JsonRpcEncoding encoding, RpcCallState? callState)
@@ -921,6 +920,22 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 			Interlocked.Exchange(ref this.active, 0);
 		}
+	}
+
+	/// <summary>
+	/// Caches the RPC-marshaling attributes declared on an interface, so they are read once per interface.
+	/// </summary>
+	/// <typeparam name="T">The RPC-marshalable interface.</typeparam>
+	private static class MarshalableCache<T>
+	{
+		/// <summary>The <see cref="RpcMarshalableAttribute"/> on <typeparamref name="T"/>, if any.</summary>
+		internal static readonly RpcMarshalableAttribute? Marshalable = typeof(T).GetCustomAttribute<RpcMarshalableAttribute>();
+
+		/// <summary>The optional interfaces declared on <typeparamref name="T"/>.</summary>
+		internal static readonly RpcMarshalableOptionalInterfaceAttribute[] OptionalInterfaces = [.. typeof(T).GetCustomAttributes<RpcMarshalableOptionalInterfaceAttribute>()];
+
+		/// <summary>The generated factories for proxies of <typeparamref name="T"/> that also implement optional interfaces.</summary>
+		internal static readonly JsonRpcOptionalProxyFactoryAttribute[] OptionalProxyFactories = [.. typeof(T).GetCustomAttributes<JsonRpcOptionalProxyFactoryAttribute>()];
 	}
 
 	private sealed class LocalObjectLease(object value)

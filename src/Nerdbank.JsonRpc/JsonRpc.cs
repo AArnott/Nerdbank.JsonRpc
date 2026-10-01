@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 #if NET
@@ -302,7 +302,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <typeparam name="T">The RPC contract interface to proxy.</typeparam>
 	/// <param name="options">Options controlling argument encoding for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <typeparamref name="T"/>.</returns>
-	public T Attach<T>(JsonRpcProxyOptions? options = null) => (T)this.Attach(typeof(T), options);
+	public T Attach<T>(JsonRpcProxyOptions? options = null) => AttachCore<T>(this, options);
 
 	/// <summary>
 	/// Attaches a generated client proxy for an RPC contract interface to this JSON-RPC connection.
@@ -310,7 +310,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <param name="interfaceType">The RPC contract interface to proxy.</param>
 	/// <param name="options">Options controlling argument encoding for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <paramref name="interfaceType"/>.</returns>
-	public object Attach(Type interfaceType, JsonRpcProxyOptions? options = null) => AttachCore(this, interfaceType, options ?? JsonRpcProxyOptions.Default);
+	/// <remarks>
+	/// Prefer <see cref="Attach{T}(JsonRpcProxyOptions?)"/> when the interface is known at compile time,
+	/// since it caches the generated proxy factory where this method must look it up on each call.
+	/// </remarks>
+	public object Attach(Type interfaceType, JsonRpcProxyOptions? options = null) => AttachCore(this, interfaceType, options);
 
 #if NET
 	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, CancellationToken cancellationToken)
@@ -518,36 +522,55 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		return this.marshaledObjects.Revoke(target);
 	}
 
-	internal static object AttachCore(
-		IJsonRpcClient client,
-		Type interfaceType,
-		JsonRpcProxyOptions? options = null,
-#if NET
-		[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] Type? implementationType = null)
-#else
-		Type? implementationType = null)
-#endif
+	/// <summary>
+	/// Creates a generated client proxy for an RPC contract interface, using a factory that is discovered once per interface.
+	/// </summary>
+	/// <typeparam name="T">The RPC contract interface to proxy.</typeparam>
+	/// <param name="client">The client the proxy sends requests through.</param>
+	/// <param name="options">Options controlling the proxy's behavior.</param>
+	/// <returns>The new proxy.</returns>
+	internal static T AttachCore<T>(IJsonRpcClient client, JsonRpcProxyOptions? options)
+	{
+		Requires.NotNull(client);
+
+		// When no factory is cached, defer to the non-generic path to throw the appropriate exception.
+		return ProxyFactoryCache<T>.Factory is { } factory
+			? CastProxy<T>(factory.CreateProxy(client, options ?? JsonRpcProxyOptions.Default))
+			: (T)AttachCore(client, typeof(T), options);
+	}
+
+	/// <summary>
+	/// Creates a generated client proxy for an RPC contract interface.
+	/// </summary>
+	/// <param name="client">The client the proxy sends requests through.</param>
+	/// <param name="interfaceType">The RPC contract interface to proxy.</param>
+	/// <param name="options">Options controlling the proxy's behavior.</param>
+	/// <returns>The new proxy.</returns>
+	internal static object AttachCore(IJsonRpcClient client, Type interfaceType, JsonRpcProxyOptions? options)
 	{
 		Requires.NotNull(client);
 		Requires.NotNull(interfaceType);
 		Requires.Argument(interfaceType.IsInterface, nameof(interfaceType), "The requested proxy type must be an interface.");
 
-		JsonRpcProxyImplementationAttribute? implementation = interfaceType.GetCustomAttribute<JsonRpcProxyImplementationAttribute>();
-		Type proxyType = implementationType ?? implementation?.ProxyType
+		JsonRpcProxyFactoryAttribute factory = FindProxyFactory(interfaceType)
 			?? throw new NotSupportedException($"No generated JSON-RPC proxy was found for interface '{interfaceType.FullName}'. Add GenerateJsonRpcProxyAttribute to the interface or request an annotated composite interface.");
-		if (!interfaceType.IsAssignableFrom(proxyType))
+		object proxy = factory.CreateProxy(client, options ?? JsonRpcProxyOptions.Default);
+		if (!interfaceType.IsInstanceOfType(proxy))
 		{
-			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not implement requested interface '{interfaceType.FullName}'.");
+			throw CreateProxyMismatchException(proxy, interfaceType);
 		}
 
-		ConstructorInfo? constructor = proxyType.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null, types: [typeof(IJsonRpcClient), typeof(JsonRpcProxyOptions)], modifiers: null);
-		if (constructor is null)
-		{
-			throw new InvalidOperationException($"The generated proxy type '{proxyType.FullName}' does not have a constructor that accepts an IJsonRpcClient and JsonRpcProxyOptions instance.");
-		}
-
-		return constructor.Invoke([client, options ?? JsonRpcProxyOptions.Default]);
+		return proxy;
 	}
+
+	/// <summary>
+	/// Casts a newly created proxy to the interface it was expected to implement.
+	/// </summary>
+	/// <typeparam name="T">The RPC contract interface the proxy should implement.</typeparam>
+	/// <param name="proxy">The proxy.</param>
+	/// <returns>The proxy, typed as <typeparamref name="T"/>.</returns>
+	/// <exception cref="InvalidOperationException">Thrown when <paramref name="proxy"/> does not implement <typeparamref name="T"/>.</exception>
+	internal static T CastProxy<T>(object proxy) => proxy is T typed ? typed : throw CreateProxyMismatchException(proxy, typeof(T));
 
 	internal RequestId GetNextRequestId()
 	{
@@ -793,6 +816,17 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <remarks>This is a separate method so that only requests that carry a token allocate the lambda's closure.</remarks>
 	private static JoinableTask<DispatchResponse> RunUnderJoinableTaskAsync(JoinableTaskFactory jtf, MethodInvoker invoker, DispatchRequest dispatchRequest, string parentToken)
 		=> jtf.RunAsync(() => invoker(dispatchRequest).AsTask(), parentToken, JoinableTaskCreationOptions.None);
+
+	/// <summary>
+	/// Finds the source-generated factory for an RPC contract interface's proxy.
+	/// </summary>
+	/// <param name="interfaceType">The RPC contract interface.</param>
+	/// <returns>The factory, or <see langword="null"/> if <paramref name="interfaceType"/> is not an interface with a generated proxy.</returns>
+	private static JsonRpcProxyFactoryAttribute? FindProxyFactory(Type interfaceType)
+		=> interfaceType.IsInterface ? interfaceType.GetCustomAttributes<JsonRpcProxyFactoryAttribute>(inherit: false).FirstOrDefault() : null;
+
+	private static InvalidOperationException CreateProxyMismatchException(object proxy, Type interfaceType)
+		=> new($"The generated proxy type '{proxy.GetType().FullName}' does not implement requested interface '{interfaceType.FullName}'.");
 
 	private ValueTask<JsonRpcResponse?> DispatchAsync(JsonRpcRequest request)
 	{
@@ -1261,5 +1295,20 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				tracker.CancellationTokenSource?.Cancel();
 			}
 		}
+	}
+
+	/// <summary>
+	/// Caches the source-generated proxy factory for an RPC contract interface.
+	/// </summary>
+	/// <typeparam name="T">The RPC contract interface.</typeparam>
+	/// <remarks>
+	/// The runtime initializes this type's field once per <typeparamref name="T"/>, thread-safely,
+	/// so attaching a proxy needs only a field read instead of a reflection lookup.
+	/// The initializer never throws, so a failed lookup isn't cached as a permanent <see cref="TypeInitializationException"/>.
+	/// </remarks>
+	private static class ProxyFactoryCache<T>
+	{
+		/// <summary>The factory, or <see langword="null"/> if <typeparamref name="T"/> is not an interface with a generated proxy.</summary>
+		internal static readonly JsonRpcProxyFactoryAttribute? Factory = FindProxyFactory(typeof(T));
 	}
 }
