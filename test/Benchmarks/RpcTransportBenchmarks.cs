@@ -27,6 +27,7 @@ public class RpcTransportBenchmarks
 	private SharedMemoryDuplexPipe? sharedMemoryServer;
 	private IRpcBenchmarkContract client = null!;
 	private WorkspaceGraph largeGraph = null!;
+	private JsonRpcValue emptyArguments;
 
 	/// <summary>Gets or sets the transport for both endpoints.</summary>
 	[Params(RpcTransport.InMemory, RpcTransport.NamedPipe, RpcTransport.SharedMemoryIpc)]
@@ -64,11 +65,19 @@ public class RpcTransportBenchmarks
 			this.clientRpc.Start();
 			this.serverRpc.Start();
 			this.client = this.clientRpc.Attach<IRpcBenchmarkContract>();
+			using (JsonRpcArgumentsBuilder builder = this.clientRpc.CreateArguments(named: false, count: 0))
+			{
+				this.emptyArguments = builder.Build();
+			}
 
-			if (await this.Ping() != 1 || await this.Add() != 19 + 23 + "benchmark".Length || await this.ProcessGraph() != WorkspaceGraphFactory.Checksum(this.largeGraph))
+			if (await this.Ping() != 1 || await this.PingValueTask() != 1 || await this.PublicDirectTyped() != 32 || await this.PublicProxyValueTask() != 32 || await this.PublicProxyTask() != 32 || await this.Add() != 19 + 23 + "benchmark".Length || await this.ProcessGraph() != WorkspaceGraphFactory.Checksum(this.largeGraph))
 			{
 				throw new InvalidOperationException("The transport did not produce the expected RPC results.");
 			}
+
+			await this.PublicDirectVoid();
+			await this.PublicProxyVoidValueTask();
+			await this.PublicProxyVoidTask();
 		}
 		catch
 		{
@@ -104,6 +113,11 @@ public class RpcTransportBenchmarks
 	[Benchmark]
 	public Task<int> Ping() => this.client.PingAsync(CancellationToken.None);
 
+	/// <summary>Measures a no-argument request whose ValueTask result is consumed directly.</summary>
+	/// <returns>The server's fixed result.</returns>
+	[Benchmark]
+	public ValueTask<int> PingValueTask() => this.client.PingValueTaskAsync(CancellationToken.None);
+
 	/// <summary>Measures a request with a few small arguments and its response.</summary>
 	/// <returns>The sum computed by the server.</returns>
 	[Benchmark]
@@ -113,6 +127,81 @@ public class RpcTransportBenchmarks
 	/// <returns>The server's checksum of the graph.</returns>
 	[Benchmark]
 	public Task<long> ProcessGraph() => this.client.ProcessGraphAsync(this.largeGraph, CancellationToken.None);
+
+	/// <summary>Measures 32 directly awaited operations through PublicDirectTyped.</summary>
+	/// <returns>The sum of the results.</returns>
+	[Benchmark(OperationsPerInvoke = 32)]
+	public async Task<int> PublicDirectTyped()
+	{
+		int sum = 0;
+		for (int i = 0; i < 32; i++)
+		{
+			sum += await this.clientRpc!.RequestAsync("pingValueTask", this.emptyArguments, PolyType.SourceGenerator.TypeShapeProvider_Benchmarks.Default.Int32, CancellationToken.None).ConfigureAwait(false);
+		}
+
+		return sum;
+	}
+
+	/// <summary>Measures 32 directly awaited operations through PublicProxyValueTask.</summary>
+	/// <returns>The sum of the results.</returns>
+	[Benchmark(OperationsPerInvoke = 32)]
+	public async Task<int> PublicProxyValueTask()
+	{
+		int sum = 0;
+		for (int i = 0; i < 32; i++)
+		{
+			sum += await this.client.PingValueTaskAsync(CancellationToken.None).ConfigureAwait(false);
+		}
+
+		return sum;
+	}
+
+	/// <summary>Measures 32 directly awaited operations through PublicProxyTask.</summary>
+	/// <returns>The sum of the results.</returns>
+	[Benchmark(OperationsPerInvoke = 32)]
+	public async Task<int> PublicProxyTask()
+	{
+		int sum = 0;
+		for (int i = 0; i < 32; i++)
+		{
+			sum += await this.client.PingAsync(CancellationToken.None).ConfigureAwait(false);
+		}
+
+		return sum;
+	}
+
+	/// <summary>Measures 32 directly awaited operations through PublicDirectVoid.</summary>
+	/// <returns>The loop completion.</returns>
+	[Benchmark(OperationsPerInvoke = 32)]
+	public async Task PublicDirectVoid()
+	{
+		for (int i = 0; i < 32; i++)
+		{
+			await this.clientRpc!.RequestAsync("voidValueTask", this.emptyArguments, CancellationToken.None).ConfigureAwait(false);
+		}
+	}
+
+	/// <summary>Measures 32 directly awaited operations through PublicProxyVoidValueTask.</summary>
+	/// <returns>The loop completion.</returns>
+	[Benchmark(OperationsPerInvoke = 32)]
+	public async Task PublicProxyVoidValueTask()
+	{
+		for (int i = 0; i < 32; i++)
+		{
+			await this.client.VoidValueTaskAsync(CancellationToken.None).ConfigureAwait(false);
+		}
+	}
+
+	/// <summary>Measures 32 directly awaited operations through PublicProxyVoidTask.</summary>
+	/// <returns>The loop completion.</returns>
+	[Benchmark(OperationsPerInvoke = 32)]
+	public async Task PublicProxyVoidTask()
+	{
+		for (int i = 0; i < 32; i++)
+		{
+			await this.client.VoidTaskAsync(CancellationToken.None).ConfigureAwait(false);
+		}
+	}
 
 	private static async Task ValidateZeroCopyWraparoundAsync()
 	{

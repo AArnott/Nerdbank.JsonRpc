@@ -151,6 +151,38 @@ public partial class JsonRpcClientTests : TestBase
 	}
 
 	[Test]
+	public async Task CancelPendingTypedRequestAndReuse()
+	{
+		using CancellationTokenSource cts = new();
+		Task<int> resultTask = this.jsonRpc.RequestAsync<AddNamedArguments, int, Witness>("Add", new AddNamedArguments { A = 2, B = 3 }, cts.Token).AsTask();
+		JsonRpcRequest requestMessage = Assert.IsType<JsonRpcRequest>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
+
+		cts.Cancel();
+		JsonRpcRequest cancelMessage = Assert.IsType<JsonRpcRequest>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal("$/cancelRequest", cancelMessage.Method);
+
+		JsonRpcError errorMessage = new()
+		{
+			Id = requestMessage.Id!.Value,
+			Error = new JsonRpcErrorDetails { Code = JsonRpcErrorCode.RequestCancelled, Message = "cancelled" },
+		};
+		await this.channel.Writer.WriteAsync(errorMessage, this.TimeoutToken);
+		JsonRpcException exception = await Assert.ThrowsAsync<JsonRpcException>(() => resultTask.WithCancellation(this.TimeoutToken));
+		Assert.Equal(JsonRpcErrorCode.RequestCancelled, exception.ErrorDetails.Code);
+
+		Task<int> nextResultTask = this.jsonRpc.RequestAsync<AddNamedArguments, int, Witness>("Add", new AddNamedArguments { A = 2, B = 3 }, this.TimeoutToken).AsTask();
+		JsonRpcRequest nextRequestMessage = Assert.IsType<JsonRpcRequest>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
+		JsonRpcResult resultMessage = new()
+		{
+			Id = nextRequestMessage.Id!.Value,
+			Result = (RawMessagePack)((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Serialize<int, Witness>(5, this.TimeoutToken),
+		};
+		await this.channel.Writer.WriteAsync(resultMessage, this.TimeoutToken);
+
+		Assert.Equal(5, await nextResultTask.WithCancellation(this.TimeoutToken));
+	}
+
+	[Test]
 	public async Task CancelPendingRequest()
 	{
 		using CancellationTokenSource cts = new();
