@@ -2,6 +2,14 @@
 
 The client proxy generator is included in the `Nerdbank.JsonRpc` NuGet package as a C# analyzer. It creates a typed implementation of an interface annotated with <xref:Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute>. It uses PolyType-generated method shapes for arguments and results. [Getting Started](getting-started.md) shows the contract declaration and how to call <xref:Nerdbank.JsonRpc.JsonRpc.Attach*> on a connection to obtain the proxy; you do not need to construct the generated implementation yourself.
 
+## Choosing request return types
+
+For new RPC interfaces, prefer <xref:System.Threading.Tasks.ValueTask`1> for requests with a result and <xref:System.Threading.Tasks.ValueTask> for requests without one. Generated proxies return these awaitables directly, allowing internal operations to use reusable completion sources without requiring a public Task adapter. <xref:System.Threading.Tasks.Task`1> and <xref:System.Threading.Tasks.Task> remain supported when callers need Task semantics; allocation savings depend on the request path and should be measured for your workload.
+
+Consume each returned ValueTask exactly once, normally by awaiting it directly. If you need to await the same operation multiple times, share it among consumers, or use <xref:System.Threading.Tasks.Task.WhenAll*?displayProperty=nameWithType>, convert it with <xref:System.Threading.Tasks.ValueTask`1.AsTask?displayProperty=nameWithType> once and reuse that Task. Alternatively, call <xref:System.Threading.Tasks.ValueTask`1.Preserve?displayProperty=nameWithType> once and reuse the returned ValueTask. Do not repeatedly await the original ValueTask or repeatedly convert it to a Task: it may be backed by a source that is recycled after consumption.
+
+This guidance applies to the ValueTasks returned by the connection and batch request APIs as well as generated proxies. It does not change the wire protocol, and client and server interfaces can use different supported asynchronous return types.
+
 ## Supported contracts
 
 Generated proxy contracts must be `partial`, non-nested, non-generic interfaces. Their methods must be non-generic and may return `ValueTask<T>`, `Task<T>`, `ValueTask`, or `Task` for requests, `IAsyncEnumerable<T>` for streaming requests, or `void` for notifications. Generated proxies do not implement properties or events, so omit abstract properties and events from the contract (or provide default interface implementations). To receive remote event notifications, register methods that match their names and arguments; see [Events as notifications](events.md#receiving-the-notifications).

@@ -65,7 +65,7 @@ public class RpcTransportBenchmarks
 			this.serverRpc.Start();
 			this.client = this.clientRpc.Attach<IRpcBenchmarkContract>();
 
-			if (await this.Ping() != 1 || await this.Add() != 19 + 23 + "benchmark".Length || await this.ProcessGraph() != WorkspaceGraphFactory.Checksum(this.largeGraph))
+			if (await this.Ping() != 1 || await this.PingValueTask() != 1 || await this.Add() != 19 + 23 + "benchmark".Length || await this.ProcessGraph() != WorkspaceGraphFactory.Checksum(this.largeGraph))
 			{
 				throw new InvalidOperationException("The transport did not produce the expected RPC results.");
 			}
@@ -103,6 +103,11 @@ public class RpcTransportBenchmarks
 	/// <returns>The server's fixed result.</returns>
 	[Benchmark]
 	public Task<int> Ping() => this.client.PingAsync(CancellationToken.None);
+
+	/// <summary>Measures a no-argument request whose ValueTask result is consumed directly.</summary>
+	/// <returns>The server's fixed result.</returns>
+	[Benchmark]
+	public ValueTask<int> PingValueTask() => this.client.PingValueTaskAsync(CancellationToken.None);
 
 	/// <summary>Measures a request with a few small arguments and its response.</summary>
 	/// <returns>The sum computed by the server.</returns>

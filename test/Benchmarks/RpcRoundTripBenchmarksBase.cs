@@ -128,5 +128,12 @@ public abstract class RpcRoundTripBenchmarksBase
 		{
 			throw new InvalidOperationException("The no-argument round trip produced an unexpected result.");
 		}
+
+		int nerdbankValueTaskPing = await this.NerdbankClient.PingValueTaskAsync(CancellationToken.None);
+		int streamValueTaskPing = await this.StreamJsonRpcClient.PingValueTaskAsync(CancellationToken.None);
+		if (nerdbankValueTaskPing != 1 || nerdbankValueTaskPing != streamValueTaskPing)
+		{
+			throw new InvalidOperationException("The ValueTask round trip produced an unexpected result.");
+		}
 	}
 }

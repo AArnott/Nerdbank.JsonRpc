@@ -24,6 +24,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 {
 	internal const string SpecialCancelMethodName = "$/cancelRequest";
 
+	/// <summary>Bounds retained response sources after a burst of concurrent requests.</summary>
+	private const int MaximumRecycledResponseSources = 64;
+
 	/// <summary>
 	/// A <see cref="System.Threading.SynchronizationContext"/> that schedules work to the thread pool with no ordering guarantees.
 	/// </summary>
@@ -53,11 +56,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private readonly List<IDisposable> eventSubscriptions = [];
 
 	/// <summary>Requests awaiting responses, keyed by ID. Guarded by <see cref="connectionSync"/>.</summary>
-	private readonly Dictionary<RequestId, TaskCompletionSource<JsonRpcResponse>> pendingOutboundRequests = [];
+	private readonly Dictionary<RequestId, PendingResponse> pendingOutboundRequests = [];
 
 	private readonly Action<object?> cancelOutboundRequestDelegate;
 	private readonly JsonRpcPipeChannel channel;
 	private readonly JsonRpcSerializer userDataSerializer;
+	private ResponseCompletionSource? recycledResponseSources;
+	private int recycledResponseSourceCount;
 	private bool disposed;
 	private Task? readerTask;
 	private int nextRequestId;
@@ -527,7 +532,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		{
 			this.completionSource.TrySetCanceled();
 			this.channel.Writer.TryComplete();
-			foreach ((RequestId id, TaskCompletionSource<JsonRpcResponse> pending) in this.pendingOutboundRequests)
+			foreach ((RequestId id, PendingResponse pending) in this.pendingOutboundRequests)
 			{
 				this.progress.UnregisterOutboundRequest(id);
 				pending.TrySetException(new ObjectDisposedException(nameof(JsonRpc)));
@@ -683,17 +688,12 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		Requires.Argument(request.Id.HasValue, nameof(request), "Request must have an ID for tracking the response.");
 		lock (this.connectionSync)
 		{
-			if (this.Completion.IsCompleted || this.IsDisposed)
-			{
-				throw new InvalidOperationException("The JSON-RPC connection is closed.");
-			}
-
-			if (this.pendingOutboundRequests.ContainsKey(request.Id.Value))
+			if (!this.CanRegisterOutboundRequest(request.Id.Value))
 			{
 				return false;
 			}
 
-			this.pendingOutboundRequests.Add(request.Id.Value, responseTcs);
+			this.pendingOutboundRequests.Add(request.Id.Value, new PendingResponse(responseTcs));
 			return true;
 		}
 	}
@@ -912,6 +912,16 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private static InvalidOperationException CreateProxyMismatchException(object? proxy, Type interfaceType)
 		=> new($"The generated proxy factory returned {(proxy is null ? "null" : $"an instance of '{proxy.GetType().FullName}'")} which does not implement requested interface '{interfaceType.FullName}'.");
 
+	private bool CanRegisterOutboundRequest(RequestId id)
+	{
+		if (this.Completion.IsCompleted || this.IsDisposed)
+		{
+			throw new InvalidOperationException("The JSON-RPC connection is closed.");
+		}
+
+		return !this.pendingOutboundRequests.ContainsKey(id);
+	}
+
 	/// <summary>Gets the <see cref="System.Threading.SynchronizationContext"/> to dispatch a particular request on.</summary>
 	/// <param name="request">The inbound request.</param>
 	/// <returns>The context to begin the invocation on.</returns>
@@ -1080,13 +1090,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		bool transferredToCaller = false;
 		lock (this.connectionSync)
 		{
-			if (!this.Completion.IsCompleted && this.pendingOutboundRequests.TryGetValue(response.Id, out TaskCompletionSource<JsonRpcResponse>? tcs))
+			if (!this.Completion.IsCompleted && this.pendingOutboundRequests.TryGetValue(response.Id, out PendingResponse completion))
 			{
 				this.pendingOutboundRequests.Remove(response.Id);
 				this.progress.UnregisterOutboundRequest(response.Id);
 				this.outOfBandStreams.CompleteOutboundRequest(response.Id, successful: response is JsonRpcResult);
 				this.asyncEnumerables.CompleteOutboundRequest(response.Id);
-				transferredToCaller = tcs.TrySetResult(response);
+				transferredToCaller = completion.TrySetResult(response);
 			}
 			else if (!this.Completion.IsCompleted)
 			{
@@ -1212,7 +1222,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 #endif
 	private async ValueTask<JsonRpcResponse> RequestAsync(JsonRpcRequest request, CancellationToken cancellationToken)
 	{
-		TaskCompletionSource<JsonRpcResponse>? responseTcs = null;
+		ResponseCompletionSource? responseSource = null;
+		bool registered = false;
 		bool posted = false;
 		try
 		{
@@ -1220,8 +1231,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			Requires.Argument(request.Id.HasValue, nameof(request), "Request must have an ID for tracking the response.");
 			Verify.Operation(this.State == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.State}.");
 
-			responseTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-			Verify.Operation(this.TryRegisterOutboundRequest(request, responseTcs), "A request with this ID is already pending.");
+			responseSource = this.RegisterOutboundRequest(request.Id!.Value);
+			registered = true;
 			this.progress.RegisterOutboundRequest(request);
 			this.outOfBandStreams.RegisterOutboundRequest(request);
 			this.asyncEnumerables.RegisterOutboundRequest(request);
@@ -1231,26 +1242,68 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 			using (cancellationToken.Register(this.cancelOutboundRequestDelegate, request))
 			{
-#pragma warning disable VSTHRD003 // Awaiting a TaskCompletionSource that represents the remote response.
-				return await responseTcs.Task.ConfigureAwait(false);
-#pragma warning restore VSTHRD003
+				return await responseSource.Task.ConfigureAwait(false);
 			}
 		}
-		catch (Exception ex) when (!posted)
+		catch (Exception) when (!posted)
 		{
 			request.Arguments.ReleaseIfSingleUse();
-			if (request.Id.HasValue)
+			if (registered)
 			{
-				this.TryUnregisterOutboundRequest(request.Id.Value);
+				this.TryUnregisterOutboundRequest(request.Id!.Value);
 				this.progress.UnregisterOutboundRequest(request);
-				this.outOfBandStreams.CompleteOutboundRequest(request.Id.Value, successful: false);
-				this.asyncEnumerables.CompleteOutboundRequest(request.Id.Value);
+				this.outOfBandStreams.CompleteOutboundRequest(request.Id!.Value, successful: false);
+				this.asyncEnumerables.CompleteOutboundRequest(request.Id!.Value);
 			}
 
 			this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
 			this.asyncEnumerables.ReleaseGenerators(request.Arguments);
-			responseTcs?.TrySetException(ex);
 			throw;
+		}
+		finally
+		{
+			if (responseSource is not null)
+			{
+				lock (this.connectionSync)
+				{
+					if (registered)
+					{
+						this.pendingOutboundRequests.Remove(request.Id!.Value);
+					}
+
+					// Response producers also hold connectionSync, so none can access this source after it is reset.
+					responseSource.Reset();
+					if (this.recycledResponseSourceCount < MaximumRecycledResponseSources)
+					{
+						responseSource.Next = this.recycledResponseSources;
+						this.recycledResponseSources = responseSource;
+						this.recycledResponseSourceCount++;
+					}
+				}
+			}
+		}
+	}
+
+	private ResponseCompletionSource RegisterOutboundRequest(RequestId id)
+	{
+		lock (this.connectionSync)
+		{
+			Verify.Operation(this.CanRegisterOutboundRequest(id), "A request with this ID is already pending.");
+			ResponseCompletionSource source;
+			if (this.recycledResponseSources is { } recycled)
+			{
+				source = recycled;
+				this.recycledResponseSources = source.Next;
+				source.Next = null;
+				this.recycledResponseSourceCount--;
+			}
+			else
+			{
+				source = new ResponseCompletionSource();
+			}
+
+			this.pendingOutboundRequests.Add(id, new PendingResponse(source));
+			return source;
 		}
 	}
 
@@ -1329,7 +1382,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				return;
 			}
 
-			foreach ((RequestId id, TaskCompletionSource<JsonRpcResponse> pending) in this.pendingOutboundRequests)
+			foreach ((RequestId id, PendingResponse pending) in this.pendingOutboundRequests)
 			{
 				this.progress.UnregisterOutboundRequest(id);
 				pending.TrySetException(exception);

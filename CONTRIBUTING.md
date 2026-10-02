@@ -45,6 +45,19 @@ You can use `dotnet test` to build and/or test the repo.
 
 There may be tests that are known to be unstable or have special requirements. These can be avoided by running tests using the [dotnet-test-cloud.ps1](tools/dotnet-test-cloud.ps1) script *after* running `dotnet build`.
 
+## Performance investigations
+
+The `test/Benchmarks` project uses BenchmarkDotNet and `MemoryDiagnoser`. Build it in Release, then run a focused workload without rebuilding:
+
+```powershell
+dotnet build .\test\Benchmarks\Benchmarks.csproj -c Release
+dotnet run --project .\test\Benchmarks\Benchmarks.csproj --no-build -c Release -- --filter "*RpcTransportBenchmarks.Ping*" "*RpcTransportBenchmarks.Add" --iterationCount 12 --warmupCount 6 --invocationCount 32768
+```
+
+The transport workload covers JSON and MessagePack over in-memory pipes, named pipes, and shared-memory IPC. `Ping` uses a Task-returning proxy contract; `PingValueTask` uses a ValueTask-returning contract; `Add` covers an adjacent small-argument request. Setup validates every result outside the measured operations. `RpcValueTaskPingBenchmarks` also compares ValueTask contracts with StreamJsonRpc.
+
+Compare baseline and candidate with the same runtime, parameters, operation counts, and CPU affinity. For allocation optimizations, use sampled allocation stacks for attribution and `Allocated` bytes per operation for the quantitative result. Repeat comparisons when scheduling or multimodal distributions obscure latency changes. Keep generated reports and traces outside source control; record the measured result and important tradeoffs in the change description.
+
 ## Releases
 
 Use `nbgv tag` to create a tag for a particular commit that you mean to release.

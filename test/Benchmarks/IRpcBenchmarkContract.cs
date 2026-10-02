@@ -19,6 +19,11 @@ public partial interface IRpcBenchmarkContract
 	/// <returns>A fixed value.</returns>
 	Task<int> PingAsync(CancellationToken cancellationToken);
 
+	/// <summary>Invokes the same fixed-result method through a directly consumed ValueTask.</summary>
+	/// <param name="cancellationToken">A token to cancel the request.</param>
+	/// <returns>A fixed value.</returns>
+	ValueTask<int> PingValueTaskAsync(CancellationToken cancellationToken);
+
 	/// <summary>Invokes a method with a few small arguments.</summary>
 	/// <param name="a">The first addend.</param>
 	/// <param name="b">The second addend.</param>
