@@ -13,6 +13,12 @@ public sealed class RpcBenchmarkServer : IRpcBenchmarkContract
 	public ValueTask<int> PingValueTaskAsync(CancellationToken cancellationToken) => new(1);
 
 	/// <inheritdoc/>
+	public ValueTask VoidValueTaskAsync(CancellationToken cancellationToken) => default;
+
+	/// <inheritdoc/>
+	public Task VoidTaskAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+	/// <inheritdoc/>
 	public Task<int> AddAsync(int a, int b, string label, CancellationToken cancellationToken) => Task.FromResult(a + b + label.Length);
 
 	/// <inheritdoc/>

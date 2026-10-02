@@ -114,6 +114,96 @@ public class OutboundResponseTests : TestBase
 		Assert.Equal(new[] { 42, 42 }, await Task.WhenAll(original, original));
 	}
 
+	/// <summary>Verifies that preserving public results once allows repeatable consumption after subsequent calls.</summary>
+	[Test]
+	public async Task PreservedTypedAndVoidResultsSurviveReuse()
+	{
+		using Fixture fixture = new(JsonRpcEncoding.MessagePack);
+		ValueTask<int> typed = fixture.RequestAsync(this.TimeoutToken).Preserve();
+		await fixture.RespondAsync(await fixture.ReadRequestAsync(this.TimeoutToken), 42, this.TimeoutToken);
+		ValueTask untyped = fixture.Rpc.RequestAsync("ping", fixture.Arguments, this.TimeoutToken).Preserve();
+		await fixture.RespondAsync(await fixture.ReadRequestAsync(this.TimeoutToken), 7, this.TimeoutToken);
+		Assert.Equal(42, await typed);
+		await untyped;
+
+		for (int i = 0; i < 96; i++)
+		{
+			ValueTask<int> next = fixture.RequestAsync(this.TimeoutToken);
+			await fixture.RespondAsync(await fixture.ReadRequestAsync(this.TimeoutToken), i, this.TimeoutToken);
+			Assert.Equal(i, await next);
+		}
+
+		Assert.Equal(42, await typed);
+		await untyped;
+	}
+
+	/// <summary>Verifies that ignoring a public result does not prevent encoded response cleanup or later calls.</summary>
+	/// <param name="typed">Whether the ignored operation deserializes a result.</param>
+	[Test]
+	[Arguments(true)]
+	[Arguments(false)]
+	public async Task UnconsumedPublicResultReleasesEncodedResponse(bool typed)
+	{
+		using Fixture fixture = new(JsonRpcEncoding.MessagePack);
+		ValueTask<int> typedResult = typed ? fixture.RequestAsync(this.TimeoutToken) : default;
+		ValueTask voidResult = typed ? default : fixture.Rpc.RequestAsync("ping", fixture.Arguments, this.TimeoutToken);
+		JsonRpcRequest request = await fixture.ReadRequestAsync(this.TimeoutToken);
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcMessagePackChannel decoder = new(local);
+		await using JsonRpcMessagePackChannel encoder = new(peer);
+		decoder.Start();
+		encoder.Start();
+		await encoder.Writer.WriteAsync(new JsonRpcResult { Id = request.Id!.Value, Result = (RawMessagePack)new byte[] { 42 } }, this.TimeoutToken);
+		JsonRpcResult decoded = Assert.IsType<JsonRpcResult>(await decoder.Reader.ReadAsync(this.TimeoutToken));
+		await fixture.Remote.Writer.WriteAsync(decoded, this.TimeoutToken);
+
+		while (!(typed ? typedResult.IsCompleted : voidResult.IsCompleted))
+		{
+			this.TimeoutToken.ThrowIfCancellationRequested();
+			await Task.Yield();
+		}
+
+		Assert.Throws<ObjectDisposedException>(() => _ = decoded.Result.Bytes);
+		for (int i = 0; i < 96; i++)
+		{
+			ValueTask<int> next = fixture.RequestAsync(this.TimeoutToken);
+			await fixture.RespondAsync(await fixture.ReadRequestAsync(this.TimeoutToken), i, this.TimeoutToken);
+			Assert.Equal(i, await next);
+		}
+	}
+
+	/// <summary>Verifies notification completion and recovery when outbound acceptance suspends.</summary>
+	/// <param name="fail">Whether the first acceptance fails.</param>
+	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task SuspendedNotificationCompletesAndAllowsReuse(bool fail)
+	{
+		using Fixture fixture = new(JsonRpcEncoding.MessagePack, gateFirstWrite: true);
+		ValueTask first = fixture.Rpc.NotifyAsync("notify", fixture.Arguments, this.TimeoutToken);
+		JsonRpcRequest notification = await fixture.ReadRequestAsync(this.TimeoutToken);
+		Assert.Null(notification.Id);
+		Assert.False(first.IsCompleted);
+		if (fail)
+		{
+			fixture.WriteCompletion.SetException(new InvalidOperationException("write failed"));
+			await Assert.ThrowsAsync<InvalidOperationException>(() => first.AsTask());
+		}
+		else
+		{
+			ValueTask preserved = first.Preserve();
+			fixture.WriteCompletion.SetResult(true);
+			await preserved;
+			await preserved;
+		}
+
+		for (int i = 0; i < 96; i++)
+		{
+			await fixture.Rpc.NotifyAsync("notify", fixture.Arguments, this.TimeoutToken);
+			Assert.Null((await fixture.ReadRequestAsync(this.TimeoutToken)).Id);
+		}
+	}
+
 	/// <summary>Verifies that a response arriving during a suspended write is retained until that write completes.</summary>
 	/// <param name="failWrite">Whether the suspended write fails instead of completing.</param>
 	[Test]

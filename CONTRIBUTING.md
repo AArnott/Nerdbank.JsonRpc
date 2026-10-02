@@ -56,6 +56,8 @@ dotnet run --project .\test\Benchmarks\Benchmarks.csproj --no-build -c Release -
 
 The transport workload covers JSON and MessagePack over in-memory pipes, named pipes, and shared-memory IPC. `Ping` uses a Task-returning proxy contract; `PingValueTask` uses a ValueTask-returning contract; `Add` covers an adjacent small-argument request. Setup validates every result outside the measured operations. `RpcValueTaskPingBenchmarks` also compares ValueTask contracts with StreamJsonRpc.
 
+The `RpcTransportBenchmarks.Public*` workloads await 32 operations in a Task-returning loop and report per-operation values using `OperationsPerInvoke`. This amortizes the benchmark runner's own awaitable consumption and exposes the allocation difference between directly awaiting a pooled ValueTask and a Task-returning proxy's adapter. Run them with `--invocationCount 1024` for 32768 RPC calls per iteration. `RpcNotificationSubmissionBenchmarks` isolates synchronous and deliberately suspended outbound queue acceptance through the encoded API, serialized API, and void proxy; it does not measure wire serialization or remote execution.
+
 Compare baseline and candidate with the same runtime, parameters, operation counts, and CPU affinity. For allocation optimizations, use sampled allocation stacks for attribution and `Allocated` bytes per operation for the quantitative result. Repeat comparisons when scheduling or multimodal distributions obscure latency changes. Keep generated reports and traces outside source control; record the measured result and important tradeoffs in the change description.
 
 ## Releases

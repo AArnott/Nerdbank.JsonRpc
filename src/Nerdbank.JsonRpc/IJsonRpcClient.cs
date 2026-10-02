@@ -35,6 +35,11 @@ public interface IJsonRpcClient
 	/// <param name="arguments">The pre-serialized arguments payload.</param>
 	/// <param name="cancellationToken">A token whose cancellation should be propagated to the remote endpoint.</param>
 	/// <returns>A task that completes when the remote endpoint sends its response.</returns>
+	/// <remarks>
+	/// Consume the returned awaitable once. To share it, await it repeatedly, or compose it with other Tasks,
+	/// call <c>AsTask()</c> or <c>Preserve()</c> once and retain the returned awaitable instead of the original.
+	/// It may be backed by a pooled source that is recycled after consumption.
+	/// </remarks>
 	ValueTask RequestAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken);
 
 	/// <summary>
@@ -46,6 +51,11 @@ public interface IJsonRpcClient
 	/// <param name="resultShape">The type shape describing <typeparamref name="TResult"/>.</param>
 	/// <param name="cancellationToken">A token whose cancellation should be propagated to the remote endpoint.</param>
 	/// <returns>A task that completes with the result returned by the remote endpoint.</returns>
+	/// <remarks>
+	/// Consume the returned awaitable once. To share it, await it repeatedly, or compose it with other Tasks,
+	/// call <c>AsTask()</c> or <c>Preserve()</c> once and retain the returned awaitable instead of the original.
+	/// It may be backed by a pooled source that is recycled after consumption.
+	/// </remarks>
 	ValueTask<TResult> RequestAsync<TResult>(string method, JsonRpcValue arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken);
 
 	/// <summary>
@@ -55,5 +65,10 @@ public interface IJsonRpcClient
 	/// <param name="arguments">The pre-serialized arguments payload.</param>
 	/// <param name="cancellationToken">A token whose cancellation is observed before the notification is posted.</param>
 	/// <returns>A task that completes when the notification has been accepted by the outbound channel.</returns>
+	/// <remarks>
+	/// Consume the returned awaitable once. To share it, await it repeatedly, or compose it with other Tasks,
+	/// call <c>AsTask()</c> or <c>Preserve()</c> once and retain the returned awaitable instead of the original.
+	/// It may be backed by a pooled source that is recycled after consumption.
+	/// </remarks>
 	ValueTask NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken);
 }

@@ -745,6 +745,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+#if NET
+	[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+#endif
 	internal async ValueTask AwaitVoidResponseAsync(JsonRpcRequest request, ValueTask<JsonRpcResponse> responseTask)
 	{
 		try
@@ -768,6 +771,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+#if NET
+	[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
 	internal async ValueTask<TResult> AwaitTypedResponseAsync<TResult>(JsonRpcRequest request, ITypeShape<TResult> resultShape, ValueTask<JsonRpcResponse> responseTask, CancellationToken cancellationToken)
 	{
 		CallScopedLifetime? argumentLifetime = request.Arguments.MarshaledHandles is { HasCallScopedObjects: true }
@@ -1307,6 +1313,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+#if NET
+	[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+#endif
 	private async ValueTask NotifyAsync(JsonRpcRequest request, MarshaledObjectManager.HandleScope marshaledObjectsScope, CancellationToken cancellationToken)
 	{
 		using (marshaledObjectsScope)
@@ -1324,6 +1333,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+#if NET
+	[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+#endif
 	private async ValueTask AwaitPostedNotificationAsync(ValueTask postTask, JsonRpcRequest request)
 	{
 		try
