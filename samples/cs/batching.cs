@@ -8,12 +8,12 @@ namespace Batching;
 
 [GenerateJsonRpcProxy]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
-public partial interface ICalculator
+internal partial interface ICalculator
 {
     ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken);
 }
 
-public static class Example
+internal static class Example
 {
     public static async Task RunAsync(JsonRpc rpc)
     {
@@ -30,6 +30,25 @@ public static class Example
 
         int firstSum = await first;
         int secondSum = await second;
+        #endregion
+    }
+
+    public static async Task RunDynamicAsync(JsonRpc rpc)
+    {
+        ArgumentNullException.ThrowIfNull(rpc);
+
+        #region dynamic-batch-results
+        using JsonRpcBatch batch = rpc.CreateBatch();
+        ICalculator batchedClient = batch.Attach<ICalculator>();
+
+        Task<int>[] results =
+        [
+            batchedClient.AddAsync(1, 2, CancellationToken.None).AsTask(),
+            batchedClient.AddAsync(3, 4, CancellationToken.None).AsTask(),
+        ];
+
+        await batch.SendAsync(CancellationToken.None);
+        int[] sums = await Task.WhenAll(results);
         #endregion
     }
 }

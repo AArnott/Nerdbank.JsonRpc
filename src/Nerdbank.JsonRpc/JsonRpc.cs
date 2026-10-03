@@ -10,6 +10,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft;
@@ -24,6 +25,9 @@ namespace Nerdbank.JsonRpc;
 public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArgumentsBuilderContext
 {
 	internal const string SpecialCancelMethodName = "$/cancelRequest";
+
+	/// <summary>The notification used to report a locally rejected protocol message.</summary>
+	internal const string ProtocolViolationMethodName = "$/protocolViolation";
 
 	/// <summary>Bounds retained response sources after a burst of concurrent requests.</summary>
 	private const int MaximumRecycledResponseSources = 64;
@@ -65,6 +69,10 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private ResponseCompletionSource? recycledResponseSources;
 	private int recycledResponseSourceCount;
 	private bool disposed;
+	private volatile bool explicitlyDisposed;
+	private volatile bool terminated;
+	private JsonRpcState terminalState;
+	private Exception? terminationException;
 	private Task? readerTask;
 	private int nextRequestId;
 
@@ -81,6 +89,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			throw new ArgumentException("The channel encoding must match its serializer.", nameof(channel));
 		}
 
+		this.channel.SetConnectionOwner();
 		this.marshaledObjects = new(this);
 		this.progress = new(this);
 		this.outOfBandStreams = new();
@@ -245,15 +254,19 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	AsyncEnumerableManager IArgumentsBuilderContext.AsyncEnumerables => this.asyncEnumerables;
 
-	public JsonRpcState State =>
-		this.Completion.IsFaulted ? JsonRpcState.Faulted :
-		this.IsDisposed ? JsonRpcState.Disposed :
-		this.readerTask is not null ? JsonRpcState.Running :
-		JsonRpcState.NotStarted;
+	/// <summary>Gets the connection's lifecycle state, retaining the original shutdown mode after disposal.</summary>
+	public JsonRpcState State => this.terminated ? this.terminalState : this.readerTask is not null ? JsonRpcState.Running : JsonRpcState.NotStarted;
 
+	/// <summary>Gets a task that completes when the connection has shut down.</summary>
+	/// <remarks>Deliberate disposal and EOF between messages without pending outbound requests succeed. Other connection failures fault this task with the original cause. EOF with pending requests faults it with <see cref="EndOfStreamException"/>.</remarks>
 	public Task Completion => this.completionSource.Task;
 
-	public bool IsDisposed => this.disposalSource.IsCancellationRequested;
+	/// <summary>Gets the original connection-loss cause, or <see langword="null"/> if no connection loss occurred.</summary>
+	/// <remarks>Retained after a user calls <see cref="Dispose"/>, including EOF for which <see cref="Completion"/> succeeded.</remarks>
+	public Exception? TerminationException => Volatile.Read(ref this.terminationException);
+
+	/// <summary>Gets a value indicating whether deliberate or automatic shutdown has begun.</summary>
+	public bool IsDisposed => this.terminated;
 
 	internal CancellationToken DisposalToken => this.disposalSource.Token;
 
@@ -275,7 +288,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private SynchronizationContext DispatchSynchronizationContext => this.SynchronizationContext ?? UnorderedDispatchSynchronizationContext;
 
 	/// <inheritdoc/>
-	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);
+	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default)
+	{
+		this.ThrowIfClosed();
+		return new(this, named, count, cancellationToken);
+	}
 
 #if NET
 	/// <summary>
@@ -304,7 +321,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		var registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, options ?? JsonRpcTargetOptions.Default)!;
 		lock (this.targetRegistrationSync)
 		{
-			if (this.disposed)
+			if (this.disposed || this.terminated)
 			{
 				throw new ObjectDisposedException(nameof(JsonRpc));
 			}
@@ -333,7 +350,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// Creates a one-shot builder for sending multiple JSON-RPC requests and notifications as one protocol payload.
 	/// </summary>
 	/// <returns>A batch builder associated with this JSON-RPC connection.</returns>
-	public JsonRpcBatch CreateBatch() => new(this);
+	public JsonRpcBatch CreateBatch()
+	{
+		this.ThrowIfClosed();
+		return new(this);
+	}
 
 	/// <summary>
 	/// Attaches a generated client proxy for an RPC contract interface to this JSON-RPC connection.
@@ -376,6 +397,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	public ValueTask<TResult> RequestAsync<TArg, TResult>(string method, in TArg arguments, ITypeShape<TArg> argShape, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
+		this.ThrowIfClosed();
 		using RpcCallState.Lease callStateLease = new(RpcCallState.Rent());
 		RpcCallState callState = callStateLease.State;
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects(callState);
@@ -396,6 +418,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
+		this.ThrowIfClosed();
 		using RpcCallState.Lease callStateLease = new(RpcCallState.Rent());
 		RpcCallState callState = callStateLease.State;
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects(callState);
@@ -416,6 +439,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	public ValueTask NotifyAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
+		this.ThrowIfClosed();
 		RpcCallState callState = new();
 		MarshaledObjectManager.HandleScope marshaledObjectsScope = this.marshaledObjects.TrackMarshaledObjects(callState);
 		using ProgressManager.RegistrationScope progressScope = this.progress.TrackRegistrations(callState);
@@ -450,6 +474,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <inheritdoc/>
 	public ValueTask RequestAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
+		this.ThrowIfClosed();
 		JsonRpcRequest request = new()
 		{
 			Id = this.GetNextRequestId(),
@@ -463,6 +488,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <inheritdoc/>
 	public ValueTask<TResult> RequestAsync<TResult>(string method, JsonRpcValue arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
+		this.ThrowIfClosed();
 		Requires.NotNull(resultShape);
 
 		JsonRpcRequest request = new()
@@ -478,6 +504,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <inheritdoc/>
 	public ValueTask NotifyAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken)
 	{
+		this.ThrowIfClosed();
 		try
 		{
 			cancellationToken.ThrowIfCancellationRequested();
@@ -506,49 +533,17 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <remarks>Call this after registering initial targets with <see cref="AddRpcTarget{T}(T, ITypeShape{T}, JsonRpcTargetOptions?)"/> to avoid rejecting incoming requests or dropping notifications for which no RPC target has yet been registered.</remarks>
 	public void Start()
 	{
+		this.ThrowIfClosed();
 		this.channel.Start();
 		this.readerTask = this.ReadAsync(this.channel.Reader);
 	}
 
-	/// <inheritdoc/>
+	/// <summary>Deliberately disposes this connection and rejects subsequent calls with ObjectDisposedException.</summary>
+	/// <remarks>Preserves any prior connection-loss cause in <see cref="TerminationException"/> and does not overwrite the original <see cref="State"/> or <see cref="Completion"/> outcome. Await Completion to observe asynchronous teardown.</remarks>
 	public void Dispose()
 	{
-		// Unsubscribe from target object events first so that none can be raised (and attempt to notify) during the rest of disposal.
-		List<IDisposable> subscriptions;
-		lock (this.targetRegistrationSync)
-		{
-			if (this.disposed)
-			{
-				return;
-			}
-
-			this.disposed = true;
-			subscriptions = new List<IDisposable>(this.eventSubscriptions);
-			this.eventSubscriptions.Clear();
-		}
-
-		foreach (IDisposable subscription in subscriptions)
-		{
-			subscription.Dispose();
-		}
-
-		this.StopReading();
-		lock (this.connectionSync)
-		{
-			this.completionSource.TrySetCanceled();
-			this.channel.Writer.TryComplete();
-			foreach ((RequestId id, PendingResponse pending) in this.pendingOutboundRequests)
-			{
-				this.progress.UnregisterOutboundRequest(id);
-				pending.TrySetException(new ObjectDisposedException(nameof(JsonRpc)));
-			}
-
-			this.pendingOutboundRequests.Clear();
-		}
-
-		this.marshaledObjects.DisposeAll();
-		this.outOfBandStreams.Dispose();
-		this.asyncEnumerables.Dispose();
+		this.explicitlyDisposed = true;
+		this.BeginShutdown(null, eof: false);
 	}
 
 	/// <summary>Revokes every active marshaled relationship for an object owned by this connection.</summary>
@@ -679,6 +674,20 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		return JsonRpcValue.FromMessagePack((RawMessagePack)msgpackBuffer.AsReadOnlySequence);
 	}
 
+	/// <summary>Rejects new application work according to the original shutdown cause or subsequent user disposal.</summary>
+	internal void ThrowIfClosed()
+	{
+		if (this.explicitlyDisposed)
+		{
+			throw new ObjectDisposedException(nameof(JsonRpc));
+		}
+
+		if (this.terminated)
+		{
+			ExceptionDispatchInfo.Capture(this.terminationException ?? new ObjectDisposedException(nameof(JsonRpc))).Throw();
+		}
+	}
+
 	internal void LogApplicationError(Exception exception) => this.Logger.LogWarning(exception, "JSON-RPC request processing failed.");
 
 	/// <summary>Stamps an outbound request with the ambient <see cref="JoinableTask"/> token, if any.</summary>
@@ -703,6 +712,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			}
 
 			this.pendingOutboundRequests.Add(request.Id.Value, new PendingResponse(responseTcs));
+			this.RegisterOutboundResources(request);
 			return true;
 		}
 	}
@@ -717,7 +727,19 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	internal void CancelOutboundRequest(JsonRpcRequest request)
 	{
-		this.PostMessage(this.CreateCancellationNotification(request, CancellationToken.None));
+		if (this.terminated)
+		{
+			return;
+		}
+
+		try
+		{
+			this.PostMessage(this.CreateCancellationNotification(request, CancellationToken.None));
+		}
+		catch (Exception ex) when (this.terminated)
+		{
+			this.Logger.LogDebug(ex, "Request cancellation raced with JSON-RPC shutdown; no notification was sent.");
+		}
 	}
 
 	internal JsonRpcRequest CreateCancellationNotification(JsonRpcRequest request, CancellationToken cancellationToken)
@@ -732,9 +754,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	internal ValueTask PostMessageAsync(JsonRpcMessage message, CancellationToken cancellationToken = default)
 	{
+		this.ThrowIfClosed();
 		JsonRpcTracing.ApplyTraceContext(message);
 		this.channel.Serializer.ValidateMessage(message);
-		return this.channel.Writer.WriteAsync(message, cancellationToken);
+		ValueTask write = this.channel.Writer.WriteAsync(message, cancellationToken);
+		return write.IsCompletedSuccessfully ? write : this.ObserveWriteAsync(write);
 	}
 
 	internal void PostMessage(JsonRpcMessage message) => this.FaultOnFailure(this.PostMessageAsync(message).AsTask());
@@ -928,13 +952,30 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private static InvalidOperationException CreateProxyMismatchException(object? proxy, Type interfaceType)
 		=> new($"The generated proxy factory returned {(proxy is null ? "null" : $"an instance of '{proxy.GetType().FullName}'")} which does not implement requested interface '{interfaceType.FullName}'.");
 
+	/// <summary>Retains the connection cause rather than exposing a channel-closed wrapper during teardown.</summary>
+	/// <param name="write">The pending channel write.</param>
+	/// <returns>The observed write.</returns>
+	private async ValueTask ObserveWriteAsync(ValueTask write)
+	{
+		try
+		{
+			await write.ConfigureAwait(false);
+		}
+		catch (ChannelClosedException ex)
+		{
+			if (!this.terminated && ex.InnerException is not null)
+			{
+				this.Fault(ex.InnerException);
+			}
+
+			this.ThrowIfClosed();
+			throw;
+		}
+	}
+
 	private bool CanRegisterOutboundRequest(RequestId id)
 	{
-		if (this.Completion.IsCompleted || this.IsDisposed)
-		{
-			throw new InvalidOperationException("The JSON-RPC connection is closed.");
-		}
-
+		this.ThrowIfClosed();
 		return !this.pendingOutboundRequests.ContainsKey(id);
 	}
 
@@ -1073,7 +1114,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			await this.GetDispatchSynchronizationContext(request);
 
 			DispatchResponse response = jtf is not null && parentToken is not null
-				? await RunUnderJoinableTaskAsync(jtf, invoker, dispatchRequest, parentToken)
+				? await RunUnderJoinableTaskAsync(jtf, invoker, dispatchRequest, parentToken).Task.ConfigureAwait(false)
 				: await invoker(dispatchRequest).ConfigureAwait(false);
 			if (response.IsError || response.Response is JsonRpcError)
 			{
@@ -1111,7 +1152,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
-	private void FaultOnFailure(Task task) => task.ContinueWith(static (t, s) => ((JsonRpc)s!).Fault(t.Exception!), this, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default).Forget();
+	private void FaultOnFailure(Task task) => task.ContinueWith(static (t, s) => ((JsonRpc)s!).Fault(t.Exception is { InnerExceptions.Count: 1 } aggregate && aggregate.InnerException is ProtocolViolationException protocol ? protocol : t.Exception!), this, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default).Forget();
 
 	private void ProcessResponse(JsonRpcResponse response)
 	{
@@ -1119,7 +1160,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		bool transferredToCaller = false;
 		lock (this.connectionSync)
 		{
-			if (!this.Completion.IsCompleted && this.pendingOutboundRequests.TryGetValue(response.Id, out PendingResponse completion))
+			if (!this.terminated && this.pendingOutboundRequests.TryGetValue(response.Id, out PendingResponse completion))
 			{
 				this.pendingOutboundRequests.Remove(response.Id);
 				this.progress.UnregisterOutboundRequest(response.Id);
@@ -1127,7 +1168,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				this.asyncEnumerables.CompleteOutboundRequest(response.Id);
 				transferredToCaller = completion.TrySetResult(response);
 			}
-			else if (!this.Completion.IsCompleted)
+			else if (!this.terminated)
 			{
 				unmatchedResponseException = new ProtocolViolationException($"Received a response with ID {response.Id} that does not match any pending requests.");
 			}
@@ -1146,6 +1187,26 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	private void ProcessIncomingMessage(JsonRpcMessage message)
 	{
+		if (message is JsonRpcRequest { Id: null, Method: ProtocolViolationMethodName } diagnostic)
+		{
+			try
+			{
+				ProtocolViolationParams parameters = this.channel.Serializer.Deserialize(diagnostic.Arguments, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc.Default.ProtocolViolationParams);
+				string reason = parameters.Reason ?? "Unspecified protocol rejection.";
+				this.Logger.LogCritical("Peer-reported JSON-RPC protocol violation: {Reason}.", reason);
+			}
+			catch (Exception ex)
+			{
+				this.Logger.LogCritical(ex, "Unreadable peer-reported protocol diagnostic.");
+			}
+			finally
+			{
+				ReleaseReceivedArguments(diagnostic);
+			}
+
+			return;
+		}
+
 		switch (message)
 		{
 			case JsonRpcRequest request:
@@ -1175,6 +1236,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		{
 			if (message is JsonRpcMessageBatch)
 			{
+				foreach (JsonRpcMessage abandoned in messages)
+				{
+					JsonRpcPipeChannel.ReleaseReceivedPayload(abandoned);
+				}
+
 				this.Fault(new ProtocolViolationException("A JSON-RPC batch entry must be a message object."));
 				return;
 			}
@@ -1182,16 +1248,34 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 		if (messages.Any(static m => m is JsonRpcInvalidMessage))
 		{
+			foreach (JsonRpcMessage abandoned in messages)
+			{
+				JsonRpcPipeChannel.ReleaseReceivedPayload(abandoned);
+			}
+
 			this.Fault(new ProtocolViolationException("A JSON-RPC batch contains an invalid entry."));
 			return;
 		}
 
 		List<Task<JsonRpcResponse?>> requestTasks = [];
 
-		foreach (JsonRpcMessage message in messages)
+		for (int i = 0; i < messages.Length; i++)
 		{
-			switch (message)
+			if (this.terminated)
 			{
+				for (; i < messages.Length; i++)
+				{
+					JsonRpcPipeChannel.ReleaseReceivedPayload(messages[i]);
+				}
+
+				break;
+			}
+
+			switch (messages[i])
+			{
+				case JsonRpcRequest { Id: null, Method: ProtocolViolationMethodName } diagnostic:
+					this.ProcessIncomingMessage(diagnostic);
+					break;
 				case JsonRpcRequest request:
 					requestTasks.Add(this.DispatchAsync(request).AsTask());
 					break;
@@ -1221,7 +1305,16 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 		if (responses.Count > 0)
 		{
-			await this.PostMessageAsync(new JsonRpcMessageBatch([.. responses])).ConfigureAwait(false);
+			JsonRpcMessageBatch batch = new([.. responses]);
+			try
+			{
+				await this.PostMessageAsync(batch).ConfigureAwait(false);
+			}
+			catch
+			{
+				this.ReleaseResponseResources(batch);
+				throw;
+			}
 		}
 	}
 
@@ -1230,18 +1323,48 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <returns>A task that never faults.</returns>
 	private async Task ProcessRequestAsync(JsonRpcRequest request)
 	{
+		JsonRpcResponse? response = null;
 		try
 		{
-			JsonRpcResponse? response = await this.DispatchAsync(request).ConfigureAwait(false);
+			response = await this.DispatchAsync(request).ConfigureAwait(false);
 			if (response is not null)
 			{
 				await this.PostMessageAsync(response).ConfigureAwait(false);
 			}
 		}
-		catch (Exception ex) when (ex is not OperationCanceledException)
+		catch (Exception ex)
 		{
-			// Canceled work never faulted the connection, and faults are wrapped for parity with those observed from other tasks.
-			this.Fault(new AggregateException(ex));
+			if (response is not null)
+			{
+				this.ReleaseResponseResources(response);
+			}
+
+			if (ex is not OperationCanceledException)
+			{
+				// Protocol rejections retain their type so shutdown can send the final diagnostic.
+				this.Fault(ex is ProtocolViolationException ? ex : new AggregateException(ex));
+			}
+		}
+	}
+
+	private void ReleaseResponseResources(JsonRpcMessage message)
+	{
+		switch (message)
+		{
+			case JsonRpcResult result:
+				JsonRpcValue value = result.Result;
+				this.CleanupStep(() => this.marshaledObjects.ReleaseLocalObjects(value));
+				this.CleanupStep(() => this.outOfBandStreams.ReleaseChannels(value));
+				this.CleanupStep(() => this.asyncEnumerables.ReleaseGenerators(value));
+				this.CleanupStep(value.ReleaseIfSingleUse);
+				break;
+			case JsonRpcMessageBatch batch:
+				foreach (JsonRpcMessage entry in batch.Messages)
+				{
+					this.ReleaseResponseResources(entry);
+				}
+
+				break;
 		}
 	}
 
@@ -1259,13 +1382,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 			Requires.Argument(request.Id.HasValue, nameof(request), "Request must have an ID for tracking the response.");
+			this.ThrowIfClosed();
 			Verify.Operation(this.State == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.State}.");
 
-			responseSource = this.RegisterOutboundRequest(request.Id!.Value);
+			responseSource = this.RegisterOutboundRequest(request);
 			registered = true;
-			this.progress.RegisterOutboundRequest(request);
-			this.outOfBandStreams.RegisterOutboundRequest(request);
-			this.asyncEnumerables.RegisterOutboundRequest(request);
 			this.ApplyJoinableTaskToken(request);
 			await this.PostMessageAsync(request, cancellationToken).ConfigureAwait(false);
 			posted = true;
@@ -1294,6 +1415,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			}
 
 			this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
+			this.outOfBandStreams.ReleaseChannels(request.Arguments);
 			this.asyncEnumerables.ReleaseGenerators(request.Arguments);
 			throw;
 		}
@@ -1315,7 +1437,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 					// Response producers also hold connectionSync, so none can access this source after it is reset.
 					responseSource.Reset();
-					if (this.recycledResponseSourceCount < MaximumRecycledResponseSources)
+					if (!this.terminated && this.recycledResponseSourceCount < MaximumRecycledResponseSources)
 					{
 						responseSource.Next = this.recycledResponseSources;
 						this.recycledResponseSources = responseSource;
@@ -1326,8 +1448,18 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
-	private ResponseCompletionSource RegisterOutboundRequest(RequestId id)
+	/// <summary>Registers request-owned resources while the connection lock prevents concurrent shutdown.</summary>
+	/// <param name="request">The registered outbound request.</param>
+	private void RegisterOutboundResources(JsonRpcRequest request)
 	{
+		this.progress.RegisterOutboundRequest(request);
+		this.outOfBandStreams.RegisterOutboundRequest(request);
+		this.asyncEnumerables.RegisterOutboundRequest(request);
+	}
+
+	private ResponseCompletionSource RegisterOutboundRequest(JsonRpcRequest request)
+	{
+		RequestId id = request.Id!.Value;
 		lock (this.connectionSync)
 		{
 			Verify.Operation(this.CanRegisterOutboundRequest(id), "A request with this ID is already pending.");
@@ -1345,6 +1477,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			}
 
 			this.pendingOutboundRequests.Add(id, new PendingResponse(source));
+			this.RegisterOutboundResources(request);
 			return source;
 		}
 	}
@@ -1430,15 +1563,26 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				this.DisposalToken.ThrowIfCancellationRequested();
 				while (inbound.TryRead(out JsonRpcMessage? message))
 				{
-					this.ProcessIncomingMessage(message);
-					if (this.Completion.IsFaulted)
+					if (this.terminated)
 					{
+						JsonRpcPipeChannel.ReleaseReceivedPayload(message);
+						return;
+					}
+
+					this.ProcessIncomingMessage(message);
+					if (this.terminated)
+					{
+						while (inbound.TryRead(out JsonRpcMessage? abandoned))
+						{
+							JsonRpcPipeChannel.ReleaseReceivedPayload(abandoned);
+						}
+
 						return;
 					}
 				}
 			}
 
-			this.Fault(new EndOfStreamException("The JSON-RPC connection closed."));
+			this.BeginShutdown(null, eof: true);
 		}
 		catch (OperationCanceledException) when (this.IsDisposed)
 		{
@@ -1447,48 +1591,176 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		{
 			this.Fault(ex);
 		}
+		finally
+		{
+			while (inbound.TryRead(out JsonRpcMessage? abandoned))
+			{
+				JsonRpcPipeChannel.ReleaseReceivedPayload(abandoned);
+			}
+		}
 	}
 
-	private void Fault(Exception exception)
+	private void Fault(Exception exception) => this.BeginShutdown(exception, eof: false);
+
+	/// <summary>Records the first terminal transition and completes every registered outbound request.</summary>
+	/// <param name="exception">The original failure, or null for deliberate disposal or ordinary EOF.</param>
+	/// <param name="eof">Whether input ended between complete messages.</param>
+	private void BeginShutdown(Exception? exception, bool eof)
 	{
+		int pendingCount;
+		bool successful;
 		lock (this.connectionSync)
 		{
-			if (!this.completionSource.TrySetException(exception))
+			if (this.terminated)
 			{
 				return;
 			}
 
+			pendingCount = this.pendingOutboundRequests.Count;
+			if (eof)
+			{
+				exception = new EndOfStreamException(pendingCount == 0
+					? "The JSON-RPC input ended between messages."
+					: $"The JSON-RPC connection dropped with {pendingCount} pending outbound requests.");
+			}
+
+			successful = exception is null || (eof && pendingCount == 0);
+			this.terminationException = exception;
+			this.terminalState = eof ? JsonRpcState.Disconnected : exception is null ? JsonRpcState.Disposed : JsonRpcState.Faulted;
+			this.terminated = true;
+			Exception pendingException = exception ?? new ObjectDisposedException(nameof(JsonRpc));
 			foreach ((RequestId id, PendingResponse pending) in this.pendingOutboundRequests)
 			{
 				this.progress.UnregisterOutboundRequest(id);
-				pending.TrySetException(exception);
+				pending.TrySetException(pendingException);
 			}
 
 			this.pendingOutboundRequests.Clear();
-
-			this.channel.Writer.TryComplete(exception);
-			this.Logger.LogError(exception, "JSON-RPC connection terminated: {Reason}", exception.Message);
+			this.recycledResponseSources = null;
+			this.recycledResponseSourceCount = 0;
 		}
 
+		this.Logger.Log(successful ? LogLevel.Information : LogLevel.Error, exception, "JSON-RPC shutdown: {State}; encoding: {Encoding}; pending outbound requests: {PendingCount}.", this.terminalState, this.channel.Encoding, pendingCount);
+		this.FinishShutdownAsync(exception, successful).Forget();
+	}
+
+	/// <summary>Stops input, attempts a final protocol diagnostic, and releases connection resources.</summary>
+	/// <param name="exception">The primary shutdown cause.</param>
+	/// <param name="successful">Whether Completion should succeed.</param>
+	/// <returns>The cleanup operation.</returns>
+	private async Task FinishShutdownAsync(Exception? exception, bool successful)
+	{
 		try
 		{
-			this.marshaledObjects.DisposeAll();
-			this.outOfBandStreams.Dispose();
-			this.asyncEnumerables.Dispose();
+			List<IDisposable> subscriptions;
+			lock (this.targetRegistrationSync)
+			{
+				this.disposed = true;
+				subscriptions = new(this.eventSubscriptions);
+				this.eventSubscriptions.Clear();
+				this.handlers.Clear();
+			}
+
+			foreach (IDisposable subscription in subscriptions)
+			{
+				this.CleanupStep(subscription.Dispose);
+			}
+
+			this.CleanupStep(this.StopReading);
+			if (exception is ProtocolViolationException)
+			{
+				try
+				{
+					ProtocolViolationParams parameters = new() { Reason = exception.Message };
+					JsonRpcRequest notification = new()
+					{
+						Method = ProtocolViolationMethodName,
+						Arguments = this.channel.Serializer.Serialize(parameters, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc.Default.ProtocolViolationParams),
+					};
+					await this.channel.SendFinalNotificationAsync(notification).ConfigureAwait(false);
+				}
+				catch (Exception ex)
+				{
+					this.Logger.LogWarning(ex, "Could not flush the final protocol-violation notification. Original shutdown cause: {Cause}.", exception.GetType().Name);
+				}
+			}
+
+			try
+			{
+				await this.channel.DisposeAsync().ConfigureAwait(false);
+			}
+			catch (Exception ex)
+			{
+				this.Logger.LogError(ex, "JSON-RPC transport cleanup failed; retaining the original shutdown cause.");
+			}
+
+			this.CleanupStep(this.marshaledObjects.DisposeAll);
+			this.CleanupStep(this.outOfBandStreams.Dispose);
+			try
+			{
+				await this.asyncEnumerables.DisposeAllAsync().ConfigureAwait(false);
+			}
+			catch (Exception ex)
+			{
+				this.Logger.LogError(ex, "JSON-RPC enumerable cleanup failed; retaining the original shutdown cause.");
+			}
+		}
+		finally
+		{
+			if (successful)
+			{
+				this.completionSource.TrySetResult(true);
+			}
+			else
+			{
+				this.completionSource.TrySetException(exception!);
+			}
+		}
+	}
+
+	/// <summary>Runs one cleanup step without allowing secondary errors to skip the remaining steps.</summary>
+	/// <param name="cleanup">The cleanup action.</param>
+	private void CleanupStep(Action cleanup)
+	{
+		try
+		{
+			cleanup();
 		}
 		catch (Exception ex)
 		{
-			this.Logger.LogError(ex, "One or more marshaled objects failed to dispose while faulting the JSON-RPC connection.");
+			this.Logger.LogError(ex, "JSON-RPC cleanup failed; retaining the original shutdown cause.");
 		}
-
-		this.StopReading();
 	}
 
-	/// <summary>Cancels <see cref="DisposalToken"/> and wakes the read loop, which waits without a token.</summary>
+	/// <summary>Cancels inbound handlers and stops actual transport reads.</summary>
 	private void StopReading()
 	{
-		this.disposalSource.Cancel();
-		this.channel.AbortInbound(this.disposalSource.Token);
+		this.CleanupStep(this.disposalSource.Cancel);
+		this.CleanupStep(() => this.channel.AbortInbound(this.disposalSource.Token));
+
+		CancellationTokenSource?[] sources;
+		lock (this.pendingInboundRequests)
+		{
+			sources = this.pendingInboundRequests.Values.Select(static p => p.CancellationTokenSource).ToArray();
+		}
+
+		foreach (CancellationTokenSource? source in sources)
+		{
+			if (source is not null)
+			{
+				this.CleanupStep(source.Cancel);
+			}
+		}
+	}
+
+	/// <summary>The diagnostic parameters sent before protocol shutdown.</summary>
+	[GenerateShape]
+	internal partial struct ProtocolViolationParams
+	{
+		/// <summary>Gets or initializes the peer-reported explanation.</summary>
+		[Key(0)]
+		[PropertyShape(Name = "reason", IsRequired = true)]
+		public string Reason { get; init; }
 	}
 
 	[GenerateShape]

@@ -25,6 +25,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	private readonly Dictionary<long, List<WeakReference<CallScopedHandle>>> remoteProxies = [];
 	private readonly HashSet<long> revokedRemoteHandles = [];
 	private long nextHandle;
+	private bool disposed;
 
 	internal JsonRpcValue Marshal(IDisposable value, JsonRpcEncoding encoding, RpcCallState? callState)
 	{
@@ -332,6 +333,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		CallScopedHandle[] remoteProxyStates;
 		lock (this.sync)
 		{
+			this.disposed = true;
 			values = [.. this.localLeases.Values.Where(static lease => lease.DisposeTarget).Select(static lease => lease.Value).OfType<IDisposable>()];
 			remoteProxyStates = [.. this.remoteProxies.Values.SelectMany(static proxies => proxies).Select(static reference => reference.TryGetTarget(out CallScopedHandle? state) ? state : null).OfType<CallScopedHandle>()];
 			this.localObjects.Clear();
@@ -602,35 +604,57 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		}
 
 		long handle = Interlocked.Increment(ref this.nextHandle);
+		bool rejected;
 		lock (this.sync)
 		{
-			if (!this.localLeases.TryGetValue(value, out LocalObjectLease? lease))
+			rejected = this.disposed;
+			if (!rejected)
 			{
-				lease = new(value);
-				this.localLeases.Add(value, lease);
-			}
-
-			if (!callScopedLifetime && disposeTarget)
-			{
-				lease.DisposeTarget = true;
-			}
-
-			MarshaledLocalObject marshaledObject = new(lease);
-			if (registration is not null)
-			{
-				marshaledObject.AddRegistration(registration);
-			}
-
-			if (optionalRegistrations is not null)
-			{
-				foreach ((int interfaceId, TargetRegistration optionalRegistration) in optionalRegistrations)
+				if (!this.localLeases.TryGetValue(value, out LocalObjectLease? lease))
 				{
-					marshaledObject.AddRegistration(optionalRegistration, interfaceId.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".");
+					lease = new(value);
+					this.localLeases.Add(value, lease);
+				}
+
+				if (!callScopedLifetime && disposeTarget)
+				{
+					lease.DisposeTarget = true;
+				}
+
+				MarshaledLocalObject marshaledObject = new(lease);
+				if (registration is not null)
+				{
+					marshaledObject.AddRegistration(registration);
+				}
+
+				if (optionalRegistrations is not null)
+				{
+					foreach ((int interfaceId, TargetRegistration optionalRegistration) in optionalRegistrations)
+					{
+						marshaledObject.AddRegistration(optionalRegistration, interfaceId.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".");
+					}
+				}
+
+				lease.Handles.Add(handle);
+				this.localObjects.Add(handle, marshaledObject);
+			}
+		}
+
+		if (rejected)
+		{
+			if (!callScopedLifetime && disposeTarget && value is IDisposable disposable)
+			{
+				try
+				{
+					disposable.Dispose();
+				}
+				catch (Exception ex)
+				{
+					owner.LogApplicationError(ex);
 				}
 			}
 
-			lease.Handles.Add(handle);
-			this.localObjects.Add(handle, marshaledObject);
+			throw new ObjectDisposedException(nameof(JsonRpc));
 		}
 
 		this.GetHandleScope(callState)?.Add(handle, callScopedLifetime);

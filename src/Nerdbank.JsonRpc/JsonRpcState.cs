@@ -9,4 +9,7 @@ public enum JsonRpcState
 	Running,
 	Faulted,
 	Disposed,
+
+	/// <summary>Input ended between messages and the connection automatically disposed itself.</summary>
+	Disconnected,
 }

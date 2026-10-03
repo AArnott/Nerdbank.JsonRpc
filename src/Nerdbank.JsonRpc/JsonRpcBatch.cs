@@ -43,7 +43,11 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	AsyncEnumerableManager IArgumentsBuilderContext.AsyncEnumerables => this.owner.AsyncEnumerables;
 
 	/// <inheritdoc/>
-	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default) => new(this, named, count, cancellationToken);
+	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default)
+	{
+		this.owner.ThrowIfClosed();
+		return new(this, named, count, cancellationToken);
+	}
 
 	/// <summary>
 	/// Attaches a generated client proxy for an RPC contract interface to this batch.
@@ -136,6 +140,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
 	public ValueTask<TResult> RequestAsync<TArg, TResult>(string method, in TArg arguments, ITypeShape<TArg> argShape, ITypeShape<TResult> resultShape, CancellationToken cancellationToken)
 	{
+		this.owner.ThrowIfClosed();
 		RpcCallState callState = new();
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects(callState);
 		using ProgressManager.RegistrationScope progressScope = this.owner.Progress.TrackRegistrations(callState);
@@ -165,6 +170,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
 	public ValueTask RequestAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
+		this.owner.ThrowIfClosed();
 		RpcCallState callState = new();
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects(callState);
 		using ProgressManager.RegistrationScope progressScope = this.owner.Progress.TrackRegistrations(callState);
@@ -194,6 +200,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	/// <exception cref="ObjectDisposedException">Thrown if this batch has been disposed.</exception>
 	public ValueTask NotifyAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
 	{
+		this.owner.ThrowIfClosed();
 		RpcCallState callState = new();
 		using MarshaledObjectManager.HandleScope marshaledObjectsScope = this.owner.MarshaledObjects.TrackMarshaledObjects(callState);
 		using ProgressManager.RegistrationScope progressScope = this.owner.Progress.TrackRegistrations(callState);
@@ -290,6 +297,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 				snapshot = [.. this.entries];
 			}
 
+			this.owner.ThrowIfClosed();
 			Verify.Operation(this.owner.State == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.owner.State}.");
 			foreach (Entry entry in snapshot)
 			{
@@ -307,10 +315,6 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 					{
 						throw new InvalidOperationException($"A request with ID {entry.Request.Id.Value} is already pending.");
 					}
-
-					this.owner.Progress.RegisterOutboundRequest(entry.Request);
-					this.owner.OutOfBandStreams.RegisterOutboundRequest(entry.Request);
-					this.owner.AsyncEnumerables.RegisterOutboundRequest(entry.Request);
 				}
 			}
 
@@ -470,6 +474,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		catch
 		{
 			this.owner.MarshaledObjects.ReleaseLocalObjects(request.Arguments);
+			this.owner.OutOfBandStreams.ReleaseChannels(request.Arguments);
 			this.owner.AsyncEnumerables.ReleaseGenerators(request.Arguments);
 			request.Arguments.ReleaseIfSingleUse();
 			throw;
@@ -554,6 +559,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 
 	private void ThrowIfDisposedOrSent()
 	{
+		this.owner.ThrowIfClosed();
 		if (this.disposed)
 		{
 			throw new ObjectDisposedException(nameof(JsonRpcBatch));
@@ -769,6 +775,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			}
 
 			this.owner.owner.MarshaledObjects.ReleaseLocalObjects(this.Request.Arguments);
+			this.owner.owner.OutOfBandStreams.ReleaseChannels(this.Request.Arguments);
 			this.owner.owner.AsyncEnumerables.ReleaseGenerators(this.Request.Arguments);
 			this.Request.Arguments.ReleaseIfSingleUse();
 		}

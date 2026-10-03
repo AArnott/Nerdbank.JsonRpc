@@ -49,7 +49,9 @@ internal static class JsonRpcJsonCodec
 		}
 		catch (JsonException ex)
 		{
-			throw new ProtocolViolationException("Invalid JSON-RPC JSON payload: " + ex.Message);
+			ProtocolViolationException violation = new("Invalid JSON-RPC JSON payload." + " " + ex.Message);
+			violation.Data["ParserException"] = ex;
+			throw violation;
 		}
 	}
 
