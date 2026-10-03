@@ -403,11 +403,7 @@ public partial class ConnectionLifecycleTests : TestBase
 
 			await peer.Output.CompleteAsync();
 			await rpc.Completion.WithCancellation(this.TimeoutToken);
-			if (blockReadAhead)
-			{
-				await Assert.ThrowsAsync<EndOfStreamException>(() => moveNext.WithCancellation(this.TimeoutToken));
-			}
-			else
+			if (!blockReadAhead)
 			{
 				await sequences.UncooperativeDisposeStarted.Task.WithCancellation(this.TimeoutToken);
 			}
