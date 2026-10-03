@@ -65,7 +65,7 @@ internal partial interface IFileService
 }
 #endregion
 
-public static class OutOfBandStreamExamples
+internal static class OutOfBandStreamExamples
 {
     public static void ConfigureClient(JsonRpcPipeChannel rpcChannel, MultiplexingStream multiplexingStream)
     {
@@ -75,7 +75,7 @@ public static class OutOfBandStreamExamples
     }
 }
 
-public sealed class SequenceService
+internal sealed class SequenceService
 {
     #region tuned-sequence
     public IAsyncEnumerable<int> ProduceAsync(CancellationToken cancellationToken)

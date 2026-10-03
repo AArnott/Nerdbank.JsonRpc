@@ -366,6 +366,58 @@ public partial class ConnectionLifecycleTests : TestBase
 		await Assert.ThrowsAsync<EndOfStreamException>(async () => await enumerator.MoveNextAsync());
 	}
 
+	/// <summary>Verifies an uncooperative user enumerator cannot keep connection completion pending.</summary>
+	/// <param name="mode">The encoding and framing mode.</param>
+	/// <param name="blockReadAhead">Whether MoveNextAsync blocks and ignores cancellation.</param>
+	[Test]
+	[Arguments(0, true)]
+	[Arguments(2, true)]
+	[Arguments(0, false)]
+	[Arguments(2, false)]
+	public async Task UncooperativeEnumeratorCleanupDoesNotBlockCompletion(int mode, bool blockReadAhead)
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcPipeChannel channel = CreateChannel(local, mode);
+		await using JsonRpcPipeChannel peerChannel = CreateChannel(peer, mode);
+		AsyncEnumerableService sequences = new();
+		using JsonRpc rpc = new(channel);
+		using JsonRpc peerRpc = new(peerChannel);
+		rpc.AddRpcTarget<IAsyncEnumerableService>(sequences);
+		rpc.Start();
+		peerRpc.Start();
+
+		try
+		{
+			IAsyncEnumerable<int> sequence = peerRpc.Attach<IAsyncEnumerableService>().GetUncooperativeSequenceAsync(blockReadAhead, blockDispose: !blockReadAhead, this.TimeoutToken);
+			IAsyncEnumerator<int> enumerator = sequence.GetAsyncEnumerator(this.TimeoutToken);
+			Task<bool> moveNext = enumerator.MoveNextAsync().AsTask();
+			if (blockReadAhead)
+			{
+				await sequences.UncooperativeMoveNextStarted.Task.WithCancellation(this.TimeoutToken);
+			}
+			else
+			{
+				Assert.True(await moveNext.WithCancellation(this.TimeoutToken));
+				Assert.Equal(42, enumerator.Current);
+			}
+
+			await peer.Output.CompleteAsync();
+			await rpc.Completion.WithCancellation(this.TimeoutToken);
+			if (blockReadAhead)
+			{
+				await Assert.ThrowsAsync<EndOfStreamException>(() => moveNext.WithCancellation(this.TimeoutToken));
+			}
+			else
+			{
+				await sequences.UncooperativeDisposeStarted.Task.WithCancellation(this.TimeoutToken);
+			}
+		}
+		finally
+		{
+			sequences.ReleaseUncooperativeOperation.TrySetResult(false);
+		}
+	}
+
 	/// <summary>Verifies cancellation callbacks do not attempt a send after shutdown.</summary>
 	[Test]
 	public async Task CancellationAfterShutdownDoesNotThrowFromTheCallback()

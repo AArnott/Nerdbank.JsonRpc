@@ -9,6 +9,8 @@ internal partial interface IAsyncEnumerableService
 {
 	IAsyncEnumerable<int> GetNumbersAsync(int count, CancellationToken cancellationToken);
 
+	IAsyncEnumerable<int> GetUncooperativeSequenceAsync(bool blockReadAhead, bool blockDispose, CancellationToken cancellationToken);
+
 	Task<IAsyncEnumerable<int>> GetNumbersWrappedAsync(int count, CancellationToken cancellationToken);
 
 	IAsyncEnumerable<int> GetNumbersWithSettingsAsync(int count, int minBatchSize, int maxReadAhead, int prefetch, CancellationToken cancellationToken);

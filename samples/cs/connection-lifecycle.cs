@@ -8,7 +8,7 @@ namespace ConnectionLifecycle;
 
 #pragma warning disable SA1649 // The sample file name matches its documentation topic rather than its type.
 
-public static class Examples
+internal static class Examples
 {
     public static async Task ObserveCompletionAsync(JsonRpc rpc, ILogger logger)
     {

@@ -41,9 +41,9 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	/// <summary>Releases every generator this connection is tracking.</summary>
 	public void Dispose() => this.DisposeAllAsync().Forget();
 
-	/// <summary>Releases every tracked generator and waits for its asynchronous disposal.</summary>
-	/// <returns>The cleanup operation.</returns>
-	internal async Task DisposeAllAsync()
+	/// <summary>Starts asynchronous disposal for every generator tracked by this connection.</summary>
+	/// <returns>A completed task after disposal has been scheduled.</returns>
+	internal Task DisposeAllAsync()
 	{
 		Generator[] snapshot;
 		lock (this.sync)
@@ -55,15 +55,11 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 
 		foreach (Generator generator in snapshot)
 		{
-			try
-			{
-				await generator.DisposeAsync().ConfigureAwait(false);
-			}
-			catch (Exception ex)
-			{
-				owner.LogApplicationError(ex);
-			}
+			// User enumerators may ignore cancellation or never complete disposal; neither may hold connection completion open.
+			Task.Run(() => this.DisposeGeneratorInBackgroundAsync(generator)).Forget();
 		}
+
+		return Task.CompletedTask;
 	}
 
 	/// <summary>Begins tracking the generators created while serializing one outbound message.</summary>
@@ -668,6 +664,18 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		}
 
 		return new DispatchResponse { Response = id is RequestId responseId ? new JsonRpcResult { Id = responseId, Result = this.CreateNullValue() } : null };
+	}
+
+	private async Task DisposeGeneratorInBackgroundAsync(Generator generator)
+	{
+		try
+		{
+			await generator.DisposeAsync().ConfigureAwait(false);
+		}
+		catch (Exception ex)
+		{
+			this.Owner.LogApplicationError(ex);
+		}
 	}
 
 	/// <summary>Stops tracking a generator and releases the state machine behind it.</summary>

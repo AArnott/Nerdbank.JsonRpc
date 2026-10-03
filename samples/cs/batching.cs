@@ -8,12 +8,12 @@ namespace Batching;
 
 [GenerateJsonRpcProxy]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
-public partial interface ICalculator
+internal partial interface ICalculator
 {
     ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken);
 }
 
-public static class Example
+internal static class Example
 {
     public static async Task RunAsync(JsonRpc rpc)
     {
