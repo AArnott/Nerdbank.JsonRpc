@@ -57,10 +57,20 @@ public class OutboundResponseTests : TestBase
 				long code = i % 3 == 1 ? JsonRpcErrorCode.InternalError : JsonRpcErrorCode.RequestCancelled;
 				JsonRpcError error = new() { Id = request.Id!.Value, Error = new() { Code = code, Message = "expected" } };
 				await fixture.Remote.Writer.WriteAsync(error, this.TimeoutToken);
-				JsonRpcException exception = typed
-					? await Assert.ThrowsAsync<JsonRpcException>(() => typedResponse.AsTask())
-					: await Assert.ThrowsAsync<JsonRpcException>(() => voidResponse.AsTask());
-				Assert.Equal(code, exception.ErrorDetails.Code);
+				if (code == JsonRpcErrorCode.RequestCancelled)
+				{
+					OperationCanceledException exception = typed
+						? await Assert.ThrowsAsync<OperationCanceledException>(() => typedResponse.AsTask())
+						: await Assert.ThrowsAsync<OperationCanceledException>(() => voidResponse.AsTask());
+					Assert.Equal(cancellation.Token, exception.CancellationToken);
+				}
+				else
+				{
+					JsonRpcException exception = typed
+						? await Assert.ThrowsAsync<JsonRpcException>(() => typedResponse.AsTask())
+						: await Assert.ThrowsAsync<JsonRpcException>(() => voidResponse.AsTask());
+					Assert.Equal(code, exception.ErrorDetails.Code);
+				}
 			}
 		}
 	}
@@ -262,7 +272,8 @@ public class OutboundResponseTests : TestBase
 		if (cancelWrite)
 		{
 			cancellation.Cancel();
-			await Assert.ThrowsAnyAsync<OperationCanceledException>(() => failed.AsTask());
+			OperationCanceledException exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => failed.AsTask());
+			Assert.Equal(cancellation.Token, exception.CancellationToken);
 		}
 		else
 		{
@@ -340,6 +351,232 @@ public class OutboundResponseTests : TestBase
 				}
 			}
 		}
+	}
+
+	/// <summary>Verifies peer cancellation through direct, batched, and generated request APIs.</summary>
+	/// <param name="encoding">The payload encoding.</param>
+	/// <param name="batched">Whether to send the request in a batch.</param>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, false)]
+	[Arguments(JsonRpcEncoding.Json, true)]
+	[Arguments(JsonRpcEncoding.MessagePack, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, true)]
+	public async Task PeerCancellationUsesCallerTokenOnlyWhenCanceled(JsonRpcEncoding encoding, bool batched)
+	{
+		using Fixture fixture = new(encoding);
+		for (int tokenState = 0; tokenState < 3; tokenState++)
+		{
+			for (int api = 0; api < 4; api++)
+			{
+				using CancellationTokenSource cancellation = new();
+				CancellationToken token = tokenState == 0 ? CancellationToken.None : cancellation.Token;
+				using JsonRpcBatch batch = fixture.Rpc.CreateBatch();
+				IJsonRpcClient client = batched ? batch : fixture.Rpc;
+				ICalculator proxy = batched ? batch.Attach<ICalculator>() : fixture.Rpc.Attach<ICalculator>();
+				Task pending = api switch
+				{
+					0 => client.RequestAsync("ping", fixture.Arguments, ShapeProvider.Default.Int32, token).AsTask(),
+					1 => client.RequestAsync("ping", fixture.Arguments, token).AsTask(),
+					2 => proxy.AddAsync(1, 2, token).AsTask(),
+					_ => proxy.PingTaskAsync(token),
+				};
+				JsonRpcRequest request;
+				if (batched)
+				{
+					await batch.SendAsync(this.TimeoutToken);
+					JsonRpcMessageBatch payload = Assert.IsType<JsonRpcMessageBatch>(await fixture.Remote.Reader.ReadAsync(this.TimeoutToken));
+					request = Assert.IsType<JsonRpcRequest>(Assert.Single(payload.Messages));
+				}
+				else
+				{
+					request = await fixture.ReadRequestAsync(this.TimeoutToken);
+				}
+
+				if (tokenState == 2)
+				{
+					cancellation.Cancel();
+					Assert.Equal("$/cancelRequest", (await fixture.ReadRequestAsync(this.TimeoutToken)).Method);
+				}
+
+				JsonRpcError response = new()
+				{
+					Id = request.Id!.Value,
+					Error = new() { Code = JsonRpcErrorCode.RequestCancelled, Message = "peer cancellation reason" },
+				};
+				await fixture.Remote.Writer.WriteAsync(response, this.TimeoutToken);
+				OperationCanceledException exception = await Assert.ThrowsAsync<OperationCanceledException>(() => pending.WithCancellation(this.TimeoutToken));
+				Assert.Equal(tokenState == 2 ? token : CancellationToken.None, exception.CancellationToken);
+				Assert.True(pending.IsCanceled);
+				if (tokenState == 2)
+				{
+					Assert.Equal("peer cancellation reason", exception.Message);
+				}
+				else
+				{
+					Assert.Equal("The remote party canceled processing the request without the caller requesting cancellation.", exception.Message);
+				}
+
+				JsonRpcException remoteError = Assert.IsType<JsonRpcException>(exception.InnerException);
+				Assert.Equal(JsonRpcErrorCode.RequestCancelled, remoteError.ErrorDetails.Code);
+				Assert.Equal("peer cancellation reason", remoteError.Message);
+			}
+		}
+	}
+
+	/// <summary>Verifies local batch cancellation retains only a canceled request token.</summary>
+	/// <param name="alreadyCanceled">Whether the token is canceled before adding the request.</param>
+	/// <param name="cancelCaller">Whether the caller cancels the request token.</param>
+	/// <param name="dispose">Whether to dispose rather than cancel the unsent batch.</param>
+	[Test]
+	[Arguments(true, true, false)]
+	[Arguments(false, true, false)]
+	[Arguments(false, false, false)]
+	[Arguments(false, false, true)]
+	public async Task UnsentBatchCancellationUsesOnlyCanceledCallerToken(bool alreadyCanceled, bool cancelCaller, bool dispose)
+	{
+		using Fixture fixture = new(JsonRpcEncoding.MessagePack);
+		using CancellationTokenSource cancellation = new();
+		if (alreadyCanceled)
+		{
+			cancellation.Cancel();
+		}
+
+		using JsonRpcBatch batch = fixture.Rpc.CreateBatch();
+		Task typed = batch.RequestAsync("ping", fixture.Arguments, ShapeProvider.Default.Int32, cancellation.Token).AsTask();
+		Task untyped = batch.RequestAsync("ping", fixture.Arguments, cancellation.Token).AsTask();
+		if (cancelCaller)
+		{
+			cancellation.Cancel();
+		}
+
+		if (dispose)
+		{
+			batch.Dispose();
+		}
+		else
+		{
+			await batch.CancelAllAsync();
+		}
+
+		foreach (Task pending in new[] { typed, untyped })
+		{
+			OperationCanceledException exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WithCancellation(this.TimeoutToken));
+			Assert.Equal(cancelCaller ? cancellation.Token : CancellationToken.None, exception.CancellationToken);
+			Assert.True(pending.IsCanceled);
+		}
+
+		Assert.False(fixture.Remote.Reader.TryRead(out _));
+	}
+
+	/// <summary>Verifies that a canceled batch submission does not leak its token into individual requests.</summary>
+	/// <param name="cancelCaller">Whether to cancel an individual request token during submission.</param>
+	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task BatchSubmissionCancellationUsesEachRequestToken(bool cancelCaller)
+	{
+		using Fixture fixture = new(JsonRpcEncoding.MessagePack, gateFirstWrite: true);
+		using CancellationTokenSource submission = new();
+		using CancellationTokenSource caller = new();
+		using JsonRpcBatch batch = fixture.Rpc.CreateBatch();
+		Task typed = batch.RequestAsync("ping", fixture.Arguments, ShapeProvider.Default.Int32, caller.Token).AsTask();
+		Task untyped = batch.RequestAsync("ping", fixture.Arguments, CancellationToken.None).AsTask();
+		Task sending = batch.SendAsync(submission.Token).AsTask();
+		Assert.IsType<JsonRpcMessageBatch>(await fixture.Remote.Reader.ReadAsync(this.TimeoutToken));
+		if (cancelCaller)
+		{
+			caller.Cancel();
+		}
+
+		submission.Cancel();
+		OperationCanceledException sendException = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sending.WithCancellation(this.TimeoutToken));
+		Assert.Equal(submission.Token, sendException.CancellationToken);
+		OperationCanceledException typedException = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => typed.WithCancellation(this.TimeoutToken));
+		Assert.Equal(cancelCaller ? caller.Token : CancellationToken.None, typedException.CancellationToken);
+		OperationCanceledException voidException = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => untyped.WithCancellation(this.TimeoutToken));
+		Assert.Equal(CancellationToken.None, voidException.CancellationToken);
+	}
+
+	/// <summary>Verifies cancellation exceptions from submission use the request token rather than an internal token.</summary>
+	/// <param name="typed">Whether the request returns a value.</param>
+	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task UnrequestedSubmissionCancellationOmitsCallerToken(bool typed)
+	{
+		using Fixture fixture = new(JsonRpcEncoding.MessagePack, gateFirstWrite: true);
+		using CancellationTokenSource caller = new();
+		using CancellationTokenSource transport = new();
+		transport.Cancel();
+		Task pending = typed ? fixture.RequestAsync(caller.Token).AsTask() : fixture.Rpc.RequestAsync("ping", fixture.Arguments, caller.Token).AsTask();
+		await fixture.ReadRequestAsync(this.TimeoutToken);
+		fixture.WriteCompletion.SetException(new OperationCanceledException("Transport canceled.", transport.Token));
+		OperationCanceledException exception = await Assert.ThrowsAsync<OperationCanceledException>(() => pending.WithCancellation(this.TimeoutToken));
+		Assert.Equal(CancellationToken.None, exception.CancellationToken);
+		Assert.Equal("Transport canceled.", exception.Message);
+		Assert.False(caller.IsCancellationRequested);
+		ValueTask<int> next = fixture.RequestAsync(this.TimeoutToken);
+		await fixture.RespondAsync(await fixture.ReadRequestAsync(this.TimeoutToken), 23, this.TimeoutToken);
+		Assert.Equal(23, await next);
+	}
+
+	/// <summary>Verifies shared connection cancellation is attributed separately to each request.</summary>
+	/// <param name="batched">Whether the requests are sent as a batch.</param>
+	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task ConnectionCancellationUsesEachRequestToken(bool batched)
+	{
+		using Fixture fixture = new(JsonRpcEncoding.MessagePack);
+		using CancellationTokenSource canceledCaller = new();
+		using CancellationTokenSource uncanceledCaller = new();
+		using CancellationTokenSource transport = new();
+		transport.Cancel();
+		using JsonRpcBatch batch = fixture.Rpc.CreateBatch();
+		IJsonRpcClient client = batched ? batch : fixture.Rpc;
+		Task canceled = client.RequestAsync("ping", fixture.Arguments, ShapeProvider.Default.Int32, canceledCaller.Token).AsTask();
+		Task uncanceled = client.RequestAsync("ping", fixture.Arguments, uncanceledCaller.Token).AsTask();
+		Task noToken = client.RequestAsync("ping", fixture.Arguments, CancellationToken.None).AsTask();
+		if (batched)
+		{
+			await batch.SendAsync(this.TimeoutToken);
+			Assert.IsType<JsonRpcMessageBatch>(await fixture.Remote.Reader.ReadAsync(this.TimeoutToken));
+		}
+		else
+		{
+			for (int i = 0; i < 3; i++)
+			{
+				await fixture.ReadRequestAsync(this.TimeoutToken);
+			}
+		}
+
+		canceledCaller.Cancel();
+		Assert.Equal("$/cancelRequest", (await fixture.ReadRequestAsync(this.TimeoutToken)).Method);
+		fixture.Remote.Writer.TryComplete(new OperationCanceledException("Transport canceled.", transport.Token));
+		OperationCanceledException canceledException = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceled.WithCancellation(this.TimeoutToken));
+		Assert.Equal(canceledCaller.Token, canceledException.CancellationToken);
+		foreach (Task pending in new[] { uncanceled, noToken })
+		{
+			OperationCanceledException exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WithCancellation(this.TimeoutToken));
+			Assert.Equal(CancellationToken.None, exception.CancellationToken);
+			Assert.Equal("Transport canceled.", exception.Message);
+		}
+	}
+
+	/// <summary>Verifies an already-canceled direct request preserves the caller's token without sending.</summary>
+	/// <param name="typed">Whether the request returns a value.</param>
+	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task AlreadyCanceledDirectRequestPreservesCallerToken(bool typed)
+	{
+		using Fixture fixture = new(JsonRpcEncoding.MessagePack);
+		using CancellationTokenSource cancellation = new();
+		cancellation.Cancel();
+		Task pending = typed ? fixture.RequestAsync(cancellation.Token).AsTask() : fixture.Rpc.RequestAsync("ping", fixture.Arguments, cancellation.Token).AsTask();
+		OperationCanceledException exception = await Assert.ThrowsAsync<OperationCanceledException>(() => pending.WithCancellation(this.TimeoutToken));
+		Assert.Equal(cancellation.Token, exception.CancellationToken);
+		Assert.False(fixture.Remote.Reader.TryRead(out _));
 	}
 
 	private sealed class Fixture : IDisposable

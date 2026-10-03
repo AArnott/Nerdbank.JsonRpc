@@ -179,7 +179,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		};
 
 		ValueTask<JsonRpcResponse> responseTask = this.AddRequestAsync(request, cancellationToken);
-		return this.owner.AwaitVoidResponseAsync(request, responseTask);
+		return this.owner.AwaitVoidResponseAsync(request, responseTask, cancellationToken);
 	}
 
 	/// <summary>
@@ -229,7 +229,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			Arguments = arguments,
 		};
 
-		return this.owner.AwaitVoidResponseAsync(request, this.AddRequestAsync(request, cancellationToken));
+		return this.owner.AwaitVoidResponseAsync(request, this.AddRequestAsync(request, cancellationToken), cancellationToken);
 	}
 
 	/// <inheritdoc/>
@@ -635,6 +635,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	private sealed class Entry
 	{
 		private readonly JsonRpcBatch owner;
+		private readonly CancellationToken cancellationToken;
 		private readonly CancellationTokenRegistration cancellationRegistration;
 		private readonly object syncObject = new();
 		private bool sent;
@@ -649,12 +650,13 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			CancellationToken cancellationToken)
 		{
 			this.owner = owner;
+			this.cancellationToken = cancellationToken;
 			this.Request = request;
 			this.ResponseCompletionSource = responseCompletionSource;
 			if (cancellationToken.IsCancellationRequested)
 			{
 				this.canceled = true;
-				this.ResponseCompletionSource?.TrySetCanceled(CancellationToken.None);
+				this.ResponseCompletionSource?.TrySetCanceled(this.cancellationToken.IsCancellationRequested ? this.cancellationToken : CancellationToken.None);
 			}
 			else
 			{
@@ -679,7 +681,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 				this.canceled = true;
 			}
 
-			this.ResponseCompletionSource?.TrySetCanceled(CancellationToken.None);
+			this.ResponseCompletionSource?.TrySetCanceled(this.cancellationToken.IsCancellationRequested ? this.cancellationToken : CancellationToken.None);
 			this.ReleaseAbandonedArguments();
 			this.Dispose();
 		}
@@ -716,7 +718,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 				this.canceled = true;
 			}
 
-			this.ResponseCompletionSource?.TrySetCanceled(CancellationToken.None);
+			this.ResponseCompletionSource?.TrySetCanceled(this.cancellationToken.IsCancellationRequested ? this.cancellationToken : CancellationToken.None);
 			this.ReleaseAbandonedArguments();
 			return true;
 		}

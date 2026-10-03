@@ -39,6 +39,10 @@ public interface IJsonRpcClient
 	/// Consume the returned awaitable once. To share it, await it repeatedly, or compose it with other Tasks,
 	/// call <c>AsTask()</c> or <c>Preserve()</c> once and retain the returned awaitable instead of the original.
 	/// It may be backed by a pooled source that is recycled after consumption.
+	/// A remote <see cref="JsonRpcErrorCode.RequestCancelled"/> response throws <see cref="OperationCanceledException"/>.
+	/// Cancellation exceptions include <paramref name="cancellationToken"/> only if it is canceled.
+	/// Unrequested remote cancellation has a message explaining that the remote party canceled processing without caller-requested cancellation.
+	/// The original remote error is retained as a <see cref="JsonRpcException"/> inner exception; other remote errors throw <see cref="JsonRpcException"/>.
 	/// </remarks>
 	ValueTask RequestAsync(string method, JsonRpcValue arguments, CancellationToken cancellationToken);
 
@@ -55,6 +59,10 @@ public interface IJsonRpcClient
 	/// Consume the returned awaitable once. To share it, await it repeatedly, or compose it with other Tasks,
 	/// call <c>AsTask()</c> or <c>Preserve()</c> once and retain the returned awaitable instead of the original.
 	/// It may be backed by a pooled source that is recycled after consumption.
+	/// A remote <see cref="JsonRpcErrorCode.RequestCancelled"/> response throws <see cref="OperationCanceledException"/>.
+	/// Cancellation exceptions include <paramref name="cancellationToken"/> only if it is canceled.
+	/// Unrequested remote cancellation has a message explaining that the remote party canceled processing without caller-requested cancellation.
+	/// The original remote error is retained as a <see cref="JsonRpcException"/> inner exception; other remote errors throw <see cref="JsonRpcException"/>.
 	/// </remarks>
 	ValueTask<TResult> RequestAsync<TResult>(string method, JsonRpcValue arguments, ITypeShape<TResult> resultShape, CancellationToken cancellationToken);
 

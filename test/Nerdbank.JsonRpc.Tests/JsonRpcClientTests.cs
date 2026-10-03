@@ -167,8 +167,8 @@ public partial class JsonRpcClientTests : TestBase
 			Error = new JsonRpcErrorDetails { Code = JsonRpcErrorCode.RequestCancelled, Message = "cancelled" },
 		};
 		await this.channel.Writer.WriteAsync(errorMessage, this.TimeoutToken);
-		JsonRpcException exception = await Assert.ThrowsAsync<JsonRpcException>(() => resultTask.WithCancellation(this.TimeoutToken));
-		Assert.Equal(JsonRpcErrorCode.RequestCancelled, exception.ErrorDetails.Code);
+		OperationCanceledException exception = await Assert.ThrowsAsync<OperationCanceledException>(() => resultTask.WithCancellation(this.TimeoutToken));
+		Assert.Equal(cts.Token, exception.CancellationToken);
 
 		Task<int> nextResultTask = this.jsonRpc.RequestAsync<AddNamedArguments, int, Witness>("Add", new AddNamedArguments { A = 2, B = 3 }, this.TimeoutToken).AsTask();
 		JsonRpcRequest nextRequestMessage = Assert.IsType<JsonRpcRequest>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
@@ -217,8 +217,8 @@ public partial class JsonRpcClientTests : TestBase
 		await this.channel.Writer.WriteAsync(errorMessage, this.TimeoutToken);
 
 		// Verify that the client finally resolves.
-		JsonRpcException ex = await Assert.ThrowsAsync<JsonRpcException>(() => resultTask.WithCancellation(this.TimeoutToken));
-		Assert.Equal(JsonRpcErrorCode.RequestCancelled, ex.ErrorDetails.Code);
+		OperationCanceledException ex = await Assert.ThrowsAsync<OperationCanceledException>(() => resultTask.WithCancellation(this.TimeoutToken));
+		Assert.Equal(cts.Token, ex.CancellationToken);
 	}
 
 	[Test]
