@@ -16,8 +16,8 @@ public partial class JsonRpcTracingTests : TestBase
 	public async Task ActivitiesPropagateW3CTraceContext(JsonRpcEncoding encoding)
 	{
 		ConcurrentQueue<Activity> stoppedActivities = new();
-		TaskCompletionSource firstNotificationActivityStopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
-		TaskCompletionSource secondNotificationActivityStopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		TaskCompletionSource<bool> firstNotificationActivityStopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		TaskCompletionSource<bool> secondNotificationActivityStopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
 		int notificationServerActivityCount = 0;
 		string sourceName = JsonRpc.ActivitySource.Name;
 		string? expectedTraceId = null;
@@ -35,10 +35,10 @@ public partial class JsonRpcTracingTests : TestBase
 						switch (Interlocked.Increment(ref notificationServerActivityCount))
 						{
 							case 1:
-								firstNotificationActivityStopped.TrySetResult();
+								firstNotificationActivityStopped.TrySetResult(true);
 								break;
 							case 2:
-								secondNotificationActivityStopped.TrySetResult();
+								secondNotificationActivityStopped.TrySetResult(true);
 								break;
 						}
 					}
