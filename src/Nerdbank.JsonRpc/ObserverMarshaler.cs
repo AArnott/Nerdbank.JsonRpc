@@ -188,6 +188,7 @@ internal static class ObserverMarshaler
 
 		private void ThrowIfTerminated()
 		{
+			owner.ThrowIfClosed();
 			state.ThrowIfExpired();
 			if (Volatile.Read(ref this.terminated) != 0)
 			{

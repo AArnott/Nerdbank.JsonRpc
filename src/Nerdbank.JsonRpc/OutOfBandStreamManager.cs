@@ -13,6 +13,7 @@ internal sealed class OutOfBandStreamManager : IDisposable
 	private readonly object sync = new();
 	private readonly Dictionary<RequestId, ChannelSet> outboundChannels = [];
 	private readonly List<ChannelSet> activeChannels = [];
+	private bool disposed;
 
 	internal MultiplexingStream? MultiplexingStream { get; set; }
 
@@ -21,14 +22,28 @@ internal sealed class OutOfBandStreamManager : IDisposable
 		ChannelSet[] channels;
 		lock (this.sync)
 		{
+			this.disposed = true;
 			channels = [.. this.outboundChannels.Values, .. this.activeChannels];
 			this.outboundChannels.Clear();
 			this.activeChannels.Clear();
 		}
 
+		List<Exception>? failures = null;
 		foreach (ChannelSet set in channels)
 		{
-			set.Dispose();
+			try
+			{
+				set.Dispose();
+			}
+			catch (Exception ex)
+			{
+				(failures ??= []).Add(ex);
+			}
+		}
+
+		if (failures is not null)
+		{
+			throw new AggregateException("Out-of-band stream cleanup failed.", failures);
 		}
 	}
 
@@ -51,9 +66,27 @@ internal sealed class OutOfBandStreamManager : IDisposable
 			throw new InvalidOperationException("Out-of-band streams may only be sent in RPC requests.");
 		}
 
-		MultiplexingStream multiplexingStream = this.MultiplexingStream ?? throw new NotSupportedException("Out-of-band streams require a configured MultiplexingStream.");
-		MultiplexingStream.Channel channel = multiplexingStream.CreateChannel(new() { ExistingPipe = pipe });
-		(callState.OutOfBandStreamsOutbound ??= new()).Add(channel);
+		MultiplexingStream.Channel channel;
+		lock (this.sync)
+		{
+			if (this.disposed)
+			{
+				throw new ObjectDisposedException(nameof(JsonRpc));
+			}
+
+			MultiplexingStream multiplexingStream = this.MultiplexingStream ?? throw new NotSupportedException("Out-of-band streams require a configured MultiplexingStream.");
+			channel = multiplexingStream.CreateChannel(new() { ExistingPipe = pipe });
+			try
+			{
+				(callState.OutOfBandStreamsOutbound ??= new()).Add(channel);
+			}
+			catch
+			{
+				channel.Dispose();
+				throw;
+			}
+		}
+
 		return CreateToken(channel.QualifiedId.Id, encoding);
 	}
 
@@ -118,11 +151,25 @@ internal sealed class OutOfBandStreamManager : IDisposable
 			return;
 		}
 
+		bool reject;
 		lock (this.sync)
 		{
-			this.activeChannels.Add(channels);
+			reject = this.disposed;
+			if (!reject)
+			{
+				this.activeChannels.Add(channels);
+			}
+		}
+
+		if (reject)
+		{
+			channels.Dispose();
 		}
 	}
+
+	/// <summary>Releases the channels attached to a value whose response could not be sent.</summary>
+	/// <param name="value">The value containing the channels to release.</param>
+	internal void ReleaseChannels(JsonRpcValue value) => value.OutOfBandChannels?.Dispose();
 
 	internal void EnsureNoOutOfBandChannels(JsonRpcValue arguments)
 	{
@@ -247,14 +294,33 @@ internal sealed class OutOfBandStreamManager : IDisposable
 	internal sealed class ChannelSet(MultiplexingStream.Channel[] channels) : IDisposable
 	{
 		internal static readonly ChannelSet Empty = new([]);
+		private int disposed;
 
 		internal bool IsEmpty => channels.Length == 0;
 
 		public void Dispose()
 		{
+			if (Interlocked.Exchange(ref this.disposed, 1) != 0)
+			{
+				return;
+			}
+
+			List<Exception>? failures = null;
 			foreach (MultiplexingStream.Channel channel in channels)
 			{
-				channel.Dispose();
+				try
+				{
+					channel.Dispose();
+				}
+				catch (Exception ex)
+				{
+					(failures ??= []).Add(ex);
+				}
+			}
+
+			if (failures is not null)
+			{
+				throw new AggregateException("Out-of-band channel cleanup failed.", failures);
 			}
 		}
 	}

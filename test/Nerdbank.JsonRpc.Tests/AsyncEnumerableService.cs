@@ -8,10 +8,19 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 	private int generatedValues;
 	private bool generatorDisposed;
 
+	internal TaskCompletionSource<bool> UncooperativeMoveNextStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	internal TaskCompletionSource<bool> UncooperativeDisposeStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	internal TaskCompletionSource<bool> ReleaseUncooperativeOperation { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
 	/// <summary>Gets the callback retained by the last sequence-producing call.</summary>
 	internal ICallScopedCounter? LastCounter { get; private set; }
 
 	public IAsyncEnumerable<int> GetNumbersAsync(int count, CancellationToken cancellationToken) => this.ProduceAsync(count, cancellationToken);
+
+	public IAsyncEnumerable<int> GetUncooperativeSequenceAsync(bool blockReadAhead, bool blockDispose, CancellationToken cancellationToken)
+		=> new UncooperativeSequence(this, blockReadAhead, blockDispose).WithJsonRpcSettings(new() { MaxReadAhead = blockReadAhead ? 1 : 0 });
 
 	public Task<IAsyncEnumerable<int>> GetNumbersWrappedAsync(int count, CancellationToken cancellationToken)
 		=> Task.FromResult(this.ProduceAsync(count, cancellationToken));
@@ -182,6 +191,41 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 					this.disposed = true;
 					await counter.IncrementAsync(CancellationToken.None);
 				}
+			}
+		}
+	}
+
+	private sealed class UncooperativeSequence(AsyncEnumerableService owner, bool blockMoveNext, bool blockDispose) : IAsyncEnumerable<int>
+	{
+		public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default) => new Enumerator(owner, blockMoveNext, blockDispose);
+
+		private sealed class Enumerator(AsyncEnumerableService owner, bool blockMoveNext, bool blockDispose) : IAsyncEnumerator<int>
+		{
+			private bool moved;
+
+			public int Current => 42;
+
+			public ValueTask<bool> MoveNextAsync()
+			{
+				if (blockMoveNext)
+				{
+					owner.UncooperativeMoveNextStarted.TrySetResult(true);
+					return new(owner.ReleaseUncooperativeOperation.Task);
+				}
+
+				if (!this.moved)
+				{
+					this.moved = true;
+					return new(true);
+				}
+
+				return new(false);
+			}
+
+			public ValueTask DisposeAsync()
+			{
+				owner.UncooperativeDisposeStarted.TrySetResult(true);
+				return blockDispose ? new(owner.ReleaseUncooperativeOperation.Task) : default;
 			}
 		}
 	}

@@ -34,16 +34,22 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	private readonly Dictionary<long, Generator> generators = [];
 	private readonly Dictionary<RequestId, List<long>> generatorsByRequest = [];
 	private long nextToken;
+	private bool disposed;
 
 	/// <summary>Gets the connection this manager serves.</summary>
 	private JsonRpc Owner => owner;
 
 	/// <summary>Releases every generator this connection is tracking.</summary>
-	public void Dispose()
+	public void Dispose() => this.DisposeAllAsync().Forget();
+
+	/// <summary>Starts asynchronous disposal for every generator tracked by this connection.</summary>
+	/// <returns>A completed task after disposal has been scheduled.</returns>
+	internal Task DisposeAllAsync()
 	{
 		Generator[] snapshot;
 		lock (this.sync)
 		{
+			this.disposed = true;
 			snapshot = [.. this.generators.Values];
 			this.generators.Clear();
 			this.generatorsByRequest.Clear();
@@ -51,8 +57,11 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 
 		foreach (Generator generator in snapshot)
 		{
-			generator.DisposeAsync().AsTask().Forget();
+			// User enumerators may ignore cancellation or never complete disposal; neither may hold connection completion open.
+			Task.Run(() => this.DisposeGeneratorInBackgroundAsync(generator)).Forget();
 		}
+
+		return Task.CompletedTask;
 	}
 
 	/// <summary>Begins tracking the generators created while serializing one outbound message.</summary>
@@ -108,9 +117,20 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			{
 				ArgumentLifetime = callState.AsyncEnumerableArgumentLifetime?.Retain(),
 			};
+			bool rejected;
 			lock (this.sync)
 			{
-				this.generators.Add(token.Value, generator);
+				rejected = this.disposed;
+				if (!rejected)
+				{
+					this.generators.Add(token.Value, generator);
+				}
+			}
+
+			if (rejected)
+			{
+				Task.Run(() => this.DisposeGeneratorInBackgroundAsync(generator)).Forget();
+				throw new ObjectDisposedException(nameof(JsonRpc));
 			}
 
 			scope.Add(token.Value);
@@ -659,6 +679,18 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		return new DispatchResponse { Response = id is RequestId responseId ? new JsonRpcResult { Id = responseId, Result = this.CreateNullValue() } : null };
 	}
 
+	private async Task DisposeGeneratorInBackgroundAsync(Generator generator)
+	{
+		try
+		{
+			await generator.DisposeAsync().ConfigureAwait(false);
+		}
+		catch (Exception ex)
+		{
+			this.Owner.LogApplicationError(ex);
+		}
+	}
+
 	/// <summary>Stops tracking a generator and releases the state machine behind it.</summary>
 	/// <param name="token">The token identifying the generator.</param>
 	/// <returns>A task that completes when the generator has been released.</returns>
@@ -843,7 +875,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		private readonly IAsyncEnumerator<T> enumerator;
 		private readonly Channel<T>? readAhead;
 		private readonly Task? readAheadTask;
-		private bool disposed;
+		private int disposed;
 
 		/// <summary>Initializes a new instance of the <see cref="Generator{T}"/> class.</summary>
 		/// <param name="manager">The owning manager.</param>
@@ -924,21 +956,37 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		/// <inheritdoc/>
 		internal override async ValueTask DisposeAsync()
 		{
-			if (this.disposed)
+			if (Interlocked.Exchange(ref this.disposed, 1) != 0)
 			{
 				return;
 			}
 
-			this.disposed = true;
 			try
 			{
 #pragma warning disable VSTHRD103 // CancelAsync is unavailable on all target frameworks.
 				this.cancellationSource.Cancel();
 #pragma warning restore VSTHRD103
+			}
+			catch (Exception ex)
+			{
+				this.manager.Owner.LogApplicationError(ex);
+			}
+
+			try
+			{
 				if (this.readAheadTask is not null)
 				{
 					// Wait for read ahead to stop touching the enumerator before disposing it.
-					await this.readAheadTask.NoThrowAwaitable();
+					try
+					{
+#pragma warning disable VSTHRD003 // This task is the enumerator's read-ahead operation, which has no main-thread dependency.
+						await this.readAheadTask.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+					}
+					catch (Exception ex)
+					{
+						this.manager.Owner.LogApplicationError(ex);
+					}
 				}
 
 				await this.enumerator.DisposeAsync().ConfigureAwait(false);
@@ -1089,6 +1137,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 					throw new ObjectDisposedException(nameof(ConsumerEnumerator<T>));
 				}
 
+				this.manager.Owner.ThrowIfClosed();
 				this.cancellationToken.ThrowIfCancellationRequested();
 				while (true)
 				{
