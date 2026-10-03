@@ -1,6 +1,7 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.Diagnostics;
 using Microsoft;
 
 namespace Nerdbank.JsonRpc;
@@ -491,17 +492,29 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			throw;
 		}
 
-		return this.AwaitBatchResponseAsync(responseTcs, entry);
+		return this.AwaitBatchResponseAsync(responseTcs, entry, request);
 	}
 
-	private async ValueTask<JsonRpcResponse> AwaitBatchResponseAsync(TaskCompletionSource<JsonRpcResponse> responseTcs, Entry entry)
+	private async ValueTask<JsonRpcResponse> AwaitBatchResponseAsync(TaskCompletionSource<JsonRpcResponse> responseTcs, Entry entry, JsonRpcRequest request)
 	{
+		using Activity? activity = JsonRpcTracing.StartClientActivity(request.Method);
+		JsonRpcTracing.ApplyTraceContext(request);
 		try
 		{
 #pragma warning disable VSTHRD003 // Awaiting a TaskCompletionSource completed by inbound JSON-RPC responses.
 			JsonRpcResponse response = await responseTcs.Task.ConfigureAwait(false);
 #pragma warning restore VSTHRD003
+			if (response is JsonRpcError)
+			{
+				activity?.SetStatus(ActivityStatusCode.Error);
+			}
+
 			return response;
+		}
+		catch
+		{
+			activity?.SetStatus(ActivityStatusCode.Error);
+			throw;
 		}
 		finally
 		{
@@ -511,6 +524,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 
 	private void AddNotification(JsonRpcRequest request, CancellationToken cancellationToken)
 	{
+		JsonRpcTracing.ApplyTraceContext(request);
 		Entry entry = new(this, request, responseCompletionSource: null, cancellationToken);
 		try
 		{

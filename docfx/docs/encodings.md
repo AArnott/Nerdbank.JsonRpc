@@ -4,9 +4,15 @@ Nerdbank.JsonRpc supports MessagePack (the default) and UTF-8 JSON. Configure th
 
 ## Select a serializer
 
-For JSON, configure a <xref:Nerdbank.Json.JsonSerializer>, pass it to a <xref:Nerdbank.JsonRpc.JsonRpcJsonChannel>, and construct <xref:Nerdbank.JsonRpc.JsonRpc> with that channel. The RPC instance uses the channel's serializer. Set <xref:Nerdbank.JsonRpc.JsonRpc.Logger> in an object initializer to log request, connection, and transport failures:
+For JSON, configure a <xref:Nerdbank.Json.JsonSerializer>, pass it to a <xref:Nerdbank.JsonRpc.JsonRpcJsonChannel>, and construct <xref:Nerdbank.JsonRpc.JsonRpc> with that channel. The RPC instance uses the channel's serializer. Set <xref:Nerdbank.JsonRpc.JsonRpc.Logger> in an object initializer to capture transport message events and failures:
 
 [!code-csharp[](../../samples/cs/encodings.cs#json-encoding)]
+
+## Logging and distributed tracing
+
+Nerdbank.JsonRpc uses `Microsoft.Extensions.Logging` for transport message and failure events. Its <xref:Nerdbank.JsonRpc.JsonRpc.ActivitySource> emits client activities for outbound requests (including batched requests) and direct notifications, and server activities for dispatched requests. Subscribe with an `ActivityListener` or OpenTelemetry tracer provider using <xref:Nerdbank.JsonRpc.JsonRpc.ActivitySource>.Name; no activity is created when the source is not being sampled. Activities include the `rpc.system` and `rpc.method` tags and are marked as errors when an RPC fails.
+
+When a W3C activity is current, its `traceparent` and optional `tracestate` are carried as top-level JSON-RPC envelope extension properties. Both built-in encodings preserve these fields, and peers that do not use distributed tracing can ignore them. This lets a server activity be a child of the caller's client activity across a process boundary.
 
 To customize MessagePack, supply a configured <xref:Nerdbank.MessagePack.MessagePackSerializer> through the `serializer` parameter of <xref:Nerdbank.JsonRpc.JsonRpcMessagePackChannel>. Otherwise the channel uses <xref:Nerdbank.JsonRpc.JsonRpcMessagePackChannel.DefaultSerializer>. The same serializer instance handles MessagePack application values and protocol envelopes. Each channel exposes a <xref:Nerdbank.JsonRpc.JsonRpcPipeChannel.Serializer> plugin for typed values; <xref:Nerdbank.JsonRpc.JsonRpc> obtains it directly from the channel. By default, MessagePack messages use a 4-byte big-endian length header, compatible with StreamJsonRpc's <xref:StreamJsonRpc.LengthHeaderMessageHandler>. Both framing modes reject inbound frames larger than 8 MiB by default to bound memory use. Configure <xref:Nerdbank.JsonRpc.JsonRpc.MaximumMessageSize> to change this limit for the built-in JSON and MessagePack channels; the JSON channel also applies it to outbound messages. MessagePack additionally rejects batches or parameter collections with more than 65,536 entries. To connect to a peer using bare MessagePack values (including earlier Nerdbank.JsonRpc releases), explicitly pass <xref:Nerdbank.JsonRpc.JsonRpcMessagePackFraming.SelfDelimiting?displayProperty=nameWithType> to the channel constructor on the upgraded side. Both peers must use the same framing.
 

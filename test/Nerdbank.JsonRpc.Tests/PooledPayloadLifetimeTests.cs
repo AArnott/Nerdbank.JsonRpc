@@ -116,6 +116,10 @@ public partial class PooledPayloadLifetimeTests : TestBase
 	{
 		public Task<string> EchoAsync(string value, CancellationToken cancellationToken) => Task.FromResult(value);
 
+		public void Notify(string value, CancellationToken cancellationToken)
+		{
+		}
+
 		public Task<int> DoubleAsync(int value, CancellationToken cancellationToken) => Task.FromResult(value * 2);
 	}
 
