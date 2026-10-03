@@ -1415,6 +1415,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			}
 
 			this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
+			this.outOfBandStreams.ReleaseChannels(request.Arguments);
 			this.asyncEnumerables.ReleaseGenerators(request.Arguments);
 			throw;
 		}

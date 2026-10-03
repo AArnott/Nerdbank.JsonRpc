@@ -474,6 +474,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		catch
 		{
 			this.owner.MarshaledObjects.ReleaseLocalObjects(request.Arguments);
+			this.owner.OutOfBandStreams.ReleaseChannels(request.Arguments);
 			this.owner.AsyncEnumerables.ReleaseGenerators(request.Arguments);
 			request.Arguments.ReleaseIfSingleUse();
 			throw;
@@ -774,6 +775,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			}
 
 			this.owner.owner.MarshaledObjects.ReleaseLocalObjects(this.Request.Arguments);
+			this.owner.owner.OutOfBandStreams.ReleaseChannels(this.Request.Arguments);
 			this.owner.owner.AsyncEnumerables.ReleaseGenerators(this.Request.Arguments);
 			this.Request.Arguments.ReleaseIfSingleUse();
 		}

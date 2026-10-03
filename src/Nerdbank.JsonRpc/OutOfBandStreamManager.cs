@@ -66,17 +66,27 @@ internal sealed class OutOfBandStreamManager : IDisposable
 			throw new InvalidOperationException("Out-of-band streams may only be sent in RPC requests.");
 		}
 
+		MultiplexingStream.Channel channel;
 		lock (this.sync)
 		{
 			if (this.disposed)
 			{
 				throw new ObjectDisposedException(nameof(JsonRpc));
 			}
+
+			MultiplexingStream multiplexingStream = this.MultiplexingStream ?? throw new NotSupportedException("Out-of-band streams require a configured MultiplexingStream.");
+			channel = multiplexingStream.CreateChannel(new() { ExistingPipe = pipe });
+			try
+			{
+				(callState.OutOfBandStreamsOutbound ??= new()).Add(channel);
+			}
+			catch
+			{
+				channel.Dispose();
+				throw;
+			}
 		}
 
-		MultiplexingStream multiplexingStream = this.MultiplexingStream ?? throw new NotSupportedException("Out-of-band streams require a configured MultiplexingStream.");
-		MultiplexingStream.Channel channel = multiplexingStream.CreateChannel(new() { ExistingPipe = pipe });
-		(callState.OutOfBandStreamsOutbound ??= new()).Add(channel);
 		return CreateToken(channel.QualifiedId.Id, encoding);
 	}
 
