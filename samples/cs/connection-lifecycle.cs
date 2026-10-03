@@ -15,7 +15,7 @@ public static class Examples
         ArgumentNullException.ThrowIfNull(rpc);
         ArgumentNullException.ThrowIfNull(logger);
 
-        #pragma warning disable VSTHRD003 // Completion is a task started by the transport, not this caller.
+#pragma warning disable VSTHRD003 // Completion is a task started by the transport, not this caller.
         #region observing-completion
         try
         {
@@ -43,7 +43,7 @@ public static class Examples
             rpc.Dispose();
         }
         #endregion
-        #pragma warning restore VSTHRD003
+#pragma warning restore VSTHRD003
     }
 
     public static async Task ConfigureLoggingAsync(JsonRpcPipeChannel channel, ILogger logger)

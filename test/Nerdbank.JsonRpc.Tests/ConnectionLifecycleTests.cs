@@ -495,7 +495,7 @@ public partial class ConnectionLifecycleTests : TestBase
 	[Arguments(2)]
 	public async Task NamedPipeEofPreservesPendingRequestCause(int mode)
 	{
-		string name = "jsonrpc-lifecycle-" + Guid.NewGuid().ToString("N");
+		string name = "jr-" + Guid.NewGuid().ToString("N")[..8];
 		using NamedPipeServerStream serverStream = new(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous);
 		using NamedPipeClientStream clientStream = new(".", name, PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
 		Task accept = serverStream.WaitForConnectionAsync(this.TimeoutToken);
