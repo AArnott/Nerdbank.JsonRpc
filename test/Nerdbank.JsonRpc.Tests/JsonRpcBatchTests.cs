@@ -93,7 +93,8 @@ public partial class JsonRpcBatchTests : TestBase
 
 		batch.Dispose();
 
-		await Assert.ThrowsAsync<TaskCanceledException>(() => requestTask.WithCancellation(this.TimeoutToken));
+		TaskCanceledException exception = await Assert.ThrowsAsync<TaskCanceledException>(() => requestTask.WithCancellation(this.TimeoutToken));
+		Assert.Equal(CancellationToken.None, exception.CancellationToken);
 		Assert.False(channel.Reader.TryRead(out _));
 	}
 
@@ -112,7 +113,8 @@ public partial class JsonRpcBatchTests : TestBase
 		JsonRpcMessageBatch sent = Assert.IsType<JsonRpcMessageBatch>(await channel.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Single(sent.Messages);
 		Assert.Equal("Notify", Assert.IsType<JsonRpcRequest>(sent.Messages[0]).Method);
-		await Assert.ThrowsAsync<TaskCanceledException>(() => requestTask.WithCancellation(this.TimeoutToken));
+		TaskCanceledException exception = await Assert.ThrowsAsync<TaskCanceledException>(() => requestTask.WithCancellation(this.TimeoutToken));
+		Assert.Equal(cts.Token, exception.CancellationToken);
 	}
 
 	[Test]
@@ -164,10 +166,12 @@ public partial class JsonRpcBatchTests : TestBase
 			]);
 		await channel.Writer.WriteAsync(cancellationResponseBatch, this.TimeoutToken);
 
-		JsonRpcException firstEx = await Assert.ThrowsAsync<JsonRpcException>(() => firstTask.WithCancellation(this.TimeoutToken));
-		JsonRpcException secondEx = await Assert.ThrowsAsync<JsonRpcException>(() => secondTask.WithCancellation(this.TimeoutToken));
-		Assert.Equal(JsonRpcErrorCode.RequestCancelled, firstEx.ErrorDetails.Code);
-		Assert.Equal(JsonRpcErrorCode.RequestCancelled, secondEx.ErrorDetails.Code);
+		OperationCanceledException firstEx = await Assert.ThrowsAsync<OperationCanceledException>(() => firstTask.WithCancellation(this.TimeoutToken));
+		OperationCanceledException secondEx = await Assert.ThrowsAsync<OperationCanceledException>(() => secondTask.WithCancellation(this.TimeoutToken));
+		Assert.Equal(CancellationToken.None, firstEx.CancellationToken);
+		Assert.Contains("without the caller requesting cancellation", firstEx.Message, StringComparison.Ordinal);
+		Assert.Equal(CancellationToken.None, secondEx.CancellationToken);
+		Assert.Contains("without the caller requesting cancellation", secondEx.Message, StringComparison.Ordinal);
 	}
 
 	[Test]
@@ -207,8 +211,8 @@ public partial class JsonRpcBatchTests : TestBase
 		};
 		await channel.Writer.WriteAsync(cancellationError, this.TimeoutToken);
 
-		JsonRpcException ex = await Assert.ThrowsAsync<JsonRpcException>(() => requestTask.WithCancellation(this.TimeoutToken));
-		Assert.Equal(JsonRpcErrorCode.RequestCancelled, ex.ErrorDetails.Code);
+		OperationCanceledException ex = await Assert.ThrowsAsync<OperationCanceledException>(() => requestTask.WithCancellation(this.TimeoutToken));
+		Assert.Equal(cts.Token, ex.CancellationToken);
 	}
 
 	[Test]

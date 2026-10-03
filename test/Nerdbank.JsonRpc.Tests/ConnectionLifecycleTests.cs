@@ -580,7 +580,20 @@ public partial class ConnectionLifecycleTests : TestBase
 		Exception error = completed
 			? await Assert.ThrowsAsync<EndOfStreamException>(() => pending.WithCancellation(this.TimeoutToken))
 			: await Assert.ThrowsAsync<OperationCanceledException>(() => pending.WithCancellation(this.TimeoutToken));
-		Assert.Same(error, await Assert.ThrowsAnyAsync<Exception>(() => rpc.Completion.WithCancellation(this.TimeoutToken)));
+		Exception connectionError = await Assert.ThrowsAnyAsync<Exception>(() => rpc.Completion.WithCancellation(this.TimeoutToken));
+		if (completed)
+		{
+			Assert.Same(error, connectionError);
+		}
+		else
+		{
+			OperationCanceledException cancellation = Assert.IsType<OperationCanceledException>(error);
+			Assert.Equal(CancellationToken.None, cancellation.CancellationToken);
+			Assert.False(this.TimeoutToken.IsCancellationRequested);
+			Assert.Same(connectionError, cancellation.InnerException);
+			Assert.Equal(connectionError.Message, cancellation.Message);
+		}
+
 		Assert.Equal(JsonRpcState.Faulted, rpc.State);
 		await peer.Output.CompleteAsync();
 		await peer.Input.CompleteAsync();

@@ -21,7 +21,7 @@ Discarding a request's awaitable does not cancel it or send the batch. Dispose a
 Batch execution follows JSON-RPC semantics:
 
 - Batches are not transactional. The peer may process entries concurrently, independently, and in any order.
-- Responses may arrive in any order and are matched by `id`, not array position. Each request completes with its own result or <xref:Nerdbank.JsonRpc.JsonRpcException>; <xref:Nerdbank.JsonRpc.JsonRpcBatch.SendAsync*> only reports local submission failure.
+- Responses may arrive in any order and are matched by `id`, not array position. Each request completes with its own result or exception; remote cancellation produces <xref:System.OperationCanceledException> as described in [Cancellation](protocol-behavior.md#cancellation), and other remote errors produce <xref:Nerdbank.JsonRpc.JsonRpcException>; <xref:Nerdbank.JsonRpc.JsonRpcBatch.SendAsync*> only reports local submission failure.
 - Notifications do not produce responses; a notification-only batch should produce no response payload.
 - Empty batches are rejected locally. Adding entries or sending again after <xref:Nerdbank.JsonRpc.JsonRpcBatch.SendAsync*> fails.
 - Disposing an unsent batch cancels pending request tasks. Per-request cancellation before sending omits that entry; after sending, cancellation uses `$/cancelRequest`.

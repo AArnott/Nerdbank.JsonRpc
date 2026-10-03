@@ -66,6 +66,12 @@ Outbound request IDs are monotonically increasing integers. Inbound requests may
 
 Cancellation propagates using `$/cancelRequest`. For a [batched request](batching.md), cancellation before sending omits that entry, while cancellation after sending uses the cancellation notification. Generated clients pass one cancellation token for the complete [argument set](client-proxies.md).
 
+Outbound requests that complete with <xref:System.OperationCanceledException> include the caller's cancellation token only if that token is canceled; otherwise their exception uses <xref:System.Threading.CancellationToken.None>. This also applies to direct and batched requests made through generated clients.
+
+A peer's `RequestCancelled` response produces <xref:System.OperationCanceledException>, not <xref:Nerdbank.JsonRpc.JsonRpcException>. If the caller's token is canceled when the response is processed, the exception includes that token and the peer's cancellation message. Otherwise, it omits the caller's token and explains that the remote party canceled processing without the caller requesting cancellation. The original remote error details and message are retained in a <xref:Nerdbank.JsonRpc.JsonRpcException> inner exception. Other remote error responses still produce <xref:Nerdbank.JsonRpc.JsonRpcException>.
+
+Canceling a token after a request has been sent requests remote cancellation; it does not complete the request before the peer responds. Unsent batched requests may be canceled locally by their tokens, disposing the batch, or calling <xref:Nerdbank.JsonRpc.JsonRpcBatch.CancelAllAsync>.
+
 ## Envelope extension properties
 
 Messages may carry additional top-level envelope properties beyond those defined by JSON-RPC 2.0. String and signed 64-bit integer values are preserved for internal use. Other value types, and integers outside that range, are ignored. Duplicate extension properties are rejected as malformed. Well-known extension properties with a value of the wrong type are also rejected.

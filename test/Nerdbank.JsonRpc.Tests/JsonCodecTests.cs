@@ -487,8 +487,9 @@ public class JsonCodecTests : TestBase
 		await batch.SendAsync(this.TimeoutToken);
 		await target.Started.Task.WithCancellation(this.TimeoutToken);
 		await batch.CancelAllAsync();
-		JsonRpcException exception = await Assert.ThrowsAsync<JsonRpcException>(() => pending.WithCancellation(this.TimeoutToken));
-		Assert.Equal(JsonRpcErrorCode.RequestCancelled, exception.ErrorDetails.Code);
+		OperationCanceledException exception = await Assert.ThrowsAsync<OperationCanceledException>(() => pending.WithCancellation(this.TimeoutToken));
+		Assert.Equal(CancellationToken.None, exception.CancellationToken);
+		Assert.Contains("without the caller requesting cancellation", exception.Message, StringComparison.Ordinal);
 	}
 
 	[Test]

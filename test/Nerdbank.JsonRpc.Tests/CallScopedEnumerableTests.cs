@@ -207,7 +207,8 @@ public class CallScopedEnumerableTests : TestBase
 		Task<bool> move = enumerator.MoveNextAsync().AsTask();
 		await counter.SecondCallStarted.Task.WithCancellation(this.TimeoutToken);
 		cancellation.Cancel();
-		await Assert.ThrowsAsync<JsonRpcException>(() => move);
+		OperationCanceledException exception = await Assert.ThrowsAsync<OperationCanceledException>(() => move);
+		Assert.Equal(cancellation.Token, exception.CancellationToken);
 		Assert.Equal(3, counter.Count);
 		await this.AssertExpiredAsync(fixture, counter);
 	}

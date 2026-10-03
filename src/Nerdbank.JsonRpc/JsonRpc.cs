@@ -434,7 +434,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		};
 
 		ValueTask<JsonRpcResponse> responseTask = this.RequestAsync(request, cancellationToken);
-		return this.AwaitVoidResponseAsync(request, responseTask);
+		return this.AwaitVoidResponseAsync(request, responseTask, cancellationToken);
 	}
 
 	public ValueTask NotifyAsync<TArg>(string method, in TArg arguments, ITypeShape<TArg> argShape, CancellationToken cancellationToken)
@@ -482,7 +482,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			Arguments = arguments,
 		};
 
-		return this.AwaitVoidResponseAsync(request, this.RequestAsync(request, cancellationToken));
+		return this.AwaitVoidResponseAsync(request, this.RequestAsync(request, cancellationToken), cancellationToken);
 	}
 
 	/// <inheritdoc/>
@@ -779,10 +779,15 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+	/// <summary>Consumes a response without materializing its result and translates remote errors.</summary>
+	/// <param name="request">The originating request.</param>
+	/// <param name="responseTask">The single-consumption response awaitable.</param>
+	/// <param name="cancellationToken">The caller's token, included in cancellation exceptions only when canceled.</param>
+	/// <returns>An awaitable that completes when the response has been consumed.</returns>
 #if NET
 	[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
 #endif
-	internal async ValueTask AwaitVoidResponseAsync(JsonRpcRequest request, ValueTask<JsonRpcResponse> responseTask)
+	internal async ValueTask AwaitVoidResponseAsync(JsonRpcRequest request, ValueTask<JsonRpcResponse> responseTask, CancellationToken cancellationToken)
 	{
 		try
 		{
@@ -794,10 +799,14 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 					return;
 				case JsonRpcError error:
 					this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
-					throw new JsonRpcException(error.Error);
+					throw CreateResponseException(error.Error, cancellationToken);
 				default:
 					throw new InvalidOperationException("Received an unknown response type.");
 			}
+		}
+		catch (OperationCanceledException ex) when (ex.CancellationToken != GetCanceledToken(cancellationToken))
+		{
+			throw NormalizeCancellationException(ex, cancellationToken);
 		}
 		finally
 		{
@@ -842,10 +851,14 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 				case JsonRpcError error:
 					this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
-					throw new JsonRpcException(error.Error);
+					throw CreateResponseException(error.Error, cancellationToken);
 				default:
 					throw new InvalidOperationException("Received an unknown response type.");
 			}
+		}
+		catch (OperationCanceledException ex) when (ex.CancellationToken != GetCanceledToken(cancellationToken))
+		{
+			throw NormalizeCancellationException(ex, cancellationToken);
 		}
 		finally
 		{
@@ -867,13 +880,20 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			Arguments = arguments,
 		};
 
-		JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
-		return response switch
+		try
 		{
-			JsonRpcResult result => result.Result,
-			JsonRpcError error => throw new JsonRpcException(error.Error),
-			_ => throw new InvalidOperationException("Received an unknown response type."),
-		};
+			JsonRpcResponse response = await this.RequestAsync(request, cancellationToken).ConfigureAwait(false);
+			return response switch
+			{
+				JsonRpcResult result => result.Result,
+				JsonRpcError error => throw CreateResponseException(error.Error, cancellationToken),
+				_ => throw new InvalidOperationException("Received an unknown response type."),
+			};
+		}
+		catch (OperationCanceledException ex) when (ex.CancellationToken != GetCanceledToken(cancellationToken))
+		{
+			throw NormalizeCancellationException(ex, cancellationToken);
+		}
 	}
 
 	/// <summary>Creates a lifetime that releases the call-scoped objects marshaled into a request's arguments.</summary>
@@ -893,6 +913,36 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		OutOfBandStreamManager.ChannelSet outOfBandChannels = outOfBandStreamScope.Commit();
 		this.outOfBandStreams.TrackActiveChannels(outOfBandChannels);
 		return serialized.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithOutOfBandChannels(outOfBandChannels).WithAsyncEnumerableTokens(asyncEnumerableScope.Commit());
+	}
+
+	private static CancellationToken GetCanceledToken(CancellationToken cancellationToken)
+		=> cancellationToken.IsCancellationRequested ? cancellationToken : CancellationToken.None;
+
+	private static OperationCanceledException NormalizeCancellationException(OperationCanceledException exception, CancellationToken cancellationToken)
+	{
+		if (exception.InnerException is JsonRpcException remoteError && remoteError.ErrorDetails.Code == JsonRpcErrorCode.RequestCancelled)
+		{
+			return CreateRemoteCancellationException(remoteError, cancellationToken);
+		}
+
+		return new OperationCanceledException(exception.Message, exception, GetCanceledToken(cancellationToken));
+	}
+
+	private static Exception CreateResponseException(JsonRpcErrorDetails error, CancellationToken cancellationToken)
+	{
+		JsonRpcException remoteError = new(error);
+		return error.Code == JsonRpcErrorCode.RequestCancelled
+			? CreateRemoteCancellationException(remoteError, cancellationToken)
+			: remoteError;
+	}
+
+	private static OperationCanceledException CreateRemoteCancellationException(JsonRpcException remoteError, CancellationToken cancellationToken)
+	{
+		CancellationToken canceledToken = GetCanceledToken(cancellationToken);
+		string message = canceledToken.IsCancellationRequested
+			? remoteError.Message
+			: "The remote party canceled processing the request without the caller requesting cancellation.";
+		return new OperationCanceledException(message, remoteError, canceledToken);
 	}
 
 	private static void ReleaseReceivedArguments(JsonRpcRequest request)
