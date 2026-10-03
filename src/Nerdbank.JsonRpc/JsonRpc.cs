@@ -6,6 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 #endif
 
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -91,6 +92,10 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 		this.AddRpcTarget(new SpecialMethodsTarget(this));
 	}
+
+	/// <summary>Gets the activity source used to create JSON-RPC client and server activities.</summary>
+	/// <remarks>Subscribe to this source with <see cref="ActivityListener"/> or an OpenTelemetry tracer provider.</remarks>
+	public static ActivitySource ActivitySource => JsonRpcTracing.ActivitySource;
 
 	/// <summary>Gets or initializes the maximum encoded message size, in bytes.</summary>
 	/// <value>Defaults to 8 MiB. The built-in JSON and MessagePack channels apply this limit to received messages; the JSON channel also applies it to sent messages.</value>
@@ -643,7 +648,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		return id;
 	}
 
-	internal void PostMarshaledNotification(string method, JsonRpcValue arguments) => this.PostMessage(new JsonRpcRequest { Method = method, Arguments = arguments });
+	internal void PostMarshaledNotification(string method, JsonRpcValue arguments)
+	{
+		using Activity? activity = JsonRpcTracing.StartClientActivity(method);
+		this.PostMessage(new JsonRpcRequest { Method = method, Arguments = arguments });
+	}
 
 	internal JsonRpcValue MarshalReleaseArguments(long handle, bool ownedBySender = false)
 	{
@@ -723,6 +732,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	internal ValueTask PostMessageAsync(JsonRpcMessage message, CancellationToken cancellationToken = default)
 	{
+		JsonRpcTracing.ApplyTraceContext(message);
 		this.channel.Serializer.ValidateMessage(message);
 		return this.channel.Writer.WriteAsync(message, cancellationToken);
 	}
@@ -964,6 +974,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 		else if (!this.handlers.TryGetValue(request.Method, out handler))
 		{
+			using Activity? activity = JsonRpcTracing.StartServerActivity(request);
+			activity?.SetStatus(ActivityStatusCode.Error);
 			ReleaseReceivedArguments(request);
 			bool missingMarshaledObject = this.marshaledObjects.IsMissingHandleInvocation(request, out long missingHandle);
 			return new ValueTask<JsonRpcResponse?>(request.Id is RequestId missingId
@@ -1037,6 +1049,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 #endif
 	private async ValueTask<JsonRpcResponse?> DispatchCoreAsync(JsonRpcRequest request, MethodInvoker invoker, DispatchRequest dispatchRequest)
 	{
+		using Activity? activity = JsonRpcTracing.StartServerActivity(request);
 		try
 		{
 			using MarshaledObjectManager.InboundCallScope inboundCallScope = this.marshaledObjects.TrackInboundCall(request.Id.HasValue, dispatchRequest.CallState);
@@ -1062,11 +1075,21 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			DispatchResponse response = jtf is not null && parentToken is not null
 				? await RunUnderJoinableTaskAsync(jtf, invoker, dispatchRequest, parentToken)
 				: await invoker(dispatchRequest).ConfigureAwait(false);
+			if (response.Response is JsonRpcError)
+			{
+				activity?.SetStatus(ActivityStatusCode.Error);
+			}
+
 			await progressScope.CompleteAsync().ConfigureAwait(false);
 			Assumes.True(request.Id is null == response.Response is null, "A response is expected iff the request included an ID.");
 			inboundCallScope.Complete(response.Response is not JsonRpcError);
 			outOfBandStreamScope.Complete(response.Response is not JsonRpcError);
 			return response.Response;
+		}
+		catch
+		{
+			activity?.SetStatus(ActivityStatusCode.Error);
+			throw;
 		}
 		finally
 		{
@@ -1228,6 +1251,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 #endif
 	private async ValueTask<JsonRpcResponse> RequestAsync(JsonRpcRequest request, CancellationToken cancellationToken)
 	{
+		using Activity? activity = JsonRpcTracing.StartClientActivity(request.Method);
 		ResponseCompletionSource? responseSource = null;
 		bool registered = false;
 		bool posted = false;
@@ -1248,11 +1272,18 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 			using (cancellationToken.Register(this.cancelOutboundRequestDelegate, request))
 			{
-				return await responseSource.Task.ConfigureAwait(false);
+				JsonRpcResponse response = await responseSource.Task.ConfigureAwait(false);
+				if (response is JsonRpcError)
+				{
+					activity?.SetStatus(ActivityStatusCode.Error);
+				}
+
+				return response;
 			}
 		}
 		catch (Exception) when (!posted)
 		{
+			activity?.SetStatus(ActivityStatusCode.Error);
 			request.Arguments.ReleaseIfSingleUse();
 			if (registered)
 			{
@@ -1264,6 +1295,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 			this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
 			this.asyncEnumerables.ReleaseGenerators(request.Arguments);
+			throw;
+		}
+		catch
+		{
+			activity?.SetStatus(ActivityStatusCode.Error);
 			throw;
 		}
 		finally
@@ -1318,6 +1354,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 #endif
 	private async ValueTask NotifyAsync(JsonRpcRequest request, MarshaledObjectManager.HandleScope marshaledObjectsScope, CancellationToken cancellationToken)
 	{
+		using Activity? activity = JsonRpcTracing.StartClientActivity(request.Method);
 		using (marshaledObjectsScope)
 		{
 			try
@@ -1326,6 +1363,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			}
 			catch
 			{
+				activity?.SetStatus(ActivityStatusCode.Error);
 				this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
 				request.Arguments.ReleaseIfSingleUse();
 				throw;

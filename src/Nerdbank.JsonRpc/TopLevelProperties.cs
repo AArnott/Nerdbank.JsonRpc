@@ -18,6 +18,12 @@ internal sealed class TopLevelProperties
 	/// <summary>The top-level property that carries a <c>JoinableTask</c> token, compatible with StreamJsonRpc.</summary>
 	internal const string JoinableTaskTokenPropertyName = "joinableTaskToken";
 
+	/// <summary>The W3C trace context parent field.</summary>
+	internal const string TraceParentPropertyName = "traceparent";
+
+	/// <summary>The W3C trace context state field.</summary>
+	internal const string TraceStatePropertyName = "tracestate";
+
 	private readonly List<KeyValuePair<string, TopLevelPropertyValue>> properties = new(1);
 	private HashSet<string>? ignoredReceivedNames;
 
@@ -41,6 +47,8 @@ internal sealed class TopLevelProperties
 		switch (name)
 		{
 			case JoinableTaskTokenPropertyName:
+			case TraceParentPropertyName:
+			case TraceStatePropertyName:
 				kind = TopLevelPropertyKind.String;
 				return true;
 			default:
