@@ -592,6 +592,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 					Response = id is RequestId missingId
 						? new JsonRpcError { Id = missingId, Error = new() { Code = JsonRpcErrorCode.NoMarshaledObjectFound, Message = $"No async enumerator with token {token} exists." } }
 						: null,
+					IsError = true,
 				};
 			}
 
@@ -624,6 +625,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 				Response = id is RequestId cancelledId
 					? new JsonRpcError { Id = cancelledId, Error = new() { Code = JsonRpcErrorCode.RequestCancelled, Message = ex.Message } }
 					: null,
+				IsError = true,
 			};
 		}
 		catch (Exception ex)
@@ -634,6 +636,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 				Response = id is RequestId errorId
 					? new JsonRpcError { Id = errorId, Error = new() { Code = JsonRpcErrorCode.InternalError, Message = ex.Message } }
 					: null,
+				IsError = true,
 			};
 		}
 	}

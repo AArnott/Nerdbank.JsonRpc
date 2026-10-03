@@ -492,7 +492,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				Arguments = arguments,
 			};
 
-			return this.AwaitPostedNotificationAsync(this.PostMessageAsync(request, cancellationToken), request);
+			return this.NotifyAsync(request, cancellationToken);
 		}
 		catch
 		{
@@ -650,8 +650,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	internal void PostMarshaledNotification(string method, JsonRpcValue arguments)
 	{
-		using Activity? activity = JsonRpcTracing.StartClientActivity(method);
-		this.PostMessage(new JsonRpcRequest { Method = method, Arguments = arguments });
+		JsonRpcRequest request = new() { Method = method, Arguments = arguments };
+		this.FaultOnFailure(this.NotifyAsync(request, CancellationToken.None).AsTask());
 	}
 
 	internal JsonRpcValue MarshalReleaseArguments(long handle, bool ownedBySender = false)
@@ -1075,7 +1075,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			DispatchResponse response = jtf is not null && parentToken is not null
 				? await RunUnderJoinableTaskAsync(jtf, invoker, dispatchRequest, parentToken)
 				: await invoker(dispatchRequest).ConfigureAwait(false);
-			if (response.Response is JsonRpcError)
+			if (response.IsError || response.Response is JsonRpcError)
 			{
 				activity?.SetStatus(ActivityStatusCode.Error);
 			}
@@ -1371,20 +1371,46 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
-#if NET
-	[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
-#endif
-	private async ValueTask AwaitPostedNotificationAsync(ValueTask postTask, JsonRpcRequest request)
+	private ValueTask NotifyAsync(JsonRpcRequest request, CancellationToken cancellationToken)
 	{
+		Activity? parentActivity = Activity.Current;
+		Activity? activity = JsonRpcTracing.StartClientActivity(request.Method);
 		try
 		{
-			await postTask.ConfigureAwait(false);
+			ValueTask postTask = this.PostMessageAsync(request, cancellationToken);
+			ValueTask notificationTask = this.AwaitPostedNotificationAsync(postTask, request, activity);
+
+			// Restore the caller's ambient activity before returning; the write may continue asynchronously.
+			Activity.Current = parentActivity;
+			return notificationTask;
 		}
 		catch
 		{
-			this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
-			request.Arguments.ReleaseIfSingleUse();
+			activity?.SetStatus(ActivityStatusCode.Error);
+			Activity.Current = parentActivity;
+			activity?.Dispose();
 			throw;
+		}
+	}
+
+#if NET
+	[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+#endif
+	private async ValueTask AwaitPostedNotificationAsync(ValueTask postTask, JsonRpcRequest request, Activity? activity)
+	{
+		using (activity)
+		{
+			try
+			{
+				await postTask.ConfigureAwait(false);
+			}
+			catch
+			{
+				activity?.SetStatus(ActivityStatusCode.Error);
+				this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
+				request.Arguments.ReleaseIfSingleUse();
+				throw;
+			}
 		}
 	}
 

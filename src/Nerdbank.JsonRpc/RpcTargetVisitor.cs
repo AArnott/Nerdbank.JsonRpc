@@ -142,6 +142,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 #endif
 		async ValueTask<DispatchResponse> InvokeAsync(DispatchRequest dispatch)
 		{
+			bool isError = false;
 			TArgumentState argState;
 			ArgumentList values = default;
 			try
@@ -160,6 +161,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 								Response = dispatch.Request.Id is RequestId id
 								? new JsonRpcError { Id = id, Error = new() { Code = JsonRpcErrorCode.InvalidParams, Message = $"Expected at most {parameterSetters.Length} arguments but received {values.Count}." } }
 								: null,
+								IsError = true,
 							};
 						}
 
@@ -176,6 +178,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 										Response = dispatch.Request.Id is RequestId id
 										? new JsonRpcError { Id = id, Error = new() { Code = JsonRpcErrorCode.InvalidParams, Message = $"Unknown parameter name: '{values[i].Name}'." } }
 										: null,
+										IsError = true,
 									};
 								}
 
@@ -203,6 +206,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 									},
 								}
 								: null,
+							IsError = true,
 						};
 					}
 				}
@@ -214,6 +218,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 						Response = dispatch.Request.Id is RequestId id
 							? new JsonRpcError { Id = id, Error = new JsonRpcErrorDetails { Code = JsonRpcErrorCode.InvalidParams, Message = "Could not deserialize request parameters." } }
 							: null,
+						IsError = true,
 					};
 				}
 			}
@@ -265,6 +270,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			}
 			catch (Exception ex)
 			{
+				isError = true;
 				dispatch.JsonRpc.LogApplicationError(ex);
 				if (dispatch.Request.Id is RequestId id)
 				{
@@ -284,7 +290,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 				}
 			}
 
-			return new DispatchResponse { Response = response };
+			return new DispatchResponse { Response = response, IsError = isError || response is JsonRpcError };
 		}
 	}
 

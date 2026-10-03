@@ -66,6 +66,11 @@ internal static class JsonRpcTracing
 
 	private static Activity? StartActivity(string method, ActivityKind kind, ActivityContext parentContext = default)
 	{
+		if (!ActivitySource.HasListeners())
+		{
+			return null;
+		}
+
 		Activity? activity = kind == ActivityKind.Server
 			? ActivitySource.StartActivity($"JSON-RPC {method}", kind, parentContext)
 			: ActivitySource.StartActivity($"JSON-RPC {method}", kind);

@@ -10,7 +10,7 @@ For JSON, configure a <xref:Nerdbank.Json.JsonSerializer>, pass it to a <xref:Ne
 
 ## Logging and distributed tracing
 
-Nerdbank.JsonRpc uses `Microsoft.Extensions.Logging` for transport message and failure events. Its <xref:Nerdbank.JsonRpc.JsonRpc.ActivitySource> emits client activities for outbound requests (including batched requests) and direct notifications, and server activities for dispatched requests. Subscribe with an `ActivityListener` or OpenTelemetry tracer provider using <xref:Nerdbank.JsonRpc.JsonRpc.ActivitySource.Name>; no activity is created when the source is not being sampled. Activities include the `rpc.system` and `rpc.method` tags and are marked as errors when an RPC fails.
+Nerdbank.JsonRpc uses `Microsoft.Extensions.Logging` for transport message and failure events. Its <xref:Nerdbank.JsonRpc.JsonRpc.ActivitySource> emits client activities for outbound requests (including batched requests) and direct notifications, and server activities for dispatched requests. Subscribe with an `ActivityListener` or OpenTelemetry tracer provider using <xref:Nerdbank.JsonRpc.JsonRpc.ActivitySource>.Name; no activity is created when the source is not being sampled. Activities include the `rpc.system` and `rpc.method` tags and are marked as errors when an RPC fails.
 
 When a W3C activity is current, its `traceparent` and optional `tracestate` are carried as top-level JSON-RPC envelope extension properties. Both built-in encodings preserve these fields, and peers that do not use distributed tracing can ignore them. This lets a server activity be a child of the caller's client activity across a process boundary.
 

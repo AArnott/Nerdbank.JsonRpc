@@ -9,5 +9,7 @@ internal partial interface IEchoService
 {
 	Task<string> EchoAsync(string value, CancellationToken cancellationToken);
 
+	void Notify(string value, CancellationToken cancellationToken);
+
 	Task<int> DoubleAsync(int value, CancellationToken cancellationToken);
 }

@@ -16,6 +16,9 @@ public partial class JsonRpcTracingTests : TestBase
 	public async Task ActivitiesPropagateW3CTraceContext(JsonRpcEncoding encoding)
 	{
 		ConcurrentQueue<Activity> stoppedActivities = new();
+		TaskCompletionSource firstNotificationActivityStopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		TaskCompletionSource secondNotificationActivityStopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		int notificationServerActivityCount = 0;
 		string sourceName = JsonRpc.ActivitySource.Name;
 		string? expectedTraceId = null;
 		using ActivityListener listener = new()
@@ -27,6 +30,18 @@ public partial class JsonRpcTracingTests : TestBase
 				if (activity.TraceId.ToString() == expectedTraceId)
 				{
 					stoppedActivities.Enqueue(activity);
+					if (activity.Kind == ActivityKind.Server && Equals(activity.GetTagItem("rpc.method"), "notify"))
+					{
+						switch (Interlocked.Increment(ref notificationServerActivityCount))
+						{
+							case 1:
+								firstNotificationActivityStopped.TrySetResult();
+								break;
+							case 2:
+								secondNotificationActivityStopped.TrySetResult();
+								break;
+						}
+					}
 				}
 			},
 		};
@@ -53,14 +68,18 @@ public partial class JsonRpcTracingTests : TestBase
 		Task<string> batchedCall = batch.Attach<IEchoService>().EchoAsync("batch", this.TimeoutToken);
 		await batch.SendAsync(this.TimeoutToken);
 		Assert.Equal("batch", await batchedCall.WithCancellation(this.TimeoutToken));
+		client.Notify("notify", this.TimeoutToken);
+		await firstNotificationActivityStopped.Task.WithCancellation(this.TimeoutToken);
+		client.Notify("fail-notification", this.TimeoutToken);
+		await secondNotificationActivityStopped.Task.WithCancellation(this.TimeoutToken);
 		parent.Stop();
 
 		Activity[] activities = stoppedActivities.ToArray();
-		Assert.Equal(6, activities.Length);
+		Assert.Equal(10, activities.Length);
 		Activity[] clientActivities = activities.Where(activity => activity.Kind == ActivityKind.Client).ToArray();
 		Activity[] serverActivities = activities.Where(activity => activity.Kind == ActivityKind.Server).ToArray();
-		Assert.Equal(3, clientActivities.Length);
-		Assert.Equal(3, serverActivities.Length);
+		Assert.Equal(5, clientActivities.Length);
+		Assert.Equal(5, serverActivities.Length);
 		foreach (Activity activity in clientActivities)
 		{
 			Assert.Equal(parent.TraceId, activity.TraceId);
@@ -77,7 +96,7 @@ public partial class JsonRpcTracingTests : TestBase
 		}
 
 		Assert.Equal(1, clientActivities.Count(activity => activity.Status == ActivityStatusCode.Error));
-		Assert.Equal(1, serverActivities.Count(activity => activity.Status == ActivityStatusCode.Error));
+		Assert.Equal(2, serverActivities.Count(activity => activity.Status == ActivityStatusCode.Error));
 	}
 
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding) => encoding switch
@@ -91,6 +110,14 @@ public partial class JsonRpcTracingTests : TestBase
 		public Task<string> EchoAsync(string value, CancellationToken cancellationToken) => value == "fail"
 			? Task.FromException<string>(new InvalidOperationException("Expected test failure."))
 			: Task.FromResult(value);
+
+		public void Notify(string value, CancellationToken cancellationToken)
+		{
+			if (value == "fail-notification")
+			{
+				throw new InvalidOperationException("Expected notification failure.");
+			}
+		}
 
 		public Task<int> DoubleAsync(int value, CancellationToken cancellationToken) => Task.FromResult(value * 2);
 	}
