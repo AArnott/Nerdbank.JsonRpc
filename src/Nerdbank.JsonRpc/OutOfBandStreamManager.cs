@@ -26,9 +26,22 @@ internal sealed class OutOfBandStreamManager : IDisposable
 			this.activeChannels.Clear();
 		}
 
+		List<Exception>? failures = null;
 		foreach (ChannelSet set in channels)
 		{
-			set.Dispose();
+			try
+			{
+				set.Dispose();
+			}
+			catch (Exception ex)
+			{
+				(failures ??= []).Add(ex);
+			}
+		}
+
+		if (failures is not null)
+		{
+			throw new AggregateException("Out-of-band stream cleanup failed.", failures);
 		}
 	}
 
@@ -252,9 +265,22 @@ internal sealed class OutOfBandStreamManager : IDisposable
 
 		public void Dispose()
 		{
+			List<Exception>? failures = null;
 			foreach (MultiplexingStream.Channel channel in channels)
 			{
-				channel.Dispose();
+				try
+				{
+					channel.Dispose();
+				}
+				catch (Exception ex)
+				{
+					(failures ??= []).Add(ex);
+				}
+			}
+
+			if (failures is not null)
+			{
+				throw new AggregateException("Out-of-band channel cleanup failed.", failures);
 			}
 		}
 	}

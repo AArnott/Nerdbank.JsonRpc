@@ -47,6 +47,7 @@ internal sealed class MarshaledObjectProxyClient(JsonRpc owner, long handle, Mar
 
 	private void ThrowIfDisposed()
 	{
+		owner.ThrowIfClosed();
 		if (Volatile.Read(ref this.disposed) != 0)
 		{
 			throw new ObjectDisposedException("marshaled proxy");

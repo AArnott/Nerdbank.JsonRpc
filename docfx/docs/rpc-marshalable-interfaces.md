@@ -4,14 +4,7 @@ A value declared as an interface marked with <xref:Nerdbank.JsonRpc.RpcMarshalab
 
 Marshalable interfaces declare methods only and need a generated PolyType shape that includes public instance methods. Explicit-lifetime interfaces (the default) must inherit <xref:System.IDisposable>; the owner disposes the target when the receiver disposes the proxy or when the connection closes. Methods must return `Task`, `Task<T>`, `ValueTask`, or `ValueTask<T>`; `void` methods are not supported except for `IDisposable.Dispose()`.
 
-```csharp
-[RpcMarshalable]
-[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
-internal partial interface ICounter : IDisposable
-{
-    Task<int> IncrementAsync(CancellationToken cancellationToken);
-}
-```
+[!code-csharp[](../../samples/cs/rpc-marshalable-interfaces.cs#explicit-lifetime-counter)]
 
 The interface itself does not also need <xref:Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute>; the JSON-RPC source generator creates its marshaled proxy from <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute>. A typical use is to return the interface from a normal RPC contract, call methods on the returned proxy, and dispose it when finished.
 
@@ -29,21 +22,7 @@ StreamJsonRpc uses verbatim CLR names instead (such as `$/invokeProxy/0/AddAsync
 
 Apply <xref:Nerdbank.JsonRpc.RpcMarshalableOptionalInterfaceAttribute> to a marshalable base interface when implementations may expose additional RPC capabilities. Each optional interface has a stable signed 32-bit ID that must never be reused for a different interface. The optional interface must have a generated PolyType method shape, just like the base interface.
 
-```csharp
-[RpcMarshalable]
-[RpcMarshalableOptionalInterface(1, typeof(IResettableCounter))]
-[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
-internal partial interface ICounter : IDisposable
-{
-    Task<int> IncrementAsync(CancellationToken cancellationToken);
-}
-
-[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
-internal partial interface IResettableCounter
-{
-    Task ResetAsync(CancellationToken cancellationToken);
-}
-```
+[!code-csharp[](../../samples/cs/rpc-marshalable-interfaces.cs#optional-interfaces)]
 
 The sender advertises only interfaces implemented by the actual target. The receiver's generated proxy implements exactly the advertised interfaces it recognizes, so normal C# type tests and casts provide capability discovery (`counter is IResettableCounter`). Unknown IDs are ignored for version tolerance. Optional calls use `$/invokeProxy/{handle}/{interfaceId}.{method}` on the wire, which keeps same-named methods on different interfaces distinct. Optional capabilities preserve the base object's identity and lifetime; disposing any generated proxy releases that marshaled handle. As with the base interface, optional capabilities cannot be forwarded to a third connection.
 
@@ -65,14 +44,7 @@ Together with optional interfaces, receiver disposal, call-scoped and explicit l
 
 `IObserver<T>` parameters and return values are marshaled by reference without `[RpcMarshalable]` or a generated observer proxy. Provide a PolyType shape for `T` through the containing RPC contract's shape provider. The endpoint receiving the observer can call `OnNext(T)` repeatedly, then `OnCompleted()` or `OnError(Exception)` once. Terminal callbacks release the remote handle; subsequent callbacks fail with `ObjectDisposedException`. Releasing an observer handle does not dispose the observer instance. Observers may not be passed in notifications.
 
-```csharp
-[GenerateJsonRpcProxy]
-[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
-internal partial interface ISubscriptionService
-{
-    Task<IDisposable> SubscribeAsync(IObserver<int> observer, CancellationToken cancellationToken);
-}
-```
+[!code-csharp[](../../samples/cs/rpc-marshalable-interfaces.cs#observer-subscription-contract)]
 
 Returning `IDisposable` from a subscription method lets the caller unsubscribe by disposing the returned proxy. Disposal is a notification: updates already in flight can still arrive until the server processes the unsubscribe.
 
@@ -82,14 +54,7 @@ Returning `IDisposable` from a subscription method lets the caller unsubscribe b
 
 `IProgress<T>` request parameters are encoded as opaque progress tokens. During the request, the server receives an `IProgress<T>` that sends each `Report` call as a `$/progress` notification with named `token` and `value` parameters. The client invokes its supplied `IProgress<T>` in report order before completing the RPC call. The server-side progress instance becomes inert when the request completes, and subsequent notifications for the token are ignored. `IProgress<T>` is supported only in request arguments; passing one in a notification is rejected. Pass `null` when a caller does not want updates.
 
-```csharp
-[GenerateJsonRpcProxy]
-[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
-internal partial interface IWorkService
-{
-    Task RunAsync(IProgress<int>? progress, CancellationToken cancellationToken);
-}
-```
+[!code-csharp[](../../samples/cs/rpc-marshalable-interfaces.cs#progress-contract)]
 
 This matches StreamJsonRpc's [`IProgress<T>` protocol](https://microsoft.github.io/vs-streamjsonrpc/exotic_types/progresssupport.html).
 
@@ -97,9 +62,7 @@ This matches StreamJsonRpc's [`IProgress<T>` protocol](https://microsoft.github.
 
 `Stream`, `IDuplexPipe`, `PipeReader`, and `PipeWriter` parameters and return values transfer their bytes over a separate `MultiplexingStream` channel rather than encoding them into the JSON-RPC message. Set <xref:Nerdbank.JsonRpc.JsonRpc.MultiplexingStream> on each endpoint before calling <xref:Nerdbank.JsonRpc.JsonRpc.Start>.
 
-```csharp
-using JsonRpc client = new(rpcChannel) { MultiplexingStream = multiplexingStream };
-```
+[!code-csharp[](../../samples/cs/rpc-marshalable-interfaces.cs#out-of-band-stream-connection)]
 
 The sender serializes an anonymous multiplex-channel ID as the parameter or result value; the receiving endpoint accepts that channel automatically. Stream-shaped arguments may only be used in requests, never notifications. If a request fails, the channel is closed automatically; after a successful response, both peers own their pipe ends and must complete or dispose them when finished. This matches StreamJsonRpc's [out-of-band stream protocol](https://microsoft.github.io/vs-streamjsonrpc/exotic_types/oob_streams.html).
 
@@ -107,16 +70,7 @@ The sender serializes an anonymous multiplex-channel ID as the parameter or resu
 
 `IAsyncEnumerable<T>` arguments and return values are marshaled by reference so the receiver pulls items on demand instead of waiting for the whole sequence to be produced and encoded. This works anywhere it is declared in the object graph reachable from an argument or return value, not just at the top level (for example, a property of a DTO typed `IAsyncEnumerable<T>` is marshaled the same way). As with the other exotic types on this page, the value must be *declared* as `IAsyncEnumerable<T>` (or as an interface/DTO whose shape resolves to it) at that point in the graph; a value merely typed `object` or boxed at runtime is sent by value like any other data, because dispatch is driven by the declared shape, not a runtime type check. Use it for long, expensive, or unbounded sequences where the consumer may stop early. Provide a PolyType shape for the element type through the containing RPC contract's shape provider.
 
-```csharp
-[GenerateJsonRpcProxy]
-[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
-internal partial interface IFileService
-{
-    IAsyncEnumerable<string> ReadLinesAsync(string path, CancellationToken cancellationToken);
-
-    Task<int> CountAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken);
-}
-```
+[!code-csharp[](../../samples/cs/rpc-marshalable-interfaces.cs#async-enumerable-contract)]
 
 A proxy method should return `IAsyncEnumerable<T>` directly rather than `Task<IAsyncEnumerable<T>>`/`ValueTask<IAsyncEnumerable<T>>`. The request is sent immediately and the response is awaited lazily on first enumeration, so a bare return type loses nothing and is more idiomatic. Wrapping in `Task<T>`/`ValueTask<T>` still works and remains useful when the RPC contract needs to compose with other Task-returning APIs.
 
@@ -132,15 +86,7 @@ Sequences passed as request arguments are released when the response arrives, so
 
 By default each `MoveNextAsync` that is not already satisfied costs one round trip. <xref:Nerdbank.JsonRpc.JsonRpcEnumerableSettings> tunes that for a sequence you send, and `WithJsonRpcSettings` applies it:
 
-```csharp
-IAsyncEnumerable<int> ProduceAsync(CancellationToken cancellationToken)
-    => this.GenerateAsync(cancellationToken).WithJsonRpcSettings(new()
-    {
-        MinBatchSize = 10,
-        MaxReadAhead = 50,
-        Prefetch = 10,
-    });
-```
+[!code-csharp[](../../samples/cs/rpc-marshalable-interfaces.cs#tuned-sequence)]
 
 - `MinBatchSize` (default 1) makes the producer wait until it has at least this many values before answering a request, amortizing round trips over many small items.
 - `MaxReadAhead` (default 0) lets the producer generate up to this many values ahead of what the consumer has asked for, so values are usually ready the moment they are requested. Combine it with `MinBatchSize` to keep a filled buffer that is handed over in chunks.
@@ -148,11 +94,7 @@ IAsyncEnumerable<int> ProduceAsync(CancellationToken cancellationToken)
 
 Prefetching must run before the sequence is serialized. Setting `Prefetch` does this automatically for sequences returned from an RPC method. For a sequence passed as an *argument*, await `WithPrefetchAsync` first:
 
-```csharp
-int count = await client.CountAsync(
-    await source.WithPrefetchAsync(10, cancellationToken),
-    cancellationToken);
-```
+[!code-csharp[](../../samples/cs/rpc-marshalable-interfaces.cs#prefetch-argument)]
 
 `AsAsyncEnumerable` adapts an existing synchronous sequence so it can be marshaled.
 

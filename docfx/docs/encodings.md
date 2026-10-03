@@ -31,3 +31,7 @@ A default <xref:Nerdbank.JsonRpc.JsonRpcValue> means omitted `params` (or absent
 ## Deployment dependencies
 
 The NuGet package references both serializer packages. On a MessagePack-only deployment, `Nerdbank.Json.dll` can be excluded without loading it. Currently Nerdbank.Json itself loads Nerdbank.MessagePack, so excluding `Nerdbank.MessagePack.dll` from a JSON deployment is not supported.
+
+## End of input and protocol rejection
+
+EOF between complete messages follows the [connection lifecycle](protocol-behavior.md#connection-lifecycle): Completion succeeds only if no outbound requests were pending. EOF midway through a JSON frame is a protocol violation; EOF midway through a MessagePack frame is a truncation failure. Neither is successful idle EOF. A connection that detects a protocol violation stops reading, attempts to flush a bounded diagnostic notification, and then disconnects.

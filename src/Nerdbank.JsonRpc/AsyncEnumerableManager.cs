@@ -39,7 +39,11 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	private JsonRpc Owner => owner;
 
 	/// <summary>Releases every generator this connection is tracking.</summary>
-	public void Dispose()
+	public void Dispose() => this.DisposeAllAsync().Forget();
+
+	/// <summary>Releases every tracked generator and waits for its asynchronous disposal.</summary>
+	/// <returns>The cleanup operation.</returns>
+	internal async Task DisposeAllAsync()
 	{
 		Generator[] snapshot;
 		lock (this.sync)
@@ -51,7 +55,14 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 
 		foreach (Generator generator in snapshot)
 		{
-			generator.DisposeAsync().AsTask().Forget();
+			try
+			{
+				await generator.DisposeAsync().ConfigureAwait(false);
+			}
+			catch (Exception ex)
+			{
+				owner.LogApplicationError(ex);
+			}
 		}
 	}
 
@@ -935,10 +946,27 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 #pragma warning disable VSTHRD103 // CancelAsync is unavailable on all target frameworks.
 				this.cancellationSource.Cancel();
 #pragma warning restore VSTHRD103
+			}
+			catch (Exception ex)
+			{
+				this.manager.Owner.LogApplicationError(ex);
+			}
+
+			try
+			{
 				if (this.readAheadTask is not null)
 				{
 					// Wait for read ahead to stop touching the enumerator before disposing it.
-					await this.readAheadTask.NoThrowAwaitable();
+					try
+					{
+#pragma warning disable VSTHRD003 // This task is the enumerator's read-ahead operation, which has no main-thread dependency.
+						await this.readAheadTask.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+					}
+					catch (Exception ex)
+					{
+						this.manager.Owner.LogApplicationError(ex);
+					}
 				}
 
 				await this.enumerator.DisposeAsync().ConfigureAwait(false);
@@ -1089,6 +1117,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 					throw new ObjectDisposedException(nameof(ConsumerEnumerator<T>));
 				}
 
+				this.manager.Owner.ThrowIfClosed();
 				this.cancellationToken.ThrowIfCancellationRequested();
 				while (true)
 				{

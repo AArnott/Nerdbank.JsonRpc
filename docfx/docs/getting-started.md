@@ -22,7 +22,7 @@ Nerdbank.JsonRpc exchanges messages through an <xref:System.IO.Pipelines.IDuplex
 
 The channel defines the wire encoding and framing. This example uses MessagePack with its default length-header framing. Both parties must use compatible encoding and framing; see [Encodings and framing](encodings.md) for JSON and other choices.
 
-The application is responsible for establishing the connected stream and managing its lifetime. For in-process tests, <xref:Nerdbank.Streams.FullDuplexStream.CreatePipePair*> creates two connected <xref:System.IO.Pipelines.IDuplexPipe> instances that can be given directly to two channels.
+The application is responsible for establishing the connected stream and managing its lifetime. The RPC connection automatically tears itself down on EOF or failure. Deliberate disposal and EOF without pending calls complete its lifetime task successfully; EOF with pending calls and other failures fault it. Inspect the preserved original cause even after disposal, and do not reuse a terminated connection. See [Connection lifecycle](protocol-behavior.md#connection-lifecycle) for the complete completion, exception, state, and peer-diagnostic contract. For in-process tests, <xref:Nerdbank.Streams.FullDuplexStream.CreatePipePair*> creates two connected <xref:System.IO.Pipelines.IDuplexPipe> instances that can be given directly to two channels.
 
 For same-machine IPC between mutually trusted processes running as the same user, consider <xref:Nerdbank.Streams.SharedMemoryDuplexPipe>. This example connects both endpoints in one process for simplicity; separate processes can use the same shared name:
 

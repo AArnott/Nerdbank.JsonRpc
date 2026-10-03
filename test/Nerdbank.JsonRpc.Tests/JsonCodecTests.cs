@@ -704,7 +704,7 @@ public class JsonCodecTests : TestBase
 		}
 
 		await peerPipe.Output.FlushAsync(this.TimeoutToken);
-		await Assert.ThrowsAnyAsync<Exception>(() => pending.WithCancellation(this.TimeoutToken));
-		Assert.True(client.Completion.IsFaulted);
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => pending.WithCancellation(this.TimeoutToken));
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => client.Completion.WithCancellation(this.TimeoutToken));
 	}
 }

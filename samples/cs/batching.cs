@@ -32,4 +32,23 @@ public static class Example
         int secondSum = await second;
         #endregion
     }
+
+    public static async Task RunDynamicAsync(JsonRpc rpc)
+    {
+        ArgumentNullException.ThrowIfNull(rpc);
+
+        #region dynamic-batch-results
+        using JsonRpcBatch batch = rpc.CreateBatch();
+        ICalculator batchedClient = batch.Attach<ICalculator>();
+
+        Task<int>[] results =
+        [
+            batchedClient.AddAsync(1, 2, CancellationToken.None).AsTask(),
+            batchedClient.AddAsync(3, 4, CancellationToken.None).AsTask(),
+        ];
+
+        await batch.SendAsync(CancellationToken.None);
+        int[] sums = await Task.WhenAll(results);
+        #endregion
+    }
 }

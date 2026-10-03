@@ -6,6 +6,7 @@ using System.Threading.Channels;
 using Microsoft;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.VisualStudio.Threading;
 
 namespace Nerdbank.JsonRpc;
 
@@ -17,7 +18,7 @@ namespace Nerdbank.JsonRpc;
 /// Derived classes select the encoding and implement serialization, deserialization, and any framing.
 /// This base class manages the pipe and message queues without choosing a wire format.
 /// </remarks>
-public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDisposable
+public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, System.IAsyncDisposable
 {
 	/// <summary>The default maximum encoded message size, in bytes.</summary>
 	internal const int DefaultMaximumMessageSize = 8 * 1024 * 1024;
@@ -26,14 +27,23 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	private static readonly EventId MessageReceived = new(2, "Message received");
 
 	private readonly CancellationTokenSource disposalSource = new();
+	private readonly CancellationTokenSource inboundDisposalSource = new();
+	private readonly PipeReader pipeReader;
+	private readonly ChannelWriter<JsonRpcMessage> outboundMessageWriter;
+	private readonly TaskCompletionSource<bool> finalNotificationFlushed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+	private readonly TaskCompletionSource<bool> inputCompletionAllowed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 	private readonly TaskCompletionSource<bool> transportReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
 	private readonly Task inboundTaskProcessor;
 	private readonly Task outboundTaskProcessor;
 	private readonly ChannelWriter<JsonRpcMessage> inboundMessageWriter;
 	private readonly ChannelReader<JsonRpcMessage> outboundMessageReader;
+	private JsonRpcMessage? finalNotification;
+	private Exception? outboundFailure;
+	private volatile bool finalizing;
+	private bool connectionOwned;
 	private volatile int maximumMessageSize = DefaultMaximumMessageSize;
 	private ILogger logger = NullLogger.Instance;
-	private volatile bool inboundAborted;
+	private int inboundAborted;
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcPipeChannel"/> class with deferred transport startup.</summary>
 	/// <param name="pipe">The connected duplex pipe.</param>
@@ -47,8 +57,10 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 
 		(this.Reader, this.inboundMessageWriter) = (inboundChannel.Reader, inboundChannel.Writer);
 		(this.Writer, this.outboundMessageReader) = (outboundChannel.Writer, outboundChannel.Reader);
+		this.outboundMessageWriter = outboundChannel.Writer;
+		this.pipeReader = pipe.Input;
 
-		this.inboundTaskProcessor = this.HandleInboundMessagesAsync(pipe.Input, this.disposalSource.Token);
+		this.inboundTaskProcessor = this.HandleInboundMessagesAsync(pipe.Input, this.inboundDisposalSource.Token);
 		this.outboundTaskProcessor = this.HandleOutboundMessagesAsync(pipe.Output, this.disposalSource.Token);
 	}
 
@@ -69,21 +81,38 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	public void Start() => this.transportReady.TrySetResult(true);
 #pragma warning restore SA1202
 
+	/// <summary>Stops transport processing and completes both sides of the pipe.</summary>
+	/// <returns>The bounded transport cleanup operation.</returns>
+	/// <exception cref="OperationCanceledException">A transport processor did not stop within the one-second cleanup budget.</exception>
 	public async ValueTask DisposeAsync()
 	{
+		try
+		{
 #if NET
-		await this.disposalSource.CancelAsync().ConfigureAwait(false);
+			await this.disposalSource.CancelAsync().ConfigureAwait(false);
 #else
-		this.disposalSource.Cancel();
+			this.disposalSource.Cancel();
 #endif
+		}
+		finally
+		{
+			this.inputCompletionAllowed.TrySetResult(true);
+			try
+			{
+				this.AbortInbound(this.disposalSource.Token);
+			}
+			finally
+			{
+				this.Writer.TryComplete();
+				this.outboundMessageWriter.TryComplete();
+				this.Start();
+			}
+		}
 
-		// The outbound queue is read without a cancellation token (see HandleOutboundMessagesAsync), so completing it is what wakes that reader.
-		this.Writer.TryComplete(new OperationCanceledException(this.disposalSource.Token));
-		this.Start();
-
-#pragma warning disable VSTHRD003 // Avoid awaiting foreign Tasks - No main thread dependency.
-		await Task.WhenAll(this.inboundTaskProcessor, this.outboundTaskProcessor).ConfigureAwait(false);
-#pragma warning restore VSTHRD003 // Avoid awaiting foreign Tasks
+		using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(1));
+#pragma warning disable VSTHRD003 // These are this channel's own processors.
+		await Task.WhenAll(this.inboundTaskProcessor, this.outboundTaskProcessor).WithCancellation(timeout.Token).ConfigureAwait(false);
+#pragma warning restore VSTHRD003
 	}
 
 	/// <summary>Returns single-use pooled buffers to the pool once the message that carries them has been serialized.</summary>
@@ -108,6 +137,48 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 		}
 	}
 
+	/// <summary>Releases owned payloads of a received message that will not be dispatched.</summary>
+	/// <param name="message">The abandoned received message.</param>
+	internal static void ReleaseReceivedPayload(JsonRpcMessage message)
+	{
+		switch (message)
+		{
+			case JsonRpcRequest request:
+				request.Arguments.Release();
+				break;
+			case JsonRpcResult result:
+				result.Result.Release();
+				break;
+			case JsonRpcMessageBatch batch:
+				foreach (JsonRpcMessage entry in batch.Messages)
+				{
+					ReleaseReceivedPayload(entry);
+				}
+
+				break;
+		}
+	}
+
+	/// <summary>Associates this channel with a connection that controls terminal cleanup.</summary>
+	internal void SetConnectionOwner() => this.connectionOwned = true;
+
+	/// <summary>Attempts to flush a final diagnostic before output is disconnected.</summary>
+	/// <param name="notification">The diagnostic notification containing the full rejection message.</param>
+	/// <returns>The operation, which fails if the send or flush does not finish within one second.</returns>
+	internal async Task SendFinalNotificationAsync(JsonRpcRequest notification)
+	{
+		using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(1));
+		this.finalNotification = notification;
+		this.finalizing = true;
+		await this.outboundMessageWriter.WriteAsync(notification, timeout.Token).ConfigureAwait(false);
+#pragma warning disable VSTHRD003 // Completed by this channel's outbound processor after flushing the final notification.
+		if (!await this.finalNotificationFlushed.Task.WithCancellation(timeout.Token).ConfigureAwait(false))
+		{
+			System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(this.outboundFailure!).Throw();
+		}
+#pragma warning restore VSTHRD003
+	}
+
 	/// <summary>Gets the configured maximum encoded message size.</summary>
 	/// <returns>The maximum encoded message size in bytes.</returns>
 	internal int GetMaximumMessageSize() => this.maximumMessageSize;
@@ -128,8 +199,20 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 	/// </remarks>
 	internal void AbortInbound(CancellationToken cancellationToken)
 	{
-		this.inboundAborted = true;
+		if (Interlocked.Exchange(ref this.inboundAborted, 1) != 0)
+		{
+			return;
+		}
+
 		this.inboundMessageWriter.TryComplete(new OperationCanceledException(cancellationToken));
+		try
+		{
+			this.inboundDisposalSource.Cancel();
+		}
+		finally
+		{
+			this.pipeReader.CancelPendingRead();
+		}
 	}
 
 	/// <summary>Updates the configured maximum encoded message size.</summary>
@@ -161,69 +244,169 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, IAsyncDispos
 
 	private async Task HandleInboundMessagesAsync(PipeReader reader, CancellationToken cancellationToken)
 	{
+		Exception? failure = null;
 		try
 		{
 #pragma warning disable VSTHRD003 // Waiting for this channel's own transport initialization gate.
 			await this.transportReady.Task.ConfigureAwait(false);
 #pragma warning restore VSTHRD003
-			await foreach (JsonRpcMessage message in this.ReceiveMessagesAsync(reader, cancellationToken))
+			await foreach (JsonRpcMessage message in this.ReceiveMessagesAsync(reader, cancellationToken).ConfigureAwait(false))
 			{
-				this.Logger.Log(LogLevel.Information, MessageReceived, message, null, FormatLoggedMessage);
-				await this.inboundMessageWriter.WriteAsync(message, cancellationToken).ConfigureAwait(false);
-			}
+				if (Volatile.Read(ref this.inboundAborted) != 0)
+				{
+					ReleaseReceivedPayload(message);
+					break;
+				}
 
-			this.inboundMessageWriter.TryComplete();
-			await reader.CompleteAsync().ConfigureAwait(false);
+				this.Logger.Log(LogLevel.Information, MessageReceived, message, null, FormatLoggedMessage);
+				try
+				{
+					await this.inboundMessageWriter.WriteAsync(message, cancellationToken).ConfigureAwait(false);
+				}
+				catch
+				{
+					ReleaseReceivedPayload(message);
+					throw;
+				}
+			}
+		}
+		catch (Exception ex) when ((ex is OperationCanceledException || ex is ChannelClosedException) && Volatile.Read(ref this.inboundAborted) != 0)
+		{
+			// The owning connection deliberately stopped input while retaining output for its final diagnostic.
 		}
 		catch (Exception ex)
 		{
-			if (!(ex is ChannelClosedException && this.inboundAborted))
+			failure = ex;
+			this.Logger.LogError(ex, "JSON-RPC inbound transport failed; encoding: {Encoding}.", this.Encoding);
+			if (ex.Data["ParserException"] is Exception parserException)
 			{
-				this.Logger.LogError(ex, "JSON-RPC inbound transport failed.");
+				this.Logger.LogError(parserException, "Underlying JSON-RPC parser failure.");
+			}
+		}
+		finally
+		{
+			this.inboundMessageWriter.TryComplete(failure);
+			if (failure is not null && !(this.connectionOwned && failure is System.Net.ProtocolViolationException))
+			{
+				this.Writer.TryComplete(failure);
+				if (!this.connectionOwned)
+				{
+					try
+					{
+#if NET
+						await this.disposalSource.CancelAsync().ConfigureAwait(false);
+#else
+						this.disposalSource.Cancel();
+#endif
+					}
+					catch (Exception ex)
+					{
+						this.Logger.LogError(ex, "JSON-RPC output cancellation failed; retaining the original input cause.");
+					}
+				}
 			}
 
-			this.inboundMessageWriter.TryComplete(ex);
-			this.Writer.TryComplete(ex);
-#if NET
-			await this.disposalSource.CancelAsync().ConfigureAwait(false);
-#else
-			this.disposalSource.Cancel();
-#endif
-			await reader.CompleteAsync(ex).ConfigureAwait(false);
+			try
+			{
+				if (this.connectionOwned)
+				{
+#pragma warning disable VSTHRD003 // The owning connection allows input completion after its diagnostic flush attempt.
+					await this.inputCompletionAllowed.Task.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+				}
+
+				await reader.CompleteAsync(this.connectionOwned ? null : failure).ConfigureAwait(false);
+			}
+			catch (Exception ex)
+			{
+				this.Logger.LogError(ex, "JSON-RPC input cleanup failed; retaining the original transport cause.");
+			}
 		}
 	}
 
 	private async Task HandleOutboundMessagesAsync(PipeWriter writer, CancellationToken cancellationToken)
 	{
 		Requires.NotNull(writer);
+		Exception? failure = null;
 		try
 		{
 #pragma warning disable VSTHRD003 // Waiting for this channel's own transport initialization gate.
 			await this.transportReady.Task.ConfigureAwait(false);
 #pragma warning restore VSTHRD003
-			while (!this.outboundMessageReader.Completion.IsCompleted)
+			while (await this.outboundMessageReader.WaitToReadAsync(CancellationToken.None).ConfigureAwait(false))
 			{
-				// Reading without a token lets the channel reuse its cached read operation; disposal completes the queue instead.
-				JsonRpcMessage message = await this.outboundMessageReader.ReadAsync(CancellationToken.None).ConfigureAwait(false);
-				cancellationToken.ThrowIfCancellationRequested();
-				await this.SendMessageAsync(writer, message, cancellationToken).ConfigureAwait(false);
-				await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
-				this.Logger.Log(LogLevel.Information, MessageSent, message, null, FormatLoggedMessage);
-			}
+				while (this.outboundMessageReader.TryRead(out JsonRpcMessage? message))
+				{
+					if (cancellationToken.IsCancellationRequested || (this.finalizing && !ReferenceEquals(message, this.finalNotification)))
+					{
+						ReleaseSingleUsePayload(message);
+						continue;
+					}
 
-			await writer.CompleteAsync().ConfigureAwait(false);
+					try
+					{
+						await this.SendMessageAsync(writer, message, cancellationToken).ConfigureAwait(false);
+						FlushResult flush = await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+						if (flush.IsCanceled)
+						{
+							throw new OperationCanceledException("JSON-RPC output flush was canceled.", cancellationToken);
+						}
+
+						if (flush.IsCompleted)
+						{
+							throw new EndOfStreamException("The JSON-RPC peer stopped reading output.");
+						}
+
+						this.Logger.Log(LogLevel.Information, MessageSent, message, null, FormatLoggedMessage);
+						if (ReferenceEquals(message, this.finalNotification))
+						{
+							this.finalNotificationFlushed.TrySetResult(true);
+						}
+					}
+					catch
+					{
+						ReleaseSingleUsePayload(message);
+						throw;
+					}
+				}
+			}
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
 		}
 		catch (Exception ex)
 		{
-			this.Logger.LogError(ex, "JSON-RPC outbound transport failed.");
+			failure = ex;
+			this.Logger.LogError(ex, "JSON-RPC outbound transport failed; encoding: {Encoding}.", this.Encoding);
 			this.inboundMessageWriter.TryComplete(ex);
 			this.Writer.TryComplete(ex);
-#if NET
-			await this.disposalSource.CancelAsync().ConfigureAwait(false);
-#else
-			this.disposalSource.Cancel();
-#endif
-			await writer.CompleteAsync(ex).ConfigureAwait(false);
+			this.outboundMessageWriter.TryComplete(ex);
+			this.outboundFailure = ex;
+			this.finalNotificationFlushed.TrySetResult(false);
+			try
+			{
+				this.AbortInbound(new CancellationToken(canceled: true));
+			}
+			catch (Exception cleanupException)
+			{
+				this.Logger.LogError(cleanupException, "JSON-RPC input cancellation failed; retaining the original output cause.");
+			}
+		}
+		finally
+		{
+			while (this.outboundMessageReader.TryRead(out JsonRpcMessage? abandoned))
+			{
+				ReleaseSingleUsePayload(abandoned);
+			}
+
+			try
+			{
+				await writer.CompleteAsync(failure).ConfigureAwait(false);
+			}
+			catch (Exception ex)
+			{
+				this.Logger.LogError(ex, "JSON-RPC output cleanup failed; retaining the original transport cause.");
+			}
 		}
 	}
 }
