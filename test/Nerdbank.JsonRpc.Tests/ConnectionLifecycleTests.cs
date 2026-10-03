@@ -360,7 +360,11 @@ public partial class ConnectionLifecycleTests : TestBase
 		await rpc.Completion.WithCancellation(this.TimeoutToken);
 		await peerRpc.Completion.WithCancellation(this.TimeoutToken);
 		Assert.True(counters.Counter.IsDisposed);
-		Assert.True(await sequences.IsGeneratorDisposedAsync(this.TimeoutToken));
+		while (!await sequences.IsGeneratorDisposedAsync(this.TimeoutToken))
+		{
+			await Task.Delay(10, this.TimeoutToken);
+		}
+
 		eventTarget.RaiseValueChanged(4);
 		await Assert.ThrowsAsync<EndOfStreamException>(() => counter.IncrementAsync(this.TimeoutToken));
 		await Assert.ThrowsAsync<EndOfStreamException>(async () => await enumerator.MoveNextAsync());

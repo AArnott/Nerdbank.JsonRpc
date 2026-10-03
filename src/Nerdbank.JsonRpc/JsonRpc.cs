@@ -1305,7 +1305,16 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 		if (responses.Count > 0)
 		{
-			await this.PostMessageAsync(new JsonRpcMessageBatch([.. responses])).ConfigureAwait(false);
+			JsonRpcMessageBatch batch = new([.. responses]);
+			try
+			{
+				await this.PostMessageAsync(batch).ConfigureAwait(false);
+			}
+			catch
+			{
+				this.ReleaseResponseResources(batch);
+				throw;
+			}
 		}
 	}
 
@@ -1314,18 +1323,48 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <returns>A task that never faults.</returns>
 	private async Task ProcessRequestAsync(JsonRpcRequest request)
 	{
+		JsonRpcResponse? response = null;
 		try
 		{
-			JsonRpcResponse? response = await this.DispatchAsync(request).ConfigureAwait(false);
+			response = await this.DispatchAsync(request).ConfigureAwait(false);
 			if (response is not null)
 			{
 				await this.PostMessageAsync(response).ConfigureAwait(false);
 			}
 		}
-		catch (Exception ex) when (ex is not OperationCanceledException)
+		catch (Exception ex)
 		{
-			// Protocol rejections retain their type so shutdown can send the final diagnostic.
-			this.Fault(ex is ProtocolViolationException ? ex : new AggregateException(ex));
+			if (response is not null)
+			{
+				this.ReleaseResponseResources(response);
+			}
+
+			if (ex is not OperationCanceledException)
+			{
+				// Protocol rejections retain their type so shutdown can send the final diagnostic.
+				this.Fault(ex is ProtocolViolationException ? ex : new AggregateException(ex));
+			}
+		}
+	}
+
+	private void ReleaseResponseResources(JsonRpcMessage message)
+	{
+		switch (message)
+		{
+			case JsonRpcResult result:
+				JsonRpcValue value = result.Result;
+				this.CleanupStep(() => this.marshaledObjects.ReleaseLocalObjects(value));
+				this.CleanupStep(() => this.outOfBandStreams.ReleaseChannels(value));
+				this.CleanupStep(() => this.asyncEnumerables.ReleaseGenerators(value));
+				this.CleanupStep(value.ReleaseIfSingleUse);
+				break;
+			case JsonRpcMessageBatch batch:
+				foreach (JsonRpcMessage entry in batch.Messages)
+				{
+					this.ReleaseResponseResources(entry);
+				}
+
+				break;
 		}
 	}
 

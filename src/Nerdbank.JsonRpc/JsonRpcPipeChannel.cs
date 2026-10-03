@@ -144,6 +144,8 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, System.IAsyn
 		switch (message)
 		{
 			case JsonRpcRequest request:
+				request.SplitArguments.Return();
+				request.SplitArguments = default;
 				request.Arguments.Release();
 				break;
 			case JsonRpcResult result:
