@@ -157,6 +157,8 @@ internal sealed class OutOfBandStreamManager : IDisposable
 		}
 	}
 
+	/// <summary>Releases the channels attached to a value whose response could not be sent.</summary>
+	/// <param name="value">The value containing the channels to release.</param>
 	internal void ReleaseChannels(JsonRpcValue value) => value.OutOfBandChannels?.Dispose();
 
 	internal void EnsureNoOutOfBandChannels(JsonRpcValue arguments)
