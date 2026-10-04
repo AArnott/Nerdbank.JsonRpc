@@ -40,4 +40,4 @@ These limits do not stop a peer from making many valid but expensive requests. T
 
 ## Error details
 
-When an RPC method throws an exception, the peer receives only a generic error ("The request could not be completed."). The exception details are not sent. Set <xref:Nerdbank.JsonRpc.JsonRpc.Logger> to record them locally instead. One case differs: the message of an exception thrown while producing items for an <xref:System.Collections.Generic.IAsyncEnumerable`1> result is currently sent to the peer. This includes cancellation exception messages, so avoid putting sensitive information in those messages.
+By default, a thrown exception's bounded diagnostic details are included in the JSON-RPC error response. This may disclose messages and stack traces to the peer, so set <xref:Nerdbank.JsonRpc.JsonRpcOptions.IncludeExceptionDetails?displayProperty=nameWithType> to `false` when a connection is not trusted to receive them. Full exceptions are logged locally regardless of this setting. The diagnostic type name is never used to activate an arbitrary type; see [Error handling](error-handling.md) for the wire schema, safe reconstruction rules, and client examples.

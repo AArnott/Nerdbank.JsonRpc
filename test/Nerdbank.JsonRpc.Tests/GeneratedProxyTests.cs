@@ -270,7 +270,7 @@ public class GeneratedProxyTests
 		await clientRpc.NotifyAsync("$/releaseMarshaledObject", marker, ShapeProvider.Default.MarshaledObjectMarker, CancellationToken.None);
 		await target.Counter.Disposed.Task;
 
-		JsonRpcException exception = await Assert.ThrowsAsync<JsonRpcException>(() => clientRpc.RequestAsync(incrementMethod, CreateEmptyArguments(clientRpc), ShapeProvider.Default.Int32, CancellationToken.None).AsTask());
+		RemoteInvocationException exception = await Assert.ThrowsAsync<RemoteInvocationException>(() => clientRpc.RequestAsync(incrementMethod, CreateEmptyArguments(clientRpc), ShapeProvider.Default.Int32, CancellationToken.None).AsTask());
 		Assert.Equal(JsonRpcErrorCode.NoMarshaledObjectFound, exception.ErrorDetails.Code);
 	}
 
@@ -312,9 +312,9 @@ public class GeneratedProxyTests
 		clientRpc.Start();
 		IRemoteCounterService client = clientRpc.Attach<IRemoteCounterService>();
 
-		await Assert.ThrowsAsync<JsonRpcException>(() => client.ReturnCallScopedCounterAsync(cts.Token));
+		await Assert.ThrowsAsync<RemoteInvocationException>(() => client.ReturnCallScopedCounterAsync(cts.Token));
 		CallScopedCounter localCounter = new();
-		await Assert.ThrowsAsync<JsonRpcException>(() => client.EchoCallScopedCounterAsync(localCounter, cts.Token));
+		await Assert.ThrowsAsync<RemoteInvocationException>(() => client.EchoCallScopedCounterAsync(localCounter, cts.Token));
 	}
 
 	[Test]
@@ -333,7 +333,7 @@ public class GeneratedProxyTests
 		IRemoteCounterService client = clientRpc.Attach<IRemoteCounterService>();
 		RemoteCounter localCounter = new();
 
-		await Assert.ThrowsAsync<JsonRpcException>(() => client.FailAfterReceivingAsync(localCounter, cts.Token));
+		await Assert.ThrowsAsync<RemoteInvocationException>(() => client.FailAfterReceivingAsync(localCounter, cts.Token));
 
 		Assert.True(localCounter.IsDisposed);
 		Assert.NotNull(target.LastExplicitProxy);

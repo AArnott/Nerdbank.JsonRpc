@@ -78,6 +78,14 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 	public override JsonRpcSerializer Serializer { get; }
 
 	/// <inheritdoc/>
+	internal override int GetEncodedMessageSize(JsonRpcMessage message)
+	{
+		using Sequence<byte> buffer = new();
+		this.messagePackSerializer.Serialize(buffer, new JsonRpcMessagePackEnvelope(message), CancellationToken.None);
+		return checked((int)buffer.Length);
+	}
+
+	/// <inheritdoc/>
 	protected override async IAsyncEnumerable<JsonRpcMessage> ReceiveMessagesAsync(PipeReader reader, [EnumeratorCancellation] CancellationToken cancellationToken)
 	{
 		Requires.NotNull(reader);

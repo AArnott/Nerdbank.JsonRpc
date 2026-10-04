@@ -14,6 +14,8 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 
 	internal TaskCompletionSource<bool> ReleaseUncooperativeOperation { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+	internal TaskCompletionSource<bool> FailingGeneratorDisposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
 	/// <summary>Gets the callback retained by the last sequence-producing call.</summary>
 	internal ICallScopedCounter? LastCounter { get; private set; }
 
@@ -37,7 +39,7 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 		=> new[] { "alpha", "beta", "gamma" }.AsAsyncEnumerable();
 
 	public IAsyncEnumerable<int> GetFailingSequenceAsync(int valuesBeforeFailure, CancellationToken cancellationToken)
-		=> FailAsync(valuesBeforeFailure, cancellationToken);
+		=> this.FailAsync(valuesBeforeFailure, cancellationToken);
 
 	public IAsyncEnumerable<IAsyncEnumerable<int>> GetNestedSequencesAsync(CancellationToken cancellationToken)
 		=> ProduceNestedAsync(cancellationToken);
@@ -125,23 +127,30 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 		}
 	}
 
-	private static async IAsyncEnumerable<int> FailAsync(int valuesBeforeFailure, [EnumeratorCancellation] CancellationToken cancellationToken = default)
-	{
-		for (int i = 0; i < valuesBeforeFailure; i++)
-		{
-			await Task.Yield();
-			yield return i;
-		}
-
-		throw new InvalidOperationException("The sequence failed as requested.");
-	}
-
 	private static async IAsyncEnumerable<IAsyncEnumerable<int>> ProduceNestedAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
 	{
 		for (int i = 0; i < 2; i++)
 		{
 			await Task.Yield();
 			yield return Enumerable.Range(i * 10, 3).AsAsyncEnumerable();
+		}
+	}
+
+	private async IAsyncEnumerable<int> FailAsync(int valuesBeforeFailure, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+	{
+		try
+		{
+			for (int i = 0; i < valuesBeforeFailure; i++)
+			{
+				await Task.Yield();
+				yield return i;
+			}
+
+			throw new InvalidOperationException("The sequence failed as requested.");
+		}
+		finally
+		{
+			this.FailingGeneratorDisposed.TrySetResult(true);
 		}
 	}
 

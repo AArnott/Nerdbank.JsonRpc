@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -640,10 +640,11 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		}
 		catch (OperationCanceledException ex) when (dispatch.CancellationToken.IsCancellationRequested)
 		{
+			owner.LogApplicationError(ex);
 			return new DispatchResponse
 			{
 				Response = id is RequestId cancelledId
-					? new JsonRpcError { Id = cancelledId, Error = new() { Code = JsonRpcErrorCode.RequestCancelled, Message = ex.Message } }
+					? new JsonRpcError { Id = cancelledId, Error = owner.CreateApplicationError(ex, JsonRpcErrorCode.RequestCancelled) }
 					: null,
 				IsError = true,
 			};
@@ -654,7 +655,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			return new DispatchResponse
 			{
 				Response = id is RequestId errorId
-					? new JsonRpcError { Id = errorId, Error = new() { Code = JsonRpcErrorCode.InternalError, Message = ex.Message } }
+					? new JsonRpcError { Id = errorId, Error = owner.CreateApplicationError(ex, JsonRpcErrorCode.InternalError) }
 					: null,
 				IsError = true,
 			};

@@ -17,5 +17,7 @@ items:
   href: batching.md
 - name: Protocol behavior
   href: protocol-behavior.md
+- name: Error handling
+  href: error-handling.md
 - name: Security considerations
   href: security.md

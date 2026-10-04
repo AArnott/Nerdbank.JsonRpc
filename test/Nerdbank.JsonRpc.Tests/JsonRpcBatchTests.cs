@@ -44,7 +44,7 @@ public partial class JsonRpcBatchTests : TestBase
 		await channel.Writer.WriteAsync(responseBatch, this.TimeoutToken);
 
 		Assert.Equal(5, await sumTask.WithCancellation(this.TimeoutToken));
-		JsonRpcException ex = await Assert.ThrowsAsync<JsonRpcException>(() => voidTask.WithCancellation(this.TimeoutToken));
+		RemoteInvocationException ex = await Assert.ThrowsAsync<RemoteInvocationException>(() => voidTask.WithCancellation(this.TimeoutToken));
 		Assert.Equal(JsonRpcErrorCode.InternalError, ex.ErrorDetails.Code);
 	}
 

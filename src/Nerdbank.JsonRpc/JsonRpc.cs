@@ -76,13 +76,20 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private Task? readerTask;
 	private int nextRequestId;
 
-	/// <summary>
-	/// Initializes a new instance of the <see cref="JsonRpc"/> class over a pipe channel.
-	/// </summary>
+	/// <summary>Initializes a new instance of the <see cref="JsonRpc"/> class over a pipe channel.</summary>
 	/// <param name="channel">The channel used to exchange messages.</param>
 	public JsonRpc(JsonRpcPipeChannel channel)
+		: this(channel, options: null)
+	{
+	}
+
+	/// <summary>Initializes a new instance of the <see cref="JsonRpc"/> class over a pipe channel.</summary>
+	/// <param name="channel">The channel used to exchange messages.</param>
+	/// <param name="options">The immutable configuration, which may be shared by other connections, or <see langword="null"/> to use the default options.</param>
+	public JsonRpc(JsonRpcPipeChannel channel, JsonRpcOptions? options)
 	{
 		this.channel = channel ?? throw new ArgumentNullException(nameof(channel));
+		this.Options = options ?? JsonRpcOptions.Default;
 		JsonRpcSerializer serializer = channel.Serializer ?? throw new ArgumentException("The channel must supply a serializer.", nameof(channel));
 		if (channel.Encoding != serializer.Encoding)
 		{
@@ -105,6 +112,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <summary>Gets the activity source used to create JSON-RPC client and server activities.</summary>
 	/// <remarks>Subscribe to this source with <see cref="ActivityListener"/> or an OpenTelemetry tracer provider.</remarks>
 	public static ActivitySource ActivitySource => JsonRpcTracing.ActivitySource;
+
+	/// <summary>Gets the immutable options used to configure this connection.</summary>
+	public JsonRpcOptions Options { get; }
 
 	/// <summary>Gets or initializes the maximum encoded message size, in bytes.</summary>
 	/// <value>Defaults to 8 MiB. The built-in JSON and MessagePack channels apply this limit to received messages; the JSON channel also applies it to sent messages.</value>
@@ -690,6 +700,42 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	internal void LogApplicationError(Exception exception) => this.Logger.LogWarning(exception, "JSON-RPC request processing failed.");
 
+	/// <summary>Creates a peer-visible application error, optionally including bounded exception diagnostics.</summary>
+	/// <param name="exception">The application exception.</param>
+	/// <param name="code">The JSON-RPC error code.</param>
+	/// <returns>The error details to send to the peer.</returns>
+	internal JsonRpcErrorDetails CreateApplicationError(Exception exception, long code)
+	{
+		JsonRpcValue? encodedData = null;
+		RemoteExceptionData? data = null;
+		if (this.Options.IncludeExceptionDetails)
+		{
+			try
+			{
+				data = RemoteExceptionData.Capture(exception, this.channel.Serializer, this.Options.AdditionalExceptionTypes, this.LogApplicationError);
+				encodedData = data.Encode(this.userDataSerializer.Encoding);
+			}
+			catch (Exception ex) when (ex is not OutOfMemoryException and not AccessViolationException)
+			{
+				this.LogApplicationError(ex);
+				data = null;
+			}
+		}
+
+		return new JsonRpcErrorDetails
+		{
+			Code = code,
+			Message = data?.Message ?? (code == JsonRpcErrorCode.RequestCancelled ? "The request was canceled." : "The request could not be completed."),
+			Data = encodedData,
+		};
+	}
+
+	/// <summary>Creates the consistent local wrapper for an error response received from a peer.</summary>
+	/// <param name="details">The remote error details.</param>
+	/// <returns>The remote invocation exception.</returns>
+	internal RemoteInvocationException CreateRemoteInvocationException(JsonRpcErrorDetails details)
+		=> RemoteInvocationException.Create(details, this.channel.Serializer, this.Options.AdditionalExceptionTypes, ex => this.Logger.LogWarning(ex, "Failed to process remote exception details."));
+
 	/// <summary>Stamps an outbound request with the ambient <see cref="JoinableTask"/> token, if any.</summary>
 	/// <param name="request">A request that expects a response.</param>
 	internal void ApplyJoinableTaskToken(JsonRpcRequest request)
@@ -756,6 +802,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	{
 		this.ThrowIfClosed();
 		JsonRpcTracing.ApplyTraceContext(message);
+		message = FitErrorResponsesToMessageSize(this, message);
 		this.channel.Serializer.ValidateMessage(message);
 		ValueTask write = this.channel.Writer.WriteAsync(message, cancellationToken);
 		return write.IsCompletedSuccessfully ? write : this.ObserveWriteAsync(write);
@@ -799,7 +846,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 					return;
 				case JsonRpcError error:
 					this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
-					throw CreateResponseException(error.Error, cancellationToken);
+					throw CreateResponseException(this, error.Error, cancellationToken);
 				default:
 					throw new InvalidOperationException("Received an unknown response type.");
 			}
@@ -851,7 +898,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 				case JsonRpcError error:
 					this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
-					throw CreateResponseException(error.Error, cancellationToken);
+					throw CreateResponseException(this, error.Error, cancellationToken);
 				default:
 					throw new InvalidOperationException("Received an unknown response type.");
 			}
@@ -886,7 +933,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			return response switch
 			{
 				JsonRpcResult result => result.Result,
-				JsonRpcError error => throw CreateResponseException(error.Error, cancellationToken),
+				JsonRpcError error => throw CreateResponseException(this, error.Error, cancellationToken),
 				_ => throw new InvalidOperationException("Received an unknown response type."),
 			};
 		}
@@ -915,6 +962,70 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		return serialized.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithOutOfBandChannels(outOfBandChannels).WithAsyncEnumerableTokens(asyncEnumerableScope.Commit());
 	}
 
+	private static JsonRpcMessage FitErrorResponsesToMessageSize(JsonRpc owner, JsonRpcMessage message)
+	{
+		if (!ContainsDetailedError(message))
+		{
+			return message;
+		}
+
+		try
+		{
+			int encodedSize = owner.channel.GetEncodedMessageSize(message);
+			if (encodedSize < 0 || encodedSize <= owner.channel.GetMaximumMessageSize())
+			{
+				return message;
+			}
+		}
+		catch (Exception ex) when (ex is not OutOfMemoryException and not AccessViolationException)
+		{
+			owner.LogApplicationError(ex);
+		}
+
+		return RemoveErrorDetails(message);
+	}
+
+	private static bool ContainsDetailedError(JsonRpcMessage message)
+		=> message switch
+		{
+			JsonRpcError error => error.Error.Data.HasValue,
+			JsonRpcMessageBatch batch => batch.Messages.Any(ContainsDetailedError),
+			_ => false,
+		};
+
+	private static JsonRpcMessage RemoveErrorDetails(JsonRpcMessage message)
+	{
+		if (message is JsonRpcError error && error.Error.Data.HasValue)
+		{
+			return CreateGenericError(error);
+		}
+
+		if (message is JsonRpcMessageBatch batch)
+		{
+			System.Collections.Immutable.ImmutableArray<JsonRpcMessage>.Builder messages = System.Collections.Immutable.ImmutableArray.CreateBuilder<JsonRpcMessage>(batch.Messages.Length);
+			foreach (JsonRpcMessage item in batch.Messages)
+			{
+				messages.Add(RemoveErrorDetails(item));
+			}
+
+			return new JsonRpcMessageBatch(messages.MoveToImmutable()) { TopLevelProperties = batch.TopLevelProperties };
+		}
+
+		return message;
+	}
+
+	private static JsonRpcError CreateGenericError(JsonRpcError error)
+		=> new()
+		{
+			Id = error.Id,
+			Error = new JsonRpcErrorDetails
+			{
+				Code = error.Error.Code,
+				Message = error.Error.Code == JsonRpcErrorCode.RequestCancelled ? "The request was canceled." : "The request could not be completed.",
+			},
+			TopLevelProperties = error.TopLevelProperties,
+		};
+
 	private static CancellationToken GetCanceledToken(CancellationToken cancellationToken)
 		=> cancellationToken.IsCancellationRequested ? cancellationToken : CancellationToken.None;
 
@@ -928,14 +1039,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		return new OperationCanceledException(exception.Message, exception, GetCanceledToken(cancellationToken));
 	}
 
-	private static Exception CreateResponseException(JsonRpcErrorDetails error, CancellationToken cancellationToken)
-	{
-		JsonRpcException remoteError = new(error);
-		return error.Code == JsonRpcErrorCode.RequestCancelled
-			? CreateRemoteCancellationException(remoteError, cancellationToken)
-			: remoteError;
-	}
-
 	private static OperationCanceledException CreateRemoteCancellationException(JsonRpcException remoteError, CancellationToken cancellationToken)
 	{
 		CancellationToken canceledToken = GetCanceledToken(cancellationToken);
@@ -943,6 +1046,14 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			? remoteError.Message
 			: "The remote party canceled processing the request without the caller requesting cancellation.";
 		return new OperationCanceledException(message, remoteError, canceledToken);
+	}
+
+	private static Exception CreateResponseException(JsonRpc jsonRpc, JsonRpcErrorDetails error, CancellationToken cancellationToken)
+	{
+		RemoteInvocationException remoteError = jsonRpc.CreateRemoteInvocationException(error);
+		return error.Code == JsonRpcErrorCode.RequestCancelled
+			? CreateRemoteCancellationException(remoteError, cancellationToken)
+			: remoteError;
 	}
 
 	private static void ReleaseReceivedArguments(JsonRpcRequest request)

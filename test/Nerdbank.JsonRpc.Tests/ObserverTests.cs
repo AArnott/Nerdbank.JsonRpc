@@ -138,7 +138,7 @@ public partial class ObserverTests
 		IObserverService client = clientRpc.Attach<IObserverService>();
 		TestObserver observer = new();
 
-		await Assert.ThrowsAsync<JsonRpcException>(() => client.FailAfterReceivingAsync(observer, cts.Token));
+		await Assert.ThrowsAsync<RemoteInvocationException>(() => client.FailAfterReceivingAsync(observer, cts.Token));
 		Assert.NotNull(service.Subscriber);
 		Assert.Throws<ObjectDisposedException>(() => service.Subscriber.OnNext(1));
 		Assert.False(observer.Next.Task.IsCompleted);
