@@ -66,9 +66,9 @@ public class OutboundResponseTests : TestBase
 				}
 				else
 				{
-					JsonRpcException exception = typed
-						? await Assert.ThrowsAsync<JsonRpcException>(() => typedResponse.AsTask())
-						: await Assert.ThrowsAsync<JsonRpcException>(() => voidResponse.AsTask());
+					RemoteInvocationException exception = typed
+						? await Assert.ThrowsAsync<RemoteInvocationException>(() => typedResponse.AsTask())
+						: await Assert.ThrowsAsync<RemoteInvocationException>(() => voidResponse.AsTask());
 					Assert.Equal(code, exception.ErrorDetails.Code);
 				}
 			}
@@ -416,7 +416,7 @@ public class OutboundResponseTests : TestBase
 					Assert.Equal("The remote party canceled processing the request without the caller requesting cancellation.", exception.Message);
 				}
 
-				JsonRpcException remoteError = Assert.IsType<JsonRpcException>(exception.InnerException);
+				RemoteInvocationException remoteError = Assert.IsType<RemoteInvocationException>(exception.InnerException);
 				Assert.Equal(JsonRpcErrorCode.RequestCancelled, remoteError.ErrorDetails.Code);
 				Assert.Equal("peer cancellation reason", remoteError.Message);
 			}

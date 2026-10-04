@@ -114,7 +114,7 @@ public class CallScopedEnumerableTests : TestBase
 		Counter counter = new();
 		await using IAsyncEnumerator<int> enumerator = fixture.Client.UseCounterAsync(counter, 3, 0, 0, true, this.TimeoutToken).GetAsyncEnumerator(this.TimeoutToken);
 		Assert.True(await enumerator.MoveNextAsync());
-		await Assert.ThrowsAsync<JsonRpcException>(() => enumerator.MoveNextAsync().AsTask());
+		await Assert.ThrowsAsync<RemoteInvocationException>(() => enumerator.MoveNextAsync().AsTask());
 		Assert.Equal(2, counter.Count);
 		await this.AssertExpiredAsync(fixture, counter);
 	}
@@ -147,7 +147,7 @@ public class CallScopedEnumerableTests : TestBase
 		using Fixture fixture = new(encoding);
 		Counter counter = new();
 		IAsyncEnumerator<int> enumerator = fixture.Client.UseCounterAsync(counter, -1, 0, 0, false, this.TimeoutToken).GetAsyncEnumerator(this.TimeoutToken);
-		await Assert.ThrowsAsync<JsonRpcException>(() => enumerator.MoveNextAsync().AsTask());
+		await Assert.ThrowsAsync<RemoteInvocationException>(() => enumerator.MoveNextAsync().AsTask());
 		await this.AssertExpiredAsync(fixture, counter);
 	}
 
@@ -295,7 +295,7 @@ public class CallScopedEnumerableTests : TestBase
 			}
 		}
 
-		JsonRpcException exception = await Assert.ThrowsAsync<JsonRpcException>(() => fixture.ServerRpc.RequestAsync("useCallScopedCounter", reference, this.TimeoutToken).AsTask());
+		RemoteInvocationException exception = await Assert.ThrowsAsync<RemoteInvocationException>(() => fixture.ServerRpc.RequestAsync("useCallScopedCounter", reference, this.TimeoutToken).AsTask());
 		Assert.Equal(JsonRpcErrorCode.InvalidParams, exception.ErrorDetails.Code);
 		Assert.False(counter.IsDisposed);
 	}

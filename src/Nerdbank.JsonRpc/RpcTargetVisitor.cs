@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Runtime.CompilerServices;
@@ -216,7 +216,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 					return new DispatchResponse
 					{
 						Response = dispatch.Request.Id is RequestId id
-							? new JsonRpcError { Id = id, Error = new JsonRpcErrorDetails { Code = JsonRpcErrorCode.InvalidParams, Message = "Could not deserialize request parameters." } }
+							? new JsonRpcError { Id = id, Error = dispatch.JsonRpc.CreateApplicationError(ex, JsonRpcErrorCode.InvalidParams) }
 							: null,
 						IsError = true,
 					};
@@ -258,14 +258,11 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			}
 			catch (OperationCanceledException ex) when (dispatch.CancellationToken.IsCancellationRequested && dispatch.Request.Id is RequestId id)
 			{
+				dispatch.JsonRpc.LogApplicationError(ex);
 				response = new JsonRpcError
 				{
 					Id = id,
-					Error = new JsonRpcErrorDetails
-					{
-						Message = ex.Message,
-						Code = JsonRpcErrorCode.RequestCancelled,
-					},
+					Error = dispatch.JsonRpc.CreateApplicationError(ex, JsonRpcErrorCode.RequestCancelled),
 				};
 			}
 			catch (Exception ex)
@@ -277,11 +274,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 					response = new JsonRpcError
 					{
 						Id = id,
-						Error = new JsonRpcErrorDetails
-						{
-							Message = "The request could not be completed.",
-							Code = JsonRpcErrorCode.InternalError,
-						},
+						Error = dispatch.JsonRpc.CreateApplicationError(ex, JsonRpcErrorCode.InternalError),
 					};
 				}
 				else

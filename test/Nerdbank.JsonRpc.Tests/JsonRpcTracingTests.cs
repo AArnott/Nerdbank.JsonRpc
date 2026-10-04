@@ -62,7 +62,7 @@ public partial class JsonRpcTracingTests : TestBase
 		parent.Start();
 		expectedTraceId = parent.TraceId.ToString();
 		Assert.Equal("direct", await client.EchoAsync("direct", this.TimeoutToken));
-		await Assert.ThrowsAsync<JsonRpcException>(() => client.EchoAsync("fail", this.TimeoutToken));
+		await Assert.ThrowsAsync<RemoteInvocationException>(() => client.EchoAsync("fail", this.TimeoutToken));
 
 		using JsonRpcBatch batch = clientRpc.CreateBatch();
 		Task<string> batchedCall = batch.Attach<IEchoService>().EchoAsync("batch", this.TimeoutToken);

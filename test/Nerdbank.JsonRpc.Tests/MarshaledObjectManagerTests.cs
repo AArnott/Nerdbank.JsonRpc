@@ -37,7 +37,7 @@ public partial class MarshaledObjectManagerTests : TestBase
 		writer.Flush();
 		JsonRpcValue arguments = JsonRpcValue.FromMessagePack((RawMessagePack)bytes.AsReadOnlySequence.ToArray());
 
-		await Assert.ThrowsAsync<JsonRpcException>(() => clientRpc.RequestAsync("isSameCounter", arguments, CancellationToken.None).AsTask());
+		await Assert.ThrowsAsync<RemoteInvocationException>(() => clientRpc.RequestAsync("isSameCounter", arguments, CancellationToken.None).AsTask());
 	}
 
 	[Test]
@@ -51,7 +51,7 @@ public partial class MarshaledObjectManagerTests : TestBase
 		clientRpc.Start();
 		JsonRpcValue arguments = JsonRpcValue.FromJson("""[{"__jsonrpc_marshaled":1,"handle":1,"lifetime":null}]"""u8.ToArray());
 
-		await Assert.ThrowsAsync<JsonRpcException>(() => clientRpc.RequestAsync("isSameCounter", arguments, this.TimeoutToken).AsTask());
+		await Assert.ThrowsAsync<RemoteInvocationException>(() => clientRpc.RequestAsync("isSameCounter", arguments, this.TimeoutToken).AsTask());
 	}
 
 	[Test]

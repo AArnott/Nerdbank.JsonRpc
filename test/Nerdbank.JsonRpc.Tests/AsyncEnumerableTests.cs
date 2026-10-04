@@ -203,7 +203,7 @@ public partial class AsyncEnumerableTests
 		IAsyncEnumerable<int> sequence = fixture.Client.GetFailingSequenceAsync(2, CancellationToken.None);
 
 		List<int> received = [];
-		await Assert.ThrowsAsync<JsonRpcException>(async () =>
+		RemoteInvocationException exception = await Assert.ThrowsAsync<RemoteInvocationException>(async () =>
 		{
 			await foreach (int value in sequence)
 			{
@@ -211,6 +211,8 @@ public partial class AsyncEnumerableTests
 			}
 		});
 
+		Assert.Equal(typeof(InvalidOperationException).FullName, exception.RemoteException!.TypeName);
+		Assert.Equal("The sequence failed as requested.", exception.RemoteException.Message);
 		Assert.Equal(new[] { 0, 1 }, received);
 	}
 

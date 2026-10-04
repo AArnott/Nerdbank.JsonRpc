@@ -58,7 +58,7 @@ public class OwnerRevocationTests
 		Assert.Equal(1, serverRpc.RevokeMarshaledObject(target.Counter));
 		await barrier.PingAsync(CancellationToken.None);
 
-		JsonRpcException exception = await Assert.ThrowsAsync<JsonRpcException>(() => clientRpc.RequestAsync($"$/invokeProxy/{marker.Handle}/increment", CreateEmptyArguments(clientRpc), ShapeProvider.Default.Int32, CancellationToken.None).AsTask());
+		RemoteInvocationException exception = await Assert.ThrowsAsync<RemoteInvocationException>(() => clientRpc.RequestAsync($"$/invokeProxy/{marker.Handle}/increment", CreateEmptyArguments(clientRpc), ShapeProvider.Default.Int32, CancellationToken.None).AsTask());
 		Assert.Equal(JsonRpcErrorCode.NoMarshaledObjectFound, exception.ErrorDetails.Code);
 		Assert.False(target.Counter.IsDisposed);
 	}
