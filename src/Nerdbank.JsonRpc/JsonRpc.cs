@@ -713,15 +713,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			try
 			{
 				data = RemoteExceptionData.Capture(exception, this.channel.Serializer, this.Options.AdditionalExceptionTypes, this.LogApplicationError);
-				JsonRpcValue encoded = data.Encode(this.userDataSerializer.Encoding);
-				if (encoded.OwnedBytes.Length <= this.channel.GetMaximumMessageSize() / 2)
-				{
-					encodedData = encoded;
-				}
-				else
-				{
-					data = null;
-				}
+				encodedData = data.Encode(this.userDataSerializer.Encoding);
 			}
 			catch (Exception ex) when (ex is not OutOfMemoryException and not AccessViolationException)
 			{
@@ -810,6 +802,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	{
 		this.ThrowIfClosed();
 		JsonRpcTracing.ApplyTraceContext(message);
+		message = FitErrorResponsesToMessageSize(this, message);
 		this.channel.Serializer.ValidateMessage(message);
 		ValueTask write = this.channel.Writer.WriteAsync(message, cancellationToken);
 		return write.IsCompletedSuccessfully ? write : this.ObserveWriteAsync(write);
@@ -968,6 +961,70 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		this.outOfBandStreams.TrackActiveChannels(outOfBandChannels);
 		return serialized.WithMarshaledHandles(marshaledObjectsScope.Commit()).WithOutOfBandChannels(outOfBandChannels).WithAsyncEnumerableTokens(asyncEnumerableScope.Commit());
 	}
+
+	private static JsonRpcMessage FitErrorResponsesToMessageSize(JsonRpc owner, JsonRpcMessage message)
+	{
+		if (!ContainsDetailedError(message))
+		{
+			return message;
+		}
+
+		try
+		{
+			int encodedSize = owner.channel.GetEncodedMessageSize(message);
+			if (encodedSize < 0 || encodedSize <= owner.channel.GetMaximumMessageSize())
+			{
+				return message;
+			}
+		}
+		catch (Exception ex) when (ex is not OutOfMemoryException and not AccessViolationException)
+		{
+			owner.LogApplicationError(ex);
+		}
+
+		return RemoveErrorDetails(message);
+	}
+
+	private static bool ContainsDetailedError(JsonRpcMessage message)
+		=> message switch
+		{
+			JsonRpcError error => error.Error.Data.HasValue,
+			JsonRpcMessageBatch batch => batch.Messages.Any(ContainsDetailedError),
+			_ => false,
+		};
+
+	private static JsonRpcMessage RemoveErrorDetails(JsonRpcMessage message)
+	{
+		if (message is JsonRpcError error && error.Error.Data.HasValue)
+		{
+			return CreateGenericError(error);
+		}
+
+		if (message is JsonRpcMessageBatch batch)
+		{
+			System.Collections.Immutable.ImmutableArray<JsonRpcMessage>.Builder messages = System.Collections.Immutable.ImmutableArray.CreateBuilder<JsonRpcMessage>(batch.Messages.Length);
+			foreach (JsonRpcMessage item in batch.Messages)
+			{
+				messages.Add(RemoveErrorDetails(item));
+			}
+
+			return new JsonRpcMessageBatch(messages.MoveToImmutable()) { TopLevelProperties = batch.TopLevelProperties };
+		}
+
+		return message;
+	}
+
+	private static JsonRpcError CreateGenericError(JsonRpcError error)
+		=> new()
+		{
+			Id = error.Id,
+			Error = new JsonRpcErrorDetails
+			{
+				Code = error.Error.Code,
+				Message = error.Error.Code == JsonRpcErrorCode.RequestCancelled ? "The request was canceled." : "The request could not be completed.",
+			},
+			TopLevelProperties = error.TopLevelProperties,
+		};
 
 	private static CancellationToken GetCanceledToken(CancellationToken cancellationToken)
 		=> cancellationToken.IsCancellationRequested ? cancellationToken : CancellationToken.None;

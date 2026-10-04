@@ -185,6 +185,11 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, System.IAsyn
 	/// <returns>The maximum encoded message size in bytes.</returns>
 	internal int GetMaximumMessageSize() => this.maximumMessageSize;
 
+	/// <summary>Gets the exact encoded size of a complete message.</summary>
+	/// <param name="message">The complete message.</param>
+	/// <returns>The encoded size in bytes, or <c>-1</c> when this channel cannot measure it safely.</returns>
+	internal virtual int GetEncodedMessageSize(JsonRpcMessage message) => -1;
+
 	/// <summary>Gets the logger used by this channel.</summary>
 	/// <returns>The logger used for transport diagnostics.</returns>
 	internal ILogger GetLogger() => this.Logger;

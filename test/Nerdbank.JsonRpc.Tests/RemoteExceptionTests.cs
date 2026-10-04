@@ -4,6 +4,7 @@
 using System.IO.Pipelines;
 using Microsoft.Extensions.Logging;
 using Microsoft.VisualStudio.Threading;
+using Nerdbank.MessagePack;
 using Nerdbank.Streams;
 using PolyType;
 
@@ -78,6 +79,48 @@ public partial class RemoteExceptionTests : TestBase
 	[Test]
 	[Arguments(JsonRpcEncoding.Json)]
 	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task ReceivedTypedPayloads_UseSharedBudgetAndDepthLimit(JsonRpcEncoding encoding)
+	{
+		RemoteExceptionTypeMapping mapping = new();
+		mapping.Add<TextPayloadException>();
+		JsonRpcOptions options = new() { AdditionalExceptionTypes = mapping };
+		string firstPayload = new('x', 160 * 1024);
+		JsonRpcValue oversizedChildren = CreateTypedExceptionDiagnostics(encoding, firstPayload, new string('y', 160 * 1024), nestedPayloadDepth: 0);
+		RemoteInvocationException aggregateError = await ExchangePeerErrorAsync(encoding, oversizedChildren, options, this.TimeoutToken);
+		AggregateException aggregate = Assert.IsAssignableFrom<AggregateException>(aggregateError.InnerException);
+		Assert.IsType<TextPayloadException>(aggregate.InnerExceptions[0]);
+		Assert.IsNotType<TextPayloadException>(aggregate.InnerExceptions[1]);
+
+		JsonRpcValue deeplyNestedPayload = CreateTypedExceptionDiagnostics(encoding, string.Empty, null, nestedPayloadDepth: 25);
+		RemoteInvocationException deepError = await ExchangePeerErrorAsync(encoding, deeplyNestedPayload, options, this.TimeoutToken);
+		Assert.NotNull(deepError.InnerException);
+		Assert.IsNotType<TextPayloadException>(deepError.InnerException);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task CompleteErrorFrameSize_IncludesLargeEchoedId(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe rpcPipe, IDuplexPipe peerPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc server = new(CreateTestChannel(rpcPipe, encoding)) { MaximumMessageSize = 4096 };
+		server.AddRpcTarget(new FailingService(), new JsonRpcTargetOptions { MethodNameTransform = CommonMethodNameTransforms.Identity });
+		await using JsonRpcPipeChannel peer = CreateTestChannel(peerPipe, encoding);
+		server.Start();
+		peer.Start();
+
+		RequestId largeId = new(new string('i', 3900));
+		await peer.Writer.WriteAsync(new JsonRpcRequest { Id = largeId, Method = "Fail", Arguments = EmptyParameters(encoding) }, this.TimeoutToken);
+		JsonRpcError response = Assert.IsType<JsonRpcError>(await peer.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal(largeId, response.Id);
+		Assert.Equal("The request could not be completed.", response.Error.Message);
+		Assert.False(response.Error.Data.HasValue);
+		Assert.False(server.Completion.IsCompleted);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
 	public async Task OversizedDiagnostics_FallBackToGenericError(JsonRpcEncoding encoding)
 	{
 		using Fixture fixture = new(encoding, maximumMessageSize: 1024);
@@ -104,8 +147,10 @@ public partial class RemoteExceptionTests : TestBase
 		Assert.Null(exception.RemoteException);
 		Assert.Null(exception.InnerException);
 		Assert.False(exception.ErrorDetails.Data.HasValue);
-		Assert.Equal(1, logger.Exceptions.Count);
-		Assert.IsType<InvalidOperationException>(logger.Exceptions[0]);
+		InvalidOperationException loggedException = Assert.IsType<InvalidOperationException>(Assert.Single(logger.Exceptions));
+		Assert.Equal("The remote operation failed.", loggedException.Message);
+		Assert.Equal("Nested failure.", loggedException.InnerException?.Message);
+		Assert.NotNull(loggedException.StackTrace);
 	}
 
 	[Test]
@@ -125,7 +170,8 @@ public partial class RemoteExceptionTests : TestBase
 		Assert.Equal(JsonRpcErrorCode.RequestCancelled, remote.ErrorDetails.Code);
 		Assert.Equal("The request was canceled.", remote.Message);
 		Assert.False(remote.ErrorDetails.Data.HasValue);
-		Assert.IsAssignableFrom<OperationCanceledException>(Assert.Single(logger.Exceptions));
+		OperationCanceledException loggedException = Assert.IsAssignableFrom<OperationCanceledException>(Assert.Single(logger.Exceptions));
+		Assert.NotNull(loggedException.StackTrace);
 	}
 
 	[Test]
@@ -205,6 +251,114 @@ public partial class RemoteExceptionTests : TestBase
 		Assert.Same(mapping, options.AdditionalExceptionTypes);
 	}
 
+	private static JsonRpcPipeChannel CreateTestChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
+		=> encoding == JsonRpcEncoding.Json
+			? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
+			: new JsonRpcMessagePackChannel(pipe);
+
+	private static async Task<RemoteInvocationException> ExchangePeerErrorAsync(JsonRpcEncoding encoding, JsonRpcValue diagnostics, JsonRpcOptions clientOptions, CancellationToken cancellationToken)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe peerPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc client = new(CreateTestChannel(clientPipe, encoding), clientOptions);
+
+		await using JsonRpcPipeChannel peer = CreateTestChannel(peerPipe, encoding);
+		client.Start();
+		peer.Start();
+		Task requestTask = client.RequestAsync("unhandled", EmptyParameters(encoding), cancellationToken).AsTask();
+		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await peer.Reader.ReadAsync(cancellationToken));
+		JsonRpcError response = new()
+		{
+			Id = request.Id!.Value,
+			Error = new JsonRpcErrorDetails { Code = JsonRpcErrorCode.InternalError, Message = "remote failure", Data = diagnostics },
+		};
+		await peer.Writer.WriteAsync(response, cancellationToken);
+		return await Assert.ThrowsAsync<RemoteInvocationException>(() => requestTask.WithCancellation(cancellationToken));
+	}
+
+	private static JsonRpcValue CreateTypedExceptionDiagnostics(JsonRpcEncoding encoding, string firstPayload, string? secondPayload, int nestedPayloadDepth)
+	{
+		if (encoding == JsonRpcEncoding.Json)
+		{
+			string firstException = nestedPayloadDepth > 0 ? new string('[', nestedPayloadDepth) + "0" + new string(']', nestedPayloadDepth) : System.Text.Json.JsonSerializer.Serialize(firstPayload);
+			string exceptionTypeName = System.Text.Json.JsonSerializer.Serialize(typeof(TextPayloadException).FullName);
+			string children = "{\"type\":" + exceptionTypeName + ",\"message\":\"child\",\"exception\":" + firstException + "}";
+			if (secondPayload is not null)
+			{
+				children += ", {\"type\":" + exceptionTypeName + ",\"message\":\"child\",\"exception\":" + System.Text.Json.JsonSerializer.Serialize(secondPayload) + "}";
+			}
+
+			return JsonRpcValue.FromJson(System.Text.Encoding.UTF8.GetBytes("{\"type\":" + System.Text.Json.JsonSerializer.Serialize(typeof(AggregateException).FullName) + ",\"message\":\"root\",\"children\":[" + children + "]}"));
+		}
+
+		using Sequence<byte> buffer = new();
+		MessagePackWriter writer = new(buffer);
+		writer.WriteMapHeader(6);
+		writer.Write(0);
+		writer.Write(typeof(AggregateException).FullName);
+		writer.Write(1);
+		writer.Write("root");
+		writer.Write(2);
+		writer.WriteNil();
+		writer.Write(3);
+		writer.Write(0);
+		writer.Write(4);
+		writer.WriteNil();
+		writer.Write(5);
+		writer.WriteMapHeader(3);
+		writer.Write("parameterName");
+		writer.WriteNil();
+		writer.Write("children");
+		writer.WriteArrayHeader(secondPayload is null ? 1 : 2);
+		WriteMessagePackTypedException(ref writer, firstPayload, nestedPayloadDepth);
+		if (secondPayload is not null)
+		{
+			WriteMessagePackTypedException(ref writer, secondPayload, 0);
+		}
+
+		writer.Write("data");
+		writer.WriteMapHeader(0);
+		writer.Flush();
+		return JsonRpcValue.FromMessagePack((RawMessagePack)buffer.AsReadOnlySequence);
+	}
+
+	private static void WriteMessagePackTypedException(ref MessagePackWriter writer, string payload, int nestedPayloadDepth)
+	{
+		writer.WriteMapHeader(6);
+		writer.Write(0);
+		writer.Write(typeof(TextPayloadException).FullName);
+		writer.Write(1);
+		writer.Write("child");
+		writer.Write(2);
+		writer.WriteNil();
+		writer.Write(3);
+		writer.Write(0);
+		writer.Write(4);
+		writer.WriteNil();
+		writer.Write(5);
+		writer.WriteMapHeader(4);
+		writer.Write("parameterName");
+		writer.WriteNil();
+		writer.Write("children");
+		writer.WriteArrayHeader(0);
+		writer.Write("data");
+		writer.WriteMapHeader(0);
+		writer.Write("exception");
+		if (nestedPayloadDepth > 0)
+		{
+			writer.WriteArrayHeader(1);
+			for (int i = 1; i < nestedPayloadDepth; i++)
+			{
+				writer.WriteArrayHeader(1);
+			}
+
+			writer.Write(0);
+		}
+		else
+		{
+			writer.Write(payload);
+		}
+	}
+
 	private static JsonRpcValue EmptyParameters(JsonRpcEncoding encoding)
 		=> encoding == JsonRpcEncoding.Json
 			? JsonRpcValue.FromJson("[]"u8.ToArray())
@@ -229,6 +383,17 @@ public partial class RemoteExceptionTests : TestBase
 			public MappingException? Unmarshal(ExceptionData? value) => value is null ? null : new(value.Message, value.Quota);
 
 			public ExceptionData? Marshal(MappingException? value) => value is null ? null : new(value.Message, value.Quota);
+		}
+	}
+
+	[GenerateShape(Marshaler = typeof(Marshaler))]
+	internal sealed partial class TextPayloadException(string message) : Exception(message)
+	{
+		internal sealed class Marshaler : PolyType.IMarshaler<TextPayloadException, string?>
+		{
+			public TextPayloadException? Unmarshal(string? value) => value is null ? null : new(value);
+
+			public string? Marshal(TextPayloadException? value) => value?.Message;
 		}
 	}
 
@@ -280,8 +445,8 @@ public partial class RemoteExceptionTests : TestBase
 		internal Fixture(JsonRpcEncoding encoding, JsonRpcOptions? serverOptions = null, JsonRpcOptions? clientOptions = null, ILogger? serverLogger = null, int? maximumMessageSize = null)
 		{
 			(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
-			this.Client = new JsonRpc(CreateChannel(clientPipe, encoding), clientOptions ?? JsonRpcOptions.Default);
-			this.Server = new JsonRpc(CreateChannel(serverPipe, encoding), serverOptions ?? JsonRpcOptions.Default)
+			this.Client = new JsonRpc(CreateTestChannel(clientPipe, encoding), clientOptions ?? JsonRpcOptions.Default);
+			this.Server = new JsonRpc(CreateTestChannel(serverPipe, encoding), serverOptions ?? JsonRpcOptions.Default)
 			{
 				Logger = serverLogger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance,
 				MaximumMessageSize = maximumMessageSize ?? 8 * 1024 * 1024,
@@ -307,11 +472,6 @@ public partial class RemoteExceptionTests : TestBase
 			this.Client.Dispose();
 			this.Server.Dispose();
 		}
-
-		private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
-			=> encoding == JsonRpcEncoding.Json
-				? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
-				: new JsonRpcMessagePackChannel(pipe);
 	}
 
 	private sealed class RecordingLogger : ILogger

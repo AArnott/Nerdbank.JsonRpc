@@ -92,14 +92,16 @@ public sealed class RemoteExceptionData
 					{
 						using JsonDocument document = JsonDocument.Parse(value.OwnedBytes);
 						int remainingNodes = MaximumNodes;
-						return ReadJson(document.RootElement, 0, ref remainingNodes);
+						int remainingTypedExceptionBytes = MaximumTypedExceptionPayloadLength;
+						return ReadJson(document.RootElement, 0, ref remainingNodes, ref remainingTypedExceptionBytes);
 					}
 
 				case JsonRpcEncoding.MessagePack:
 					{
 						MessagePackReader reader = new(value.AsOwnedMessagePack());
 						int remainingNodes = MaximumNodes;
-						return ReadMessagePack(ref reader, 0, ref remainingNodes);
+						int remainingTypedExceptionBytes = MaximumTypedExceptionPayloadLength;
+						return ReadMessagePack(ref reader, 0, ref remainingNodes, ref remainingTypedExceptionBytes);
 					}
 			}
 		}
@@ -283,11 +285,43 @@ public sealed class RemoteExceptionData
 		return new RemoteExceptionData(typeName, message, exception.HResult, stackTrace, parameterName, inner, children.AsReadOnly(), new ReadOnlyDictionary<string, string>(data), typedException);
 	}
 
+	private static bool IsMessagePackPayloadWithinDepth(RawMessagePack payload)
+	{
+		MessagePackReader reader = new(payload.MsgPack);
+		SerializationContext context = new();
+		return SkipMessagePackWithinDepth(ref reader, 0, context) && reader.End;
+	}
+
+	private static bool SkipMessagePackWithinDepth(ref MessagePackReader reader, int depth, SerializationContext context)
+	{
+		if (reader.NextMessagePackType is MessagePackType.Array or MessagePackType.Map)
+		{
+			if (depth >= MaximumTypedExceptionDepth)
+			{
+				return false;
+			}
+
+			int count = reader.NextMessagePackType == MessagePackType.Array ? reader.ReadArrayHeader() : checked(reader.ReadMapHeader() * 2);
+			for (int i = 0; i < count; i++)
+			{
+				if (!SkipMessagePackWithinDepth(ref reader, depth + 1, context))
+				{
+					return false;
+				}
+			}
+
+			return true;
+		}
+
+		reader.Skip(context);
+		return true;
+	}
+
 	private static bool IsTypedPayloadWithinDepth(JsonRpcValue value)
 	{
-		if (value.Encoding != JsonRpcEncoding.Json)
+		if (value.Encoding == JsonRpcEncoding.MessagePack)
 		{
-			return true;
+			return IsMessagePackPayloadWithinDepth(value.AsOwnedMessagePack());
 		}
 
 		try
@@ -301,7 +335,7 @@ public sealed class RemoteExceptionData
 		}
 	}
 
-	private static RemoteExceptionData ReadJson(JsonElement element, int depth, ref int remainingNodes)
+	private static RemoteExceptionData ReadJson(JsonElement element, int depth, ref int remainingNodes, ref int remainingTypedExceptionBytes)
 	{
 		if (--remainingNodes < 0 || depth >= MaximumDepth || element.ValueKind != JsonValueKind.Object)
 		{
@@ -313,13 +347,13 @@ public sealed class RemoteExceptionData
 		string? stackTrace = GetOptionalString(element, "stack");
 		string? parameterName = GetOptionalString(element, "parameterName");
 		int hResult = element.TryGetProperty("code", out JsonElement codeElement) && codeElement.TryGetInt32(out int code) ? code : 0;
-		RemoteExceptionData? inner = element.TryGetProperty("inner", out JsonElement innerElement) && innerElement.ValueKind == JsonValueKind.Object ? ReadJson(innerElement, depth + 1, ref remainingNodes) : null;
+		RemoteExceptionData? inner = element.TryGetProperty("inner", out JsonElement innerElement) && innerElement.ValueKind == JsonValueKind.Object ? ReadJson(innerElement, depth + 1, ref remainingNodes, ref remainingTypedExceptionBytes) : null;
 		List<RemoteExceptionData> children = [];
 		if (element.TryGetProperty("children", out JsonElement childrenElement) && childrenElement.ValueKind == JsonValueKind.Array)
 		{
 			foreach (JsonElement child in childrenElement.EnumerateArray())
 			{
-				children.Add(ReadJson(child, depth + 1, ref remainingNodes));
+				children.Add(ReadJson(child, depth + 1, ref remainingNodes, ref remainingTypedExceptionBytes));
 			}
 		}
 
@@ -339,12 +373,17 @@ public sealed class RemoteExceptionData
 		if (element.TryGetProperty("exception", out JsonElement exceptionElement))
 		{
 			string rawException = exceptionElement.GetRawText();
-			if (rawException.Length <= MaximumTypedExceptionPayloadLength)
+			if (rawException.Length <= remainingTypedExceptionBytes)
 			{
 				byte[] rawExceptionBytes = Encoding.UTF8.GetBytes(rawException);
-				if (rawExceptionBytes.Length <= MaximumTypedExceptionPayloadLength)
+				if (rawExceptionBytes.Length <= remainingTypedExceptionBytes && IsTypedPayloadWithinDepth(JsonRpcValue.FromJson(rawExceptionBytes)))
 				{
 					typedException = JsonRpcValue.FromJson(rawExceptionBytes);
+					remainingTypedExceptionBytes -= rawExceptionBytes.Length;
+				}
+				else
+				{
+					remainingTypedExceptionBytes = 0;
 				}
 			}
 		}
@@ -352,7 +391,7 @@ public sealed class RemoteExceptionData
 		return new RemoteExceptionData(typeName, message, hResult, stackTrace, parameterName, inner, children.AsReadOnly(), new ReadOnlyDictionary<string, string>(data), typedException);
 	}
 
-	private static RemoteExceptionData ReadMessagePack(ref MessagePackReader reader, int depth, ref int remainingNodes)
+	private static RemoteExceptionData ReadMessagePack(ref MessagePackReader reader, int depth, ref int remainingNodes, ref int remainingTypedExceptionBytes)
 	{
 		if (--remainingNodes < 0 || depth >= MaximumDepth || reader.NextMessagePackType != MessagePackType.Map)
 		{
@@ -401,11 +440,11 @@ public sealed class RemoteExceptionData
 					}
 					else
 					{
-						inner = ReadMessagePack(ref reader, depth + 1, ref remainingNodes);
+						inner = ReadMessagePack(ref reader, depth + 1, ref remainingNodes, ref remainingTypedExceptionBytes);
 					}
 
 					break;
-				case 5: ReadMessagePackExtension(ref reader, depth, ref remainingNodes, children, data, ref parameterName, ref typedException, context); break;
+				case 5: ReadMessagePackExtension(ref reader, depth, ref remainingNodes, ref remainingTypedExceptionBytes, children, data, ref parameterName, ref typedException, context); break;
 				default: reader.Skip(context); break;
 			}
 		}
@@ -413,7 +452,7 @@ public sealed class RemoteExceptionData
 		return new RemoteExceptionData(typeName, message, hResult, stackTrace, parameterName, inner, children.AsReadOnly(), new ReadOnlyDictionary<string, string>(data), typedException);
 	}
 
-	private static void ReadMessagePackExtension(ref MessagePackReader reader, int depth, ref int remainingNodes, List<RemoteExceptionData> children, Dictionary<string, string> data, ref string? parameterName, ref JsonRpcValue? typedException, SerializationContext context)
+	private static void ReadMessagePackExtension(ref MessagePackReader reader, int depth, ref int remainingNodes, ref int remainingTypedExceptionBytes, List<RemoteExceptionData> children, Dictionary<string, string> data, ref string? parameterName, ref JsonRpcValue? typedException, SerializationContext context)
 	{
 		if (reader.NextMessagePackType != MessagePackType.Map)
 		{
@@ -434,15 +473,20 @@ public sealed class RemoteExceptionData
 				int childCount = reader.ReadArrayHeader();
 				for (int j = 0; j < childCount; j++)
 				{
-					children.Add(ReadMessagePack(ref reader, depth + 1, ref remainingNodes));
+					children.Add(ReadMessagePack(ref reader, depth + 1, ref remainingNodes, ref remainingTypedExceptionBytes));
 				}
 			}
 			else if (key == "exception")
 			{
 				RawMessagePack rawException = reader.ReadRaw(context);
-				if (rawException.MsgPack.Length <= MaximumTypedExceptionPayloadLength)
+				if (rawException.MsgPack.Length <= remainingTypedExceptionBytes && IsMessagePackPayloadWithinDepth(rawException))
 				{
 					typedException = JsonRpcValue.FromMessagePack(rawException);
+					remainingTypedExceptionBytes -= checked((int)rawException.MsgPack.Length);
+				}
+				else
+				{
+					remainingTypedExceptionBytes = 0;
 				}
 			}
 			else if (key == "data" && reader.NextMessagePackType == MessagePackType.Map)
