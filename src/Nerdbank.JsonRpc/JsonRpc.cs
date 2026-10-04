@@ -706,12 +706,35 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <returns>The error details to send to the peer.</returns>
 	internal JsonRpcErrorDetails CreateApplicationError(Exception exception, long code)
 	{
-		RemoteExceptionData? data = this.Options.IncludeExceptionDetails ? RemoteExceptionData.Capture(exception, this.channel.Serializer, this.Options.AdditionalExceptionTypes, this.LogApplicationError) : null;
+		JsonRpcValue? encodedData = null;
+		RemoteExceptionData? data = null;
+		if (this.Options.IncludeExceptionDetails)
+		{
+			try
+			{
+				data = RemoteExceptionData.Capture(exception, this.channel.Serializer, this.Options.AdditionalExceptionTypes, this.LogApplicationError);
+				JsonRpcValue encoded = data.Encode(this.userDataSerializer.Encoding);
+				if (encoded.OwnedBytes.Length <= this.channel.GetMaximumMessageSize() / 2)
+				{
+					encodedData = encoded;
+				}
+				else
+				{
+					data = null;
+				}
+			}
+			catch (Exception ex) when (ex is not OutOfMemoryException and not AccessViolationException)
+			{
+				this.LogApplicationError(ex);
+				data = null;
+			}
+		}
+
 		return new JsonRpcErrorDetails
 		{
 			Code = code,
 			Message = data?.Message ?? (code == JsonRpcErrorCode.RequestCancelled ? "The request was canceled." : "The request could not be completed."),
-			Data = data?.Encode(this.userDataSerializer.Encoding),
+			Data = encodedData,
 		};
 	}
 

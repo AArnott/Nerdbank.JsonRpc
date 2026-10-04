@@ -14,10 +14,11 @@ namespace Nerdbank.JsonRpc;
 /// <summary>Describes exception details reported by a remote JSON-RPC peer.</summary>
 public sealed class RemoteExceptionData
 {
-	private const int MaximumDepth = 32;
+	private const int MaximumDepth = 12;
 	private const int MaximumNodes = 64;
 	private const int MaximumTextLength = 8192;
 	private const int MaximumTypedExceptionPayloadLength = 256 * 1024;
+	private const int MaximumTypedExceptionDepth = 24;
 
 	private RemoteExceptionData(string typeName, string message, int hResult, string? stackTrace, string? parameterName, RemoteExceptionData? inner, IReadOnlyList<RemoteExceptionData> children, IReadOnlyDictionary<string, string> data, JsonRpcValue? typedException = null)
 	{
@@ -68,7 +69,8 @@ public sealed class RemoteExceptionData
 	internal static RemoteExceptionData Capture(Exception exception, JsonRpcSerializer serializer, RemoteExceptionTypeMapping allowedTypes, Action<Exception> logFailure)
 	{
 		int remainingNodes = MaximumNodes;
-		return Capture(exception, serializer, allowedTypes, 0, ref remainingNodes, logFailure);
+		int remainingTypedExceptionBytes = MaximumTypedExceptionPayloadLength;
+		return Capture(exception, serializer, allowedTypes, 0, ref remainingNodes, ref remainingTypedExceptionBytes, logFailure);
 	}
 
 	/// <summary>Decodes a bounded snapshot from an untrusted wire value.</summary>
@@ -165,9 +167,10 @@ public sealed class RemoteExceptionData
 
 		if (data.TypeName == typeof(AggregateException).FullName)
 		{
-			return data.Children.Count > 0
-				? new AggregateException(data.Message, data.Children.Select(child => Reconstruct(child, serializer, allowedTypes)))
-				: inner is not null ? new AggregateException(data.Message, inner) : new AggregateException(data.Message);
+			IEnumerable<Exception> innerExceptions = data.Children.Count > 0
+				? data.Children.Select(child => Reconstruct(child, serializer, allowedTypes))
+				: inner is not null ? [inner] : Array.Empty<Exception>();
+			return new RemoteAggregateException(data.Message, innerExceptions);
 		}
 
 		if (data.TypeName == typeof(TaskCanceledException).FullName)
@@ -204,9 +207,9 @@ public sealed class RemoteExceptionData
 		return JsonRpcValue.FromOwnedBytes(messagePackBuffer.AsReadOnlySequence.ToArray(), encoding);
 	}
 
-	private static RemoteExceptionData Capture(Exception exception, JsonRpcSerializer serializer, RemoteExceptionTypeMapping allowedTypes, int depth, ref int remainingNodes, Action<Exception> logFailure)
+	private static RemoteExceptionData Capture(Exception exception, JsonRpcSerializer serializer, RemoteExceptionTypeMapping allowedTypes, int depth, ref int remainingNodes, ref int remainingTypedExceptionBytes, Action<Exception> logFailure)
 	{
-		if (--remainingNodes < 0 || depth >= MaximumDepth)
+		if (remainingNodes-- <= 0 || depth >= MaximumDepth)
 		{
 			return new RemoteExceptionData(exception.GetType().FullName ?? exception.GetType().Name, "Exception details omitted because the causal chain exceeded its limit.", exception.HResult, null, null, null, Array.Empty<RemoteExceptionData>(), EmptyData());
 		}
@@ -215,7 +218,9 @@ public sealed class RemoteExceptionData
 		string message = SafeText(() => exception.Message, "Exception message unavailable.", logFailure);
 		string? stackTrace = SafeText(() => exception.StackTrace, null, logFailure);
 		string? parameterName = exception is ArgumentException argument ? SafeText(() => argument.ParamName, null, logFailure) : null;
-		RemoteExceptionData? inner = exception is AggregateException ? null : exception.InnerException is Exception innerException ? Capture(innerException, serializer, allowedTypes, depth + 1, ref remainingNodes, logFailure) : null;
+		RemoteExceptionData? inner = exception is not AggregateException && exception.InnerException is Exception innerException && remainingNodes > 0 && depth + 1 < MaximumDepth
+			? Capture(innerException, serializer, allowedTypes, depth + 1, ref remainingNodes, ref remainingTypedExceptionBytes, logFailure)
+			: null;
 		List<RemoteExceptionData> children = [];
 		if (exception is AggregateException aggregate)
 		{
@@ -226,16 +231,22 @@ public sealed class RemoteExceptionData
 					break;
 				}
 
-				children.Add(Capture(child, serializer, allowedTypes, depth + 1, ref remainingNodes, logFailure));
+				children.Add(Capture(child, serializer, allowedTypes, depth + 1, ref remainingNodes, ref remainingTypedExceptionBytes, logFailure));
 			}
 		}
 
 		Dictionary<string, string> data = new(StringComparer.Ordinal);
 		try
 		{
+			int examinedEntries = 0;
 			foreach (System.Collections.DictionaryEntry item in exception.Data)
 			{
-				if (item.Key is string key && item.Value is string value && data.Count < 16)
+				if (examinedEntries++ >= 16)
+				{
+					break;
+				}
+
+				if (item.Key is string key && item.Value is string value)
 				{
 					data[Limit(key, 128)] = Limit(value, 1024);
 				}
@@ -247,18 +258,20 @@ public sealed class RemoteExceptionData
 		}
 
 		JsonRpcValue? typedException = null;
-		if (allowedTypes.TryGet(exception.GetType(), out RemoteExceptionTypeMapping.Entry? entry) && entry is not null)
+		if (remainingTypedExceptionBytes > 0 && allowedTypes.TryGet(exception.GetType(), out RemoteExceptionTypeMapping.Entry? entry) && entry is not null)
 		{
 			try
 			{
 				JsonRpcValue encoded = entry.Serialize(serializer, exception);
-				if (encoded.OwnedBytes.Length <= MaximumTypedExceptionPayloadLength)
+				if (encoded.OwnedBytes.Length <= remainingTypedExceptionBytes && IsTypedPayloadWithinDepth(encoded))
 				{
 					typedException = encoded;
+					remainingTypedExceptionBytes -= encoded.OwnedBytes.Length;
 				}
 				else
 				{
-					logFailure(new InvalidOperationException("The serialized remote exception exceeded the typed payload limit."));
+					remainingTypedExceptionBytes = 0;
+					logFailure(new InvalidOperationException("The serialized remote exception exceeded the diagnostic payload limits."));
 				}
 			}
 			catch (Exception ex) when (ex is not OutOfMemoryException and not AccessViolationException)
@@ -268,6 +281,24 @@ public sealed class RemoteExceptionData
 		}
 
 		return new RemoteExceptionData(typeName, message, exception.HResult, stackTrace, parameterName, inner, children.AsReadOnly(), new ReadOnlyDictionary<string, string>(data), typedException);
+	}
+
+	private static bool IsTypedPayloadWithinDepth(JsonRpcValue value)
+	{
+		if (value.Encoding != JsonRpcEncoding.Json)
+		{
+			return true;
+		}
+
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(value.OwnedBytes, new JsonDocumentOptions { MaxDepth = MaximumTypedExceptionDepth });
+			return true;
+		}
+		catch (JsonException)
+		{
+			return false;
+		}
 	}
 
 	private static RemoteExceptionData ReadJson(JsonElement element, int depth, ref int remainingNodes)
@@ -565,6 +596,19 @@ public sealed class RemoteExceptionData
 		: ArgumentOutOfRangeException(data.ParameterName, data.Message)
 	{
 		public override string Message => data.Message;
+	}
+
+	private sealed class RemoteAggregateException : AggregateException
+	{
+		private readonly string message;
+
+		internal RemoteAggregateException(string message, IEnumerable<Exception> innerExceptions)
+			: base(message, innerExceptions)
+		{
+			this.message = message;
+		}
+
+		public override string Message => this.message;
 	}
 
 	private sealed class RemoteInnerException(RemoteExceptionData data) : Exception(data.Message)
