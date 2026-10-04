@@ -87,18 +87,18 @@ public sealed class RemoteExceptionData
 			switch (value.Encoding)
 			{
 				case JsonRpcEncoding.Json:
-				{
-					using JsonDocument document = JsonDocument.Parse(value.OwnedBytes);
-					int remainingNodes = MaximumNodes;
-					return ReadJson(document.RootElement, 0, ref remainingNodes);
-				}
+					{
+						using JsonDocument document = JsonDocument.Parse(value.OwnedBytes);
+						int remainingNodes = MaximumNodes;
+						return ReadJson(document.RootElement, 0, ref remainingNodes);
+					}
 
 				case JsonRpcEncoding.MessagePack:
-				{
-					MessagePackReader reader = new(value.AsOwnedMessagePack());
-					int remainingNodes = MaximumNodes;
-					return ReadMessagePack(ref reader, 0, ref remainingNodes);
-				}
+					{
+						MessagePackReader reader = new(value.AsOwnedMessagePack());
+						int remainingNodes = MaximumNodes;
+						return ReadMessagePack(ref reader, 0, ref remainingNodes);
+					}
 			}
 		}
 		catch (Exception ex) when (ex is not OutOfMemoryException and not AccessViolationException)
