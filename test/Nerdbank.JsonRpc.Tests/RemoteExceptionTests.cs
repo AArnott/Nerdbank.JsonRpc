@@ -147,7 +147,9 @@ public partial class RemoteExceptionTests : TestBase
 		Assert.Equal(JsonRpcErrorCode.InternalError, exception.ErrorDetails.Code);
 		Assert.Equal("The request could not be completed.", exception.Message);
 		Assert.False(exception.ErrorDetails.Data.HasValue);
-		Assert.IsType<InvalidOperationException>(Assert.Single(logger.Exceptions));
+		InvalidOperationException loggedException = Assert.IsType<InvalidOperationException>(Assert.Single(logger.Exceptions));
+		Assert.Equal("The sequence failed as requested.", loggedException.Message);
+		Assert.NotNull(loggedException.StackTrace);
 		await fixture.EnumerableService.FailingGeneratorDisposed.Task.WithCancellation(this.TimeoutToken);
 	}
 
