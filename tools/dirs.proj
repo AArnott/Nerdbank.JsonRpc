@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.Build.Traversal">
+  <ItemGroup>
+    <ProjectReference Include="..\src\dirs.proj" />
+    <ProjectReference Include="..\test\dirs.proj" />
+    <!-- Samples are in the solution and must keep compiling in CI, but are never packed or published. -->
+    <ProjectReference Include="..\samples\**\*.csproj" Pack="false" Publish="false" />
+  </ItemGroup>
+</Project>
