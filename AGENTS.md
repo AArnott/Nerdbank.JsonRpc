@@ -33,42 +33,42 @@ dotnet test --no-build -c Release
 
 **Run tests for a specific test project**:
 ```bash
-dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release
+dotnet test --project test/Nerdbank.JsonRpc.Tests/Nerdbank.JsonRpc.Tests.csproj --no-build -c Release
 ```
 
 **Run a single test method**:
 ```bash
-dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release -- --treenode-filter "/*/*/ClassName/MethodName"
+dotnet test --project test/Nerdbank.JsonRpc.Tests/Nerdbank.JsonRpc.Tests.csproj --no-build -c Release -- --treenode-filter "/*/*/ClassName/MethodName"
 ```
 
 **Run all tests in a test class**:
 ```bash
-dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release -- --treenode-filter "/*/*/ClassName/*"
+dotnet test --project test/Nerdbank.JsonRpc.Tests/Nerdbank.JsonRpc.Tests.csproj --no-build -c Release -- --treenode-filter "/*/*/ClassName/*"
 ```
 
 **Run tests with wildcard matching**:
 ```bash
-dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release -- --treenode-filter "/*/*/*/*Pattern*"
+dotnet test --project test/Nerdbank.JsonRpc.Tests/Nerdbank.JsonRpc.Tests.csproj --no-build -c Release -- --treenode-filter "/*/*/*/*Pattern*"
 ```
 
 **Run tests with a specific property** (e.g. `[Category("value")]`):
 ```bash
-dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release -- --treenode-filter "/**[Category=value]"
+dotnet test --project test/Nerdbank.JsonRpc.Tests/Nerdbank.JsonRpc.Tests.csproj --no-build -c Release -- --treenode-filter "/**[Category=value]"
 ```
 
 **Exclude tests with a specific property** (skip unstable tests):
 ```bash
-dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release -- --treenode-filter "/**[Category!=FailsInCloudTest]"
+dotnet test --project test/Nerdbank.JsonRpc.Tests/Nerdbank.JsonRpc.Tests.csproj --no-build -c Release -- --treenode-filter "/**[Category!=FailsInCloudTest]"
 ```
 
 **Run tests for a specific framework only**:
 ```bash
-dotnet test --project test/Library.Tests/Library.Tests.csproj --no-build -c Release --framework net9.0
+dotnet test --project test/Nerdbank.JsonRpc.Tests/Nerdbank.JsonRpc.Tests.csproj --no-build -c Release --framework net9.0
 ```
 
 **List all available tests without running them**:
 ```bash
-cd test/Library.Tests
+cd test/Nerdbank.JsonRpc.Tests
 dotnet run --no-build -c Release --framework net9.0 -- --list-tests
 ```
 
