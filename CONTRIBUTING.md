@@ -45,6 +45,14 @@ You can use `dotnet test` to build and/or test the repo.
 
 There may be tests that are known to be unstable or have special requirements. These can be avoided by running tests using the [dotnet-test-cloud.ps1](tools/dotnet-test-cloud.ps1) script *after* running `dotnet build`.
 
+To validate the shipping library with the NativeAOT compiler, run `dotnet publish test -c Release`.
+Then run `./tools/dotnet-test-cloud.ps1 -Configuration Release -IncludeNativeAOT`.
+The `test/AotCompatibilityTest` project roots the shipping assembly and is published by the traversal.
+Both TUnit test projects remain managed-only with `<PublishNativeAOTTests>false</PublishNativeAOTTests>`:
+the runtime tests use StreamJsonRpc interop and reflection-based assertions, while the generator tests use Roslyn.
+Managed builds are RID-neutral by default and retain dynamic code, startup hooks, and event tracing for code coverage.
+Keep test projects in the solution as well as the traversal so managed testing continues to cover them.
+
 ## Performance investigations
 
 The `test/Benchmarks` project uses BenchmarkDotNet and `MemoryDiagnoser`. Build it in Release, then run a focused workload without rebuilding:
@@ -82,6 +90,9 @@ The workflow is written to leverage NuGet.org Trusted Publishing.
 You should set `NUGET_USER` as a repo secret to satisfy Trusted Publishing requirements.
 
 ## Tutorial and API documentation
+
+Markup links are checked in CI with [mlc](https://github.com/becheran/mlc).
+Run `mlc` from the repository root to use the same settings, configured in `.mlc.toml`.
 
 API and hand-written docs are found under the `docfx/` directory and are built by [docfx](https://dotnet.github.io/docfx/).
 
