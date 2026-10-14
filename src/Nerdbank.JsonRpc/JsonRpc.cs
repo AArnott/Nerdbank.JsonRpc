@@ -269,7 +269,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	/// <summary>Gets a task that completes when the connection has shut down.</summary>
 	/// <remarks>Deliberate disposal and EOF between messages without pending outbound requests succeed. Other connection failures fault this task with the original cause. EOF with pending requests faults it with <see cref="EndOfStreamException"/>.</remarks>
+#pragma warning disable VSTHRD003 // This connection owns the TaskCompletionSource behind this task.
 	public Task Completion => this.completionSource.Task;
+#pragma warning restore VSTHRD003
 
 	/// <summary>Gets the original connection-loss cause, or <see langword="null"/> if no connection loss occurred.</summary>
 	/// <remarks>Retained after a user calls <see cref="Dispose"/>, including EOF for which <see cref="Completion"/> succeeded.</remarks>

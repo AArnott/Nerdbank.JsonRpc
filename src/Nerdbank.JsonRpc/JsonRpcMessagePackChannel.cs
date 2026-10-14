@@ -147,7 +147,9 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 		}
 		else
 		{
+#pragma warning disable VSTHRD103 // Serialize into the PipeWriter's buffer without flushing; the base channel flushes.
 			this.messagePackSerializer.Serialize(writer, envelope, cancellationToken);
+#pragma warning restore VSTHRD103
 		}
 
 		ReleaseSingleUsePayload(message);
