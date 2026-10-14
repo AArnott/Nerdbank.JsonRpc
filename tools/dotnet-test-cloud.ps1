@@ -131,6 +131,7 @@ if ($isMTP) {
             }
 
             $nativeAotArgs = @(
+                ,'--treenode-filter=/**[Category!=FailsInCloudTest]'
                 ,'--diagnostic'
                 ,'--diagnostic-output-directory',$testLogs
                 ,'--diagnostic-verbosity','Information'

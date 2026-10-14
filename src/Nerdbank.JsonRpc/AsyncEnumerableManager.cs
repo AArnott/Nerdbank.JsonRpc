@@ -744,6 +744,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	}
 
 	/// <summary>Declares that sequences may be received in one inbound message.</summary>
+	/// <param name="callState">The state of the inbound call.</param>
 	/// <remarks>State is created only when a sequence is actually received.</remarks>
 	internal readonly struct InboundScope(RpcCallState callState) : IDisposable
 	{
@@ -760,6 +761,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 	}
 
 	/// <summary>Declares that sequences may be sent in one outbound message.</summary>
+	/// <param name="callState">The state of the outbound call, if any.</param>
 	/// <remarks>State is created only when a sequence is actually sent.</remarks>
 	internal readonly struct OutboundScope(RpcCallState? callState) : IDisposable
 	{

@@ -133,9 +133,11 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 		CallScopedHandle callScopedHandle = this.RegisterIncomingProxy(handle, callScopedLifetime, callState);
 		HashSet<int> advertisedInterfaces = [.. optionalInterfaceIds];
-		HashSet<int> knownAdvertisedInterfaces = [.. MarshalableCache<T>.OptionalInterfaces
-			.Where(attribute => advertisedInterfaces.Contains(attribute.InterfaceId))
-			.Select(attribute => attribute.InterfaceId)];
+		HashSet<int> knownAdvertisedInterfaces = [
+			.. MarshalableCache<T>.OptionalInterfaces
+				.Where(attribute => advertisedInterfaces.Contains(attribute.InterfaceId))
+				.Select(attribute => attribute.InterfaceId),
+		];
 		JsonRpcOptionalProxyFactoryAttribute? optionalProxyFactory = knownAdvertisedInterfaces.Count == 0 ? null : MarshalableCache<T>.OptionalProxyFactories
 			.SingleOrDefault(attribute => attribute.InterfaceIds.Count == knownAdvertisedInterfaces.Count && attribute.InterfaceIds.All(knownAdvertisedInterfaces.Contains));
 #pragma warning disable CS0618 // Support proxy metadata emitted by previous versions of the source generator.
@@ -752,6 +754,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	}
 
 	/// <summary>Declares that marshaled objects may be received in one inbound message.</summary>
+	/// <param name="callState">The state of the inbound call.</param>
 	/// <remarks>State is created only when a proxy is actually received.</remarks>
 	internal readonly struct InboundCallScope(RpcCallState callState) : IDisposable
 	{
@@ -766,6 +769,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 	}
 
 	/// <summary>Declares that objects may be marshaled into one outbound message.</summary>
+	/// <param name="callState">The state of the outbound call, if any.</param>
 	/// <remarks>State is created only when an object is actually marshaled.</remarks>
 	internal readonly struct HandleScope(RpcCallState? callState) : IDisposable
 	{
