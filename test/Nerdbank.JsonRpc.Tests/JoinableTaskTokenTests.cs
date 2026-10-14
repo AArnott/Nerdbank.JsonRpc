@@ -620,6 +620,7 @@ public partial class JoinableTaskTokenTests : TestBase
 	}
 
 	/// <summary>Implements the callback, requiring the original caller's main thread.</summary>
+	/// <param name="context">The original caller's joinable task context.</param>
 	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 	internal partial class ProcessA(JoinableTaskContext context) : IMainThreadService
 	{
@@ -632,6 +633,7 @@ public partial class JoinableTaskTokenTests : TestBase
 	}
 
 	/// <summary>Implements a normal server method that calls back into its client.</summary>
+	/// <param name="caller">The client to call back into.</param>
 	[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 	internal partial class ProcessB(IMainThreadService caller) : ICallbackService
 	{
