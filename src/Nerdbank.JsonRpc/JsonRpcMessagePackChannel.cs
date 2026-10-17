@@ -114,7 +114,7 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 
 				// The envelope converter copies every retained payload, so the pipe's buffer may be released immediately.
 				reader.AdvanceTo(buffer.Start);
-				yield return message;
+				yield return message!;
 				continue;
 			}
 
