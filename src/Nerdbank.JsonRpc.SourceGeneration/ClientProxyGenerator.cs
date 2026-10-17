@@ -677,6 +677,33 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		return nullableAnnotation == NullableAnnotation.Annotated ? typeName + "?" : typeName;
 	}
 
+	private static string? GetNullableResultTypeName(MethodInfo method)
+		=> method.Symbol.ReturnType is INamedTypeSymbol { TypeArguments: [{ NullableAnnotation: NullableAnnotation.Annotated, IsReferenceType: true } resultType] }
+			? resultType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) + "?"
+			: null;
+
+	private static void AppendResultRequestStart(SourceWriter builder, MethodInfo method)
+	{
+		builder.Append("return this.jsonRpc.RequestAsync");
+		if (GetNullableResultTypeName(method) is { } nullableResultTypeName)
+		{
+			builder.Append("<").Append(nullableResultTypeName).Append(">");
+		}
+
+		builder.Append("(");
+	}
+
+	private static void AppendResultShape(SourceWriter builder, MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields)
+	{
+		// The shape is keyed by the unannotated type, so an explicit cast bridges the nullability difference.
+		if (GetNullableResultTypeName(method) is { } nullableResultTypeName)
+		{
+			builder.Append("(global::PolyType.ITypeShape<").Append(nullableResultTypeName).Append(">)");
+		}
+
+		builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
+	}
+
 	private static void RenderMethod(SourceWriter builder, MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields, string? transformedRpcNameField, string? methodNameTransformField, bool isMarshalable)
 	{
 		string parameters = string.Join(", ", method.Symbol.Parameters.Select(static p => $"{GetTypeName(p.Type, p.NullableAnnotation)} {EscapeIdentifier(p.Name)}"));
@@ -727,15 +754,15 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			switch (method.Kind)
 			{
 				case ProxyMethodKind.ValueTaskOfT:
-					builder.Append("return this.jsonRpc.RequestAsync(");
+					AppendResultRequestStart(builder, method);
 					AppendRpcMethodName(builder, method, transformedRpcNameField, methodNameTransformField).Append(", __arguments, ");
-					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
+					AppendResultShape(builder, method, shapeFields);
 					builder.Append(cancellationToken).AppendLine(");");
 					break;
 				case ProxyMethodKind.TaskOfT:
-					builder.Append("return this.jsonRpc.RequestAsync(");
+					AppendResultRequestStart(builder, method);
 					AppendRpcMethodName(builder, method, transformedRpcNameField, methodNameTransformField).Append(", __arguments, ");
-					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
+					AppendResultShape(builder, method, shapeFields);
 					builder.Append(cancellationToken).AppendLine(").AsTask();");
 					break;
 				case ProxyMethodKind.ValueTask:

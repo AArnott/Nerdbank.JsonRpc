@@ -21,11 +21,15 @@ internal static class CSharpSourceGeneratorVerifier
 	internal static Task VerifyGeneratorAsync([StringSyntax("c#-test")] string source, params DiagnosticResult[] expected)
 		=> VerifyGeneratorAsync(source, validateGeneratedCode: false, expected);
 
-	internal static async Task VerifyGeneratorAsync([StringSyntax("c#-test")] string source, bool validateGeneratedCode, params DiagnosticResult[] expected)
+	internal static Task VerifyGeneratorAsync([StringSyntax("c#-test")] string source, bool validateGeneratedCode, params DiagnosticResult[] expected)
+		=> VerifyGeneratorAsync(source, validateGeneratedCode ? CompilerDiagnostics.Errors : CompilerDiagnostics.None, expected);
+
+	internal static async Task VerifyGeneratorAsync([StringSyntax("c#-test")] string source, CompilerDiagnostics compilerDiagnostics, params DiagnosticResult[] expected)
 	{
+		bool validateGeneratedCode = compilerDiagnostics != CompilerDiagnostics.None;
 		Test test = new()
 		{
-			CompilerDiagnostics = validateGeneratedCode ? CompilerDiagnostics.Errors : CompilerDiagnostics.None,
+			CompilerDiagnostics = compilerDiagnostics,
 			TestCode = source,
 			ReferenceAssemblies = ReferenceAssemblies.Net.Net90,
 			TestBehaviors = validateGeneratedCode
@@ -33,6 +37,8 @@ internal static class CSharpSourceGeneratorVerifier
 				: TestBehaviors.SkipGeneratedCodeCheck | TestBehaviors.SkipGeneratedSourcesCheck,
 		};
 
+		test.DisabledDiagnostics.Add("CS1701");
+		test.DisabledDiagnostics.Add("CS1702");
 		test.TestState.AdditionalReferences.Add(typeof(GenerateJsonRpcProxyAttribute).Assembly);
 		test.TestState.AdditionalReferences.Add(typeof(MessagePackSerializer).Assembly);
 		test.TestState.AdditionalReferences.Add(typeof(Sequence<>).Assembly);
