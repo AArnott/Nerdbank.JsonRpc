@@ -4,8 +4,6 @@
         <TargetFramework>netstandard2.0</TargetFramework>
         <IsPackable>false</IsPackable>
         <IsAnalyzerProject>true</IsAnalyzerProject>
-        <!-- Honor this generator project's version.json and produce a unique assembly identity per commit. -->
-        <GitVersionBaseDirectory>$(MSBuildProjectDirectory)</GitVersionBaseDirectory>
         <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
         <NoWarn>$(NoWarn);RS2008</NoWarn>
     </PropertyGroup>

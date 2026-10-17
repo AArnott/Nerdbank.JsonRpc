@@ -77,7 +77,20 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 		{
 			ReadResult read = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
 			ReadOnlySequence<byte> buffer = read.Buffer;
-			if (this.TryReadFrame(buffer, out byte[]? payload, out SequencePosition consumed))
+			byte[]? payload;
+			SequencePosition consumed;
+			bool frameRead;
+			try
+			{
+				frameRead = this.TryReadFrame(buffer, out payload, out consumed);
+			}
+			catch
+			{
+				reader.AdvanceTo(buffer.End);
+				throw;
+			}
+
+			if (frameRead)
 			{
 				reader.AdvanceTo(consumed);
 				yield return JsonRpcJsonCodec.Read(payload!);
@@ -97,6 +110,7 @@ public sealed class JsonRpcJsonChannel : JsonRpcPipeChannel
 
 				if ((long)buffer.Length > (long)this.MaximumMessageSize + MaximumHeaderSize)
 				{
+					reader.AdvanceTo(buffer.End);
 					throw new ProtocolViolationException("JSON-RPC frame exceeds the size limit.");
 				}
 

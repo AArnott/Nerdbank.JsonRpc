@@ -9,6 +9,7 @@ using Nerdbank.MessagePack;
 namespace Nerdbank.JsonRpc;
 
 /// <summary>Adapts an encoding-neutral message to the MessagePack transport serializer.</summary>
+/// <param name="message">The protocol message to wrap.</param>
 [GenerateShape]
 [MessagePackConverter(typeof(JsonRpcMessageConverter))]
 internal readonly partial struct JsonRpcMessagePackEnvelope(JsonRpcMessage message)

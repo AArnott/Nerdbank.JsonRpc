@@ -4,6 +4,8 @@
     <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
     <OutputType>Exe</OutputType>
     <IsTestProject>true</IsTestProject>
+    <!-- Roslyn-based generator tests cannot run under NativeAOT. -->
+    <PublishNativeAOTTests>false</PublishNativeAOTTests>
     <RootNamespace />
   </PropertyGroup>
 
@@ -16,7 +18,8 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.SourceGenerators.Testing.XUnit" />
     <PackageReference Include="Nerdbank.Streams" />
     <PackageReference Include="TUnit.Engine" />
-    <PackageReference Include="xunit.v3.assert" />
+    <PackageReference Include="xunit.v3.assert.aot" Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)','net9.0'))" />
+    <PackageReference Include="xunit.v3.assert" Condition="!$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)','net9.0'))" />
   </ItemGroup>
 
 </Project>

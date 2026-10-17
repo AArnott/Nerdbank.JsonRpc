@@ -5,6 +5,8 @@
     <TargetFrameworks Condition="'$(OS)' == 'Windows_NT'">$(TargetFrameworks);net472</TargetFrameworks>
     <OutputType>Exe</OutputType>
     <IsTestProject>true</IsTestProject>
+    <!-- StreamJsonRpc interop and reflection-based assertions are not NativeAOT-safe; the shipping library is still validated by AotCompatibilityTest. -->
+    <PublishNativeAOTTests>false</PublishNativeAOTTests>
     <RootNamespace />
   </PropertyGroup>
 
@@ -18,7 +20,8 @@
     <PackageReference Include="Nerdbank.Streams" />
     <PackageReference Include="StreamJsonRpc" />
     <PackageReference Include="TUnit.Engine" />
-    <PackageReference Include="xunit.v3.assert" />
+    <PackageReference Include="xunit.v3.assert.aot" Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)','net9.0'))" />
+    <PackageReference Include="xunit.v3.assert" Condition="!$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)','net9.0'))" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net472'">

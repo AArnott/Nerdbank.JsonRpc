@@ -24,17 +24,17 @@ public class OpenRpcTests : TestBase
 		JsonObject document = rpc.GetOpenRpcDocument();
 		JsonObject method = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(document["methods"]!).Where(item => item?["name"]?.GetValue<string>() == "add")));
 		JsonArray parameters = Assert.IsType<JsonArray>(method["params"]);
-		Assert.True(parameters[0]!["required"]!.GetValue<bool>());
-		Assert.False(parameters[1]!["required"]!.GetValue<bool>());
-		Assert.Equal("integer", method["result"]!["schema"]!["type"]!.GetValue<string>());
-		Assert.Equal("http://json-schema.org/draft-07/schema#", method["result"]!["schema"]!["$schema"]!.GetValue<string>());
-		Assert.Equal("integer", parameters[0]!["schema"]!["type"]!.GetValue<string>());
-		Assert.Equal("http://json-schema.org/draft-07/schema#", parameters[0]!["schema"]!["$schema"]!.GetValue<string>());
-		Assert.Equal("http://json-schema.org/draft-07/schema#", parameters[1]!["schema"]!["$schema"]!.GetValue<string>());
+		Assert.True(Property(Element(parameters, 0), "required").GetValue<bool>());
+		Assert.False(Property(Element(parameters, 1), "required").GetValue<bool>());
+		Assert.Equal("integer", Property(Property(Property(method, "result"), "schema"), "type").GetValue<string>());
+		Assert.Equal("http://json-schema.org/draft-07/schema#", Property(Property(Property(method, "result"), "schema"), "$schema").GetValue<string>());
+		Assert.Equal("integer", Property(Property(Element(parameters, 0), "schema"), "type").GetValue<string>());
+		Assert.Equal("http://json-schema.org/draft-07/schema#", Property(Property(Element(parameters, 0), "schema"), "$schema").GetValue<string>());
+		Assert.Equal("http://json-schema.org/draft-07/schema#", Property(Property(Element(parameters, 1), "schema"), "$schema").GetValue<string>());
 		JsonObject discovery = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(document["methods"]!).Where(item => item?["name"]?.GetValue<string>() == "rpc.discover")));
 		Assert.Empty(Assert.IsType<JsonArray>(discovery["params"]));
-		Assert.Equal("http://json-schema.org/draft-07/schema#", discovery["result"]!["schema"]!["$schema"]!.GetValue<string>());
-		Assert.Equal(JsonRpcErrorCode.InvalidParams, method["errors"]![0]!["code"]!.GetValue<int>());
+		Assert.Equal("http://json-schema.org/draft-07/schema#", Property(Property(Property(discovery, "result"), "schema"), "$schema").GetValue<string>());
+		Assert.Equal(JsonRpcErrorCode.InvalidParams, Property(Element(Property(method, "errors"), 0), "code").GetValue<int>());
 	}
 
 	[Arguments(JsonRpcEncoding.Json)]
@@ -56,8 +56,8 @@ public class OpenRpcTests : TestBase
 			: JsonNode.Parse(((MessagePackSerializerPlugin)clientChannel.Serializer).Serializer.ConvertToJson(response.Result.Bytes))!;
 		Assert.Equal("1.4.1", document["openrpc"]!.GetValue<string>());
 		JsonObject addMethod = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(document["methods"]!).Where(item => item?["name"]?.GetValue<string>() == "add")));
-		Assert.Equal("http://json-schema.org/draft-07/schema#", addMethod["params"]![0]!["schema"]!["$schema"]!.GetValue<string>());
-		Assert.Equal("http://json-schema.org/draft-07/schema#", addMethod["result"]!["schema"]!["$schema"]!.GetValue<string>());
+		Assert.Equal("http://json-schema.org/draft-07/schema#", Property(Property(Element(Property(addMethod, "params"), 0), "schema"), "$schema").GetValue<string>());
+		Assert.Equal("http://json-schema.org/draft-07/schema#", Property(Property(Property(addMethod, "result"), "schema"), "$schema").GetValue<string>());
 	}
 
 	[Arguments(JsonRpcEncoding.Json, false, false)]
@@ -140,6 +140,12 @@ public class OpenRpcTests : TestBase
 		JsonRpcResult applicationResult = clientChannel.Serializer.Deserialize(response.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.JsonRpcResult, this.TimeoutToken);
 		Assert.Equal(new RequestId(99), applicationResult.Id);
 	}
+
+	private static JsonNode Property(JsonNode? node, string name)
+		=> Assert.IsType<JsonObject>(node)[name] ?? throw new InvalidOperationException($"Expected property '{name}'.");
+
+	private static JsonNode Element(JsonNode? node, int index)
+		=> Assert.IsType<JsonArray>(node)[index] ?? throw new InvalidOperationException($"Expected element at index {index}.");
 
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
 		=> encoding == JsonRpcEncoding.Json
