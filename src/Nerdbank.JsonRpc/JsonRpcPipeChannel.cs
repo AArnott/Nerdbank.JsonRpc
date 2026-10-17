@@ -44,6 +44,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, System.IAsyn
 	private volatile int maximumMessageSize = DefaultMaximumMessageSize;
 	private ILogger logger = NullLogger.Instance;
 	private int inboundAborted;
+	private int outputCancellationStarted;
 
 	/// <summary>Initializes a new instance of the <see cref="JsonRpcPipeChannel"/> class with deferred transport startup.</summary>
 	/// <param name="pipe">The connected duplex pipe.</param>
@@ -88,11 +89,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, System.IAsyn
 	{
 		try
 		{
-#if NET
-			await this.disposalSource.CancelAsync().ConfigureAwait(false);
-#else
-			this.disposalSource.Cancel();
-#endif
+			await this.CancelOutputAsync().ConfigureAwait(false);
 		}
 		finally
 		{
@@ -300,11 +297,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, System.IAsyn
 				{
 					try
 					{
-#if NET
-						await this.disposalSource.CancelAsync().ConfigureAwait(false);
-#else
-						this.disposalSource.Cancel();
-#endif
+						await this.CancelOutputAsync().ConfigureAwait(false);
 					}
 					catch (Exception ex)
 					{
@@ -329,6 +322,20 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, System.IAsyn
 				this.Logger.LogError(ex, "JSON-RPC input cleanup failed; retaining the original transport cause.");
 			}
 		}
+	}
+
+	private async ValueTask CancelOutputAsync()
+	{
+		if (Interlocked.Exchange(ref this.outputCancellationStarted, 1) != 0)
+		{
+			return;
+		}
+
+#if NET
+		await this.disposalSource.CancelAsync().ConfigureAwait(false);
+#else
+		this.disposalSource.Cancel();
+#endif
 	}
 
 	private async Task HandleOutboundMessagesAsync(PipeWriter writer, CancellationToken cancellationToken)
