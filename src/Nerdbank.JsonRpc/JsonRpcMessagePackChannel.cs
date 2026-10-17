@@ -95,7 +95,19 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 		{
 			ReadResult read = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
 			ReadOnlySequence<byte> buffer = read.Buffer;
-			if (this.TryReadMessage(ref buffer, cancellationToken, ref scanOffset, ref scanContext, out JsonRpcMessage? message))
+			JsonRpcMessage? message;
+			bool messageRead;
+			try
+			{
+				messageRead = this.TryReadMessage(ref buffer, cancellationToken, ref scanOffset, ref scanContext, out message);
+			}
+			catch
+			{
+				reader.AdvanceTo(buffer.End);
+				throw;
+			}
+
+			if (messageRead)
 			{
 				scanOffset = 0;
 				scanContext = this.messagePackSerializer.StartingContext;
@@ -108,6 +120,7 @@ public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 
 			if (this.framing == JsonRpcMessagePackFraming.SelfDelimiting && buffer.Length > this.MaximumMessageSize)
 			{
+				reader.AdvanceTo(buffer.End);
 				throw new ProtocolViolationException("MessagePack frame exceeds the size limit.");
 			}
 
