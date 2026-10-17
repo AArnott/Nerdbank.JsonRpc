@@ -384,7 +384,7 @@ public class ClientProxyGeneratorTests
 			Source,
 			validateGeneratedCode: true,
 			DiagnosticResult.CompilerError("CS0311")
-				.WithSpan("Nerdbank.JsonRpc.SourceGeneration\\Nerdbank.JsonRpc.SourceGeneration.ClientProxyGenerator\\CollidingLocalsProxy.g.cs", 22, 107, 22, 140)
+				.WithSpan(System.IO.Path.Combine("Nerdbank.JsonRpc.SourceGeneration", "Nerdbank.JsonRpc.SourceGeneration.ClientProxyGenerator", "CollidingLocalsProxy.g.cs"), 22, 107, 22, 140)
 				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<ICollidingLocals>", "T", "ICollidingLocals"));
 	}
 
