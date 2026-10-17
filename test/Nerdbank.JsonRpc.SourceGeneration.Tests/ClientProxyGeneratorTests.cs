@@ -363,6 +363,33 @@ public class ClientProxyGeneratorTests
 	}
 
 	[Test]
+	public async Task ParameterNamesMatchingGeneratedLocalsAndNullableResultsCompileCleanly()
+	{
+		const string Source = /* lang=c#-test */ """
+			#nullable enable
+			using System.Threading;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+			using PolyType;
+
+			[GenerateJsonRpcProxy]
+			internal partial interface ICollidingLocals
+			{
+				Task<string?> GetAsync(string arguments, string argumentsBuilder, CancellationToken cancellationToken);
+
+				ValueTask<string?> GetValueAsync(string arguments, CancellationToken cancellationToken);
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(
+			Source,
+			CompilerDiagnostics.Warnings,
+			DiagnosticResult.CompilerError("CS0311")
+				.WithSpan(System.IO.Path.Combine("Nerdbank.JsonRpc.SourceGeneration", "Nerdbank.JsonRpc.SourceGeneration.ClientProxyGenerator", "CollidingLocalsProxy.g.cs"), 23, 107, 23, 140)
+				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<ICollidingLocals>", "T", "ICollidingLocals"));
+	}
+
+	[Test]
 	public async Task ProxyFactoryNameAvoidsCollisionWithInterfaceMembers()
 	{
 		const string Source = /* lang=c#-test */ """
