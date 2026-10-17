@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
+using System.Text.Json.Nodes;
 using Nerdbank.MessagePack;
 
 namespace Nerdbank.JsonRpc;
@@ -40,6 +41,16 @@ public abstract class JsonRpcSerializer
 	/// <param name="cancellationToken">A cancellation token.</param>
 	/// <returns>The deserialized value.</returns>
 	public T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => this.Deserialize(value, shape, callState: null, cancellationToken);
+
+	/// <summary>Produces the configured serializer's JSON Schema for a type shape.</summary>
+	/// <param name="shape">The type shape to describe.</param>
+	/// <returns>The schema document.</returns>
+	internal abstract JsonNode GetJsonSchema(ITypeShape shape);
+
+	/// <summary>Serializes a JSON object as a value in the connection's wire encoding.</summary>
+	/// <param name="document">The JSON object.</param>
+	/// <returns>The encoded object value.</returns>
+	internal abstract JsonRpcValue SerializeJsonObject(JsonObject document);
 
 	/// <summary>Serializes a typed value with the scopes that apply to one RPC message.</summary>
 	/// <typeparam name="T">The type of the value.</typeparam>

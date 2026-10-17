@@ -1,15 +1,21 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
+using System.Text.Json.Nodes;
 using Nerdbank.MessagePack;
 using Nerdbank.Streams;
+using PolyType;
 
 namespace Nerdbank.JsonRpc;
 
 /// <summary>Adapts a configured MessagePack serializer.</summary>
-public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
+[GenerateShapeFor<JsonNode>]
+public sealed partial class MessagePackSerializerPlugin : JsonRpcSerializer
 {
+	private static readonly MessagePackSerializer JsonNodeSerializer = new MessagePackSerializer().WithSystemTextJsonConverters();
+	private static readonly JsonSchemaOptions OpenRpcSchemaOptions = new() { Dialect = JsonSchemaDialect.Draft7 };
+
 	/// <summary>Initializes a new instance of the <see cref="MessagePackSerializerPlugin"/> class.</summary>
 	/// <param name="serializer">The configured serializer.</param>
 	public MessagePackSerializerPlugin(MessagePackSerializer serializer) => this.Serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
@@ -19,6 +25,20 @@ public sealed class MessagePackSerializerPlugin : JsonRpcSerializer
 
 	/// <inheritdoc/>
 	public override JsonRpcEncoding Encoding => JsonRpcEncoding.MessagePack;
+
+	/// <inheritdoc/>
+	internal override JsonNode GetJsonSchema(ITypeShape shape) => this.Serializer.GetJsonSchema(shape, OpenRpcSchemaOptions);
+
+	/// <inheritdoc/>
+	internal override JsonRpcValue SerializeJsonObject(JsonObject document)
+	{
+		using ScratchSequence scratch = ScratchSequence.Rent();
+		MessagePackWriter writer = new(scratch.Sequence);
+		JsonNode node = document;
+		JsonNodeSerializer.Serialize(ref writer, node, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc.Default.JsonNode);
+		writer.Flush();
+		return JsonRpcValue.FromOwnedBytes(scratch.Sequence.AsReadOnlySequence.ToArray(), JsonRpcEncoding.MessagePack);
+	}
 
 	/// <inheritdoc/>
 	internal override JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)

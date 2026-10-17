@@ -1,15 +1,19 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Nerdbank.Streams;
+using PolyType.Abstractions;
 
 namespace Nerdbank.JsonRpc;
 
 /// <summary>Adapts a configured Nerdbank.Json serializer.</summary>
 public sealed class JsonSerializerPlugin : JsonRpcSerializer
 {
+	private static readonly Nerdbank.Json.JsonSchemaOptions OpenRpcSchemaOptions = new() { Dialect = Nerdbank.Json.JsonSchemaDialect.Draft7 };
+
 	/// <summary>Initializes a new instance of the <see cref="JsonSerializerPlugin"/> class.</summary>
 	/// <param name="serializer">The configured serializer.</param>
 	public JsonSerializerPlugin(Nerdbank.Json.JsonSerializer serializer) => this.Serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
@@ -19,6 +23,20 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 
 	/// <inheritdoc/>
 	public override JsonRpcEncoding Encoding => JsonRpcEncoding.Json;
+
+	/// <inheritdoc/>
+	internal override JsonNode GetJsonSchema(ITypeShape shape)
+		=> JsonNode.Parse(this.Serializer.GetJsonSchema(shape, OpenRpcSchemaOptions)) ?? throw new JsonException("The serializer produced an empty JSON Schema document.");
+
+	/// <inheritdoc/>
+	internal override JsonRpcValue SerializeJsonObject(JsonObject document)
+	{
+		using ScratchSequence scratch = ScratchSequence.Rent();
+		using Utf8JsonWriter writer = new(scratch.Sequence);
+		document.WriteTo(writer);
+		writer.Flush();
+		return JsonRpcValue.FromOwnedBytes(scratch.Sequence.AsReadOnlySequence.ToArray(), JsonRpcEncoding.Json);
+	}
 
 	/// <inheritdoc/>
 	internal override JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken)

@@ -3,6 +3,7 @@
 
 namespace Nerdbank.JsonRpc;
 
+[TypeShape(Kind = TypeShapeKind.None)]
 internal struct DispatchRequest
 {
 	internal JsonRpcSerializer UserDataSerializer => this.JsonRpc.UserDataSerializer;
