@@ -1,6 +1,7 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Microsoft.VisualStudio.Threading;
 using Nerdbank.MessagePack;
@@ -24,6 +25,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 	{
 		JsonRpcTargetOptions options = state as JsonRpcTargetOptions ?? JsonRpcTargetOptions.Default;
 		Dictionary<string, MethodInvoker> methodInvokers = new(StringComparer.Ordinal);
+		List<JsonRpcMethodDescription> methods = [];
 		foreach (IMethodShape method in objectShape.Methods)
 		{
 			string rpcMethodName = GetRpcMethodName(method, options);
@@ -32,6 +34,8 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			{
 				throw new InvalidOperationException($"Multiple methods on '{typeof(T)}' map to the JSON-RPC method name '{rpcMethodName}'. Assign each an explicit name via [MethodShape(Name = \"...\")] or configure a different {nameof(JsonRpcTargetOptions)}.{nameof(JsonRpcTargetOptions.MethodNameTransform)}.");
 			}
+
+			methods.Add(JsonRpcMethodDescription.Create(method, rpcMethodName));
 		}
 
 		List<IEventTargetRegistration> eventRegistrations = [];
@@ -46,7 +50,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			}
 		}
 
-		return new TargetRegistration(methodInvokers, eventRegistrations);
+		return new TargetRegistration(methodInvokers, methods, eventRegistrations);
 	}
 
 	public override object? VisitEvent<TDeclaringType, TEventHandler>(IEventShape<TDeclaringType, TEventHandler> eventShape, object? state = null)
@@ -102,6 +106,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 	public override object? VisitMethod<TDeclaringType, TArgumentState, TResult>(IMethodShape<TDeclaringType, TArgumentState, TResult> methodShape, object? state = null)
 	{
 		SpecialParameterSetter<CancellationToken, TArgumentState>? setCancellationToken = null;
+		SpecialParameterSetter<DispatchRequest, TArgumentState>? setDispatchRequest = null;
 		Memory<ParameterSetter<TArgumentState>> parameterSetters = new ParameterSetter<TArgumentState>[methodShape.Parameters.Count];
 		for (int i = 0; i < methodShape.Parameters.Count; i++)
 		{
@@ -111,6 +116,10 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 				case SpecialParameterSetter<CancellationToken, TArgumentState> ctSetter when i == methodShape.Parameters.Count - 1:
 					setCancellationToken = ctSetter;
 					parameterSetters = parameterSetters[..^1]; // trim the last one because it's special.
+					break;
+				case SpecialParameterSetter<DispatchRequest, TArgumentState> dispatchSetter when i == methodShape.Parameters.Count - 1:
+					setDispatchRequest = dispatchSetter;
+					parameterSetters = parameterSetters[..^1];
 					break;
 				case ParameterSetter<TArgumentState> paramSetter:
 					parameterSetters.Span[i] = paramSetter;
@@ -125,7 +134,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 
 		// Build up a parameter name to index lookup table.
 		SpanDictionary<byte, IParameterShape> parameterNameToIndex = methodShape.Parameters
-			.Where(p => p.ParameterType.Type != typeof(CancellationToken))
+			.Where(p => p.ParameterType.Type != typeof(CancellationToken) && p.ParameterType.Type != typeof(DispatchRequest))
 			.ToSpanDictionary(
 			p =>
 			{
@@ -190,6 +199,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 					}
 
 					setCancellationToken?.Invoke(dispatch.CancellationToken, ref argState);
+					setDispatchRequest?.Invoke(dispatch, ref argState);
 
 					if (!argState.AreRequiredArgumentsSet)
 					{
@@ -235,6 +245,10 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			try
 			{
 				TResult result = await invoker(ref target, ref argState).ConfigureAwait(false);
+				if (typeof(TResult) == typeof(DispatchResponse))
+				{
+					return (DispatchResponse)(object)result!;
+				}
 
 				if (result is IRpcEnumerable prefetchable && dispatch.Request.Id is not null)
 				{
@@ -291,7 +305,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 	{
 		Setter<TArgumentState, TParameterType> setter = parameterShape.GetSetter();
 
-		if (typeof(TParameterType) == typeof(CancellationToken))
+		if (typeof(TParameterType) == typeof(CancellationToken) || typeof(TParameterType) == typeof(DispatchRequest))
 		{
 			return new SpecialParameterSetter<TParameterType, TArgumentState>((in TParameterType argument, ref TArgumentState argState) => setter(ref argState, argument));
 		}

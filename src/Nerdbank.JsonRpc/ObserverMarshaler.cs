@@ -25,7 +25,7 @@ internal static class ObserverMarshaler
 			["onCompleted"] = dispatch => DispatchAsync(dispatch, "onCompleted", valueShape),
 			["onError"] = dispatch => DispatchAsync(dispatch, "onError", valueShape),
 		};
-		return new(methods, []);
+		return new(methods, [], []);
 	}
 
 	private static ValueTask<DispatchResponse> DispatchAsync<T>(DispatchRequest dispatch, string method, ITypeShape<T> shape)

@@ -12,6 +12,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Channels;
 using Microsoft;
 using Microsoft.Extensions.Logging;
@@ -59,6 +60,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private readonly CancellationTokenSource disposalSource = new();
 	private readonly ConcurrentDictionary<string, (object? Target, MethodInvoker Invoker)> handlers = new();
 	private readonly List<IDisposable> eventSubscriptions = [];
+	private readonly List<JsonRpcMethodDescription> localMethods = [];
 
 	/// <summary>Requests awaiting responses, keyed by ID. Guarded by <see cref="connectionSync"/>.</summary>
 	private readonly Dictionary<RequestId, PendingResponse> pendingOutboundRequests = [];
@@ -351,11 +353,120 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				this.handlers[name] = (target, invoker);
 			}
 
+			this.localMethods.AddRange(registration.Methods.Where(static method => method.Name is not (SpecialCancelMethodName or "rpc.discover")));
+
 			foreach (IEventTargetRegistration eventRegistration in registration.Events)
 			{
 				this.eventSubscriptions.Add(eventRegistration.Subscribe(target, this));
 			}
 		}
+	}
+
+	/// <summary>Creates an OpenRPC document describing the methods registered on this peer.</summary>
+	/// <returns>A new OpenRPC document containing schemas from this connection's configured serializer.</returns>
+	/// <remarks>The result is a snapshot of locally registered methods at the time this method is called. The document uses OpenRPC 1.4.1 with JSON Schema Draft 7 schemas.</remarks>
+	public JsonObject GetOpenRpcDocument()
+	{
+		JsonRpcMethodDescription[] methods;
+		lock (this.targetRegistrationSync)
+		{
+			methods = this.localMethods.OrderBy(static method => method.Name, StringComparer.Ordinal).ToArray();
+		}
+
+		JsonArray openRpcMethods = [];
+		foreach (JsonRpcMethodDescription method in methods)
+		{
+			JsonArray parameters = [];
+			foreach (JsonRpcParameterDescription parameter in method.Parameters)
+			{
+				string parameterSchemaId = $"method:{method.Name}:parameter:{parameter.Name}";
+				JsonNode parameterSchema = parameter.Type.Type == typeof(RequestId) && this.userDataSerializer.Encoding == JsonRpcEncoding.Json
+					? new JsonObject
+					{
+						["$schema"] = "http://json-schema.org/draft-07/schema#",
+						["$id"] = CreateOpenRpcSchemaId(parameterSchemaId),
+						["type"] = new JsonArray("string", "integer", "null"),
+					}
+					: CreateOpenRpcSchema(this.userDataSerializer, parameter.Type, parameterSchemaId, parameter.IsNullable);
+				JsonObject openRpcParameter = new()
+				{
+					["name"] = parameter.Name,
+					["required"] = parameter.IsRequired,
+					["schema"] = parameterSchema,
+				};
+				if (parameter.Description is not null)
+				{
+					openRpcParameter["description"] = parameter.Description;
+				}
+
+				parameters.Add((JsonNode?)openRpcParameter);
+			}
+
+			JsonObject openRpcMethod = new()
+			{
+				["name"] = method.Name,
+				["paramStructure"] = "either",
+				["params"] = parameters,
+				["result"] = new JsonObject
+				{
+					["name"] = "result",
+					["schema"] = CreateOpenRpcSchema(this.userDataSerializer, method.ResultType, $"method:{method.Name}:result", method.ResultIsNullable),
+				},
+				["errors"] = CreateOpenRpcErrors(method),
+			};
+			JsonArray exceptionPayloads = CreateOpenRpcExceptionPayloads(this);
+			if (exceptionPayloads.Count > 0)
+			{
+				openRpcMethod["x-exceptionPayloads"] = exceptionPayloads;
+			}
+
+			if (method.Description is not null)
+			{
+				openRpcMethod["description"] = method.Description;
+			}
+
+			openRpcMethods.Add((JsonNode?)openRpcMethod);
+		}
+
+		openRpcMethods.Add((JsonNode?)new JsonObject
+		{
+			["name"] = "rpc.discover",
+			["paramStructure"] = "either",
+			["params"] = new JsonArray(),
+			["result"] = new JsonObject
+			{
+				["name"] = "OpenRPC document",
+				["schema"] = new JsonObject
+				{
+					["$schema"] = "http://json-schema.org/draft-07/schema#",
+					["type"] = "object",
+					["required"] = new JsonArray("openrpc", "info", "methods"),
+					["properties"] = new JsonObject
+					{
+						["openrpc"] = new JsonObject { ["type"] = "string" },
+						["info"] = new JsonObject { ["type"] = "object" },
+						["methods"] = new JsonObject { ["type"] = "array" },
+					},
+					["additionalProperties"] = true,
+				},
+			},
+			["errors"] = new JsonArray
+			{
+				(JsonNode?)new JsonObject { ["code"] = JsonRpcErrorCode.InvalidParams, ["message"] = "Invalid params" },
+				(JsonNode?)new JsonObject { ["code"] = JsonRpcErrorCode.InternalError, ["message"] = "Internal error" },
+			},
+		});
+
+		return new JsonObject
+		{
+			["openrpc"] = "1.4.1",
+			["info"] = new JsonObject
+			{
+				["title"] = "Nerdbank.JsonRpc peer",
+				["version"] = typeof(JsonRpc).Assembly.GetName().Version?.ToString() ?? "0.0.0",
+			},
+			["methods"] = openRpcMethods,
+		};
 	}
 
 	/// <summary>
@@ -1065,12 +1176,80 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		request.Arguments.Release();
 	}
 
+	private static JsonNode CreateOpenRpcSchema(JsonRpcSerializer serializer, ITypeShape shape, string identity, bool nullable)
+	{
+		string schemaId = CreateOpenRpcSchemaId(identity);
+		JsonNode schema = serializer.GetJsonSchema(shape);
+		if (schema is JsonObject schemaObject)
+		{
+			if (!schemaObject.ContainsKey("$id"))
+			{
+				schemaObject["$id"] = schemaId + ":value";
+			}
+		}
+		else
+		{
+			schema = new JsonObject
+			{
+				["$schema"] = "http://json-schema.org/draft-07/schema#",
+				["$id"] = schemaId + ":value",
+				["allOf"] = new JsonArray(schema),
+			};
+		}
+
+		if (!nullable)
+		{
+			return schema;
+		}
+
+		return new JsonObject
+		{
+			["$schema"] = "http://json-schema.org/draft-07/schema#",
+			["$id"] = schemaId,
+			["anyOf"] = new JsonArray(schema, new JsonObject { ["type"] = "null" }),
+		};
+	}
+
+	private static string CreateOpenRpcSchemaId(string identity)
+		=> "urn:nerdbank-jsonrpc:openrpc:" + Uri.EscapeDataString(identity);
+
+	private static JsonArray CreateOpenRpcErrors(JsonRpcMethodDescription method)
+	{
+		JsonArray errors = [];
+		errors.Add((JsonNode?)new JsonObject { ["code"] = JsonRpcErrorCode.InvalidParams, ["message"] = "Invalid params" });
+		errors.Add((JsonNode?)new JsonObject { ["code"] = JsonRpcErrorCode.InternalError, ["message"] = "Internal error" });
+		if (method.SupportsCancellation)
+		{
+			errors.Add((JsonNode?)new JsonObject { ["code"] = JsonRpcErrorCode.RequestCancelled, ["message"] = "Request cancelled" });
+		}
+
+		return errors;
+	}
+
+	private static JsonArray CreateOpenRpcExceptionPayloads(JsonRpc owner)
+	{
+		JsonArray exceptionPayloads = [];
+		foreach (Type exceptionType in owner.Options.AdditionalExceptionTypes)
+		{
+			if (owner.Options.AdditionalExceptionTypes.TryGet(exceptionType, out RemoteExceptionTypeMapping.Entry? entry) && entry is not null)
+			{
+				exceptionPayloads.Add((JsonNode?)new JsonObject
+				{
+					["type"] = exceptionType.FullName,
+					["schema"] = CreateOpenRpcSchema(owner.channel.Serializer, entry.Shape, $"exception:{exceptionType.FullName}", nullable: false),
+				});
+			}
+		}
+
+		return exceptionPayloads;
+	}
+
 	/// <summary>Invokes a request handler as a child of the caller's joinable task.</summary>
 	/// <param name="jtf">The joinable task factory.</param>
 	/// <param name="invoker">The request handler.</param>
-	/// <param name="dispatchRequest">The request to dispatch.</param>
-	/// <param name="parentToken">The caller's joinable task token.</param>
-	/// <returns>The handler's response.</returns>
+	/// <param name="dispatchRequest">The request being dispatched.</param>
+	/// <param name="parentToken">The parent task token.</param>
+	/// <returns>The joined task.</returns>
 	/// <remarks>This is a separate method so that only requests that carry a token allocate the lambda's closure.</remarks>
 	private static JoinableTask<DispatchResponse> RunUnderJoinableTaskAsync(JoinableTaskFactory jtf, MethodInvoker invoker, DispatchRequest dispatchRequest, string parentToken)
 		=> jtf.RunAsync(() => invoker(dispatchRequest).AsTask(), parentToken, JoinableTaskCreationOptions.None);
@@ -1822,6 +2001,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				subscriptions = new(this.eventSubscriptions);
 				this.eventSubscriptions.Clear();
 				this.handlers.Clear();
+				this.localMethods.Clear();
 			}
 
 			foreach (IDisposable subscription in subscriptions)
@@ -1949,6 +2129,23 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	[GenerateShape(Kind = TypeShapeKind.None, IncludeMethods = MethodShapeFlags.PublicInstance)]
 	internal partial class SpecialMethodsTarget(JsonRpc owner)
 	{
+		/// <summary>Returns the peer's OpenRPC document using the connection's wire encoding.</summary>
+		/// <param name="dispatch">The current dispatch context, supplied by the RPC visitor.</param>
+		/// <returns>The encoded discovery response, or an empty response for a notification.</returns>
+		[MethodShape(Name = "rpc.discover")]
+		public DispatchResponse Discover(DispatchRequest dispatch)
+		{
+			if (dispatch.Request.Id is not RequestId id)
+			{
+				return default;
+			}
+
+			return new DispatchResponse
+			{
+				Response = new JsonRpcResult { Id = id, Result = owner.channel.Serializer.SerializeJsonObject(owner.GetOpenRpcDocument()) },
+			};
+		}
+
 		[MethodShape(Name = SpecialCancelMethodName)]
 		public void CancelRequest(RequestId id)
 		{

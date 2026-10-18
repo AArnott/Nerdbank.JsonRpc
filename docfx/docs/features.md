@@ -5,6 +5,8 @@ Nerdbank.JsonRpc provides strongly typed JSON-RPC requests, notifications, and s
 - **Typed RPC:** Register server targets using PolyType method shapes and call methods through typed APIs. [Get started](getting-started.md).
 - **Choice of encoding and framing:** Configure a MessagePack or JSON serializer; JSON supports newline-delimited and `Content-Length` framing. [Choose an encoding](encodings.md).
 - **Generated client proxies:** Attach an interface-backed proxy instead of constructing requests manually, with positional or named arguments. [Use client proxies](client-proxies.md).
+- **OpenRPC discovery:** Describe registered methods, parameters, results, and errors using serializer-generated JSON Schemas, locally or remotely through `rpc.discover`, with either JSON or MessagePack encoding.
+  [Discover an API](openrpc.md).
 - **Method name transforms:** CLR method names map to camelCase wire names by default, with explicit names and StreamJsonRpc interop supported. [Configure method naming](method-naming.md).
 - **Events as notifications:** Raising a CLR event on a registered target sends a JSON-RPC notification to the remote party. [Send events as notifications](events.md).
 - **Batching:** Send several independent requests or notifications in one JSON-RPC payload. [Send a batch](batching.md).

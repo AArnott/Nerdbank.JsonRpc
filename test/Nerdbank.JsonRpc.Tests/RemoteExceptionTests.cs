@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO.Pipelines;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Microsoft.VisualStudio.Threading;
 using Nerdbank.MessagePack;
@@ -234,6 +235,97 @@ public partial class RemoteExceptionTests : TestBase
 	}
 
 	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task OpenRpcExceptionPayloadSchemaMatchesSerializedSurrogate(JsonRpcEncoding encoding)
+	{
+		RemoteExceptionTypeMapping mapping = new();
+		mapping.Add<MappingException>();
+		JsonRpcOptions options = new() { AdditionalExceptionTypes = mapping };
+		(IDuplexPipe serverPipe, IDuplexPipe peerPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc server = new(CreateTestChannel(serverPipe, encoding), options);
+		await using JsonRpcPipeChannel peer = CreateTestChannel(peerPipe, encoding);
+		server.AddRpcTarget(new FailingService(), new JsonRpcTargetOptions { MethodNameTransform = CommonMethodNameTransforms.Identity });
+
+		JsonObject method = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(server.GetOpenRpcDocument()["methods"]!).Where(item => item?["name"]?.GetValue<string>() == "FailCustom")));
+		JsonObject internalError = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(method["errors"]!).Where(item => item?["code"]?.GetValue<int>() == (int)JsonRpcErrorCode.InternalError)));
+		Assert.False(internalError.ContainsKey("x-exceptionPayloads"));
+		JsonObject exceptionDescription = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(method["x-exceptionPayloads"]!)));
+		JsonObject schema = Assert.IsType<JsonObject>(exceptionDescription["schema"]);
+
+		server.Start();
+		peer.Start();
+		await peer.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = "FailCustom", Arguments = EmptyParameters(encoding) }, this.TimeoutToken);
+		JsonRpcError response = Assert.IsType<JsonRpcError>(await peer.Reader.ReadAsync(this.TimeoutToken));
+		JsonRpcValue diagnosticValue = Assert.IsType<JsonRpcValue>(response.Error.Data);
+		if (encoding == JsonRpcEncoding.Json)
+		{
+			JsonObject schemaProperties = Assert.IsType<JsonObject>(schema["properties"]);
+			Assert.Equal(new[] { "message", "quota" }, schemaProperties.Select(static property => property.Key).OrderBy(static key => key, StringComparer.Ordinal));
+			JsonNode diagnostics = JsonNode.Parse(diagnosticValue.Bytes.Span)!;
+			JsonObject actualPayload = Assert.IsType<JsonObject>(diagnostics["exception"]);
+			Assert.Equal(actualPayload.Select(static property => property.Key).OrderBy(static key => key, StringComparer.Ordinal), schemaProperties.Select(static property => property.Key).OrderBy(static key => key, StringComparer.Ordinal));
+			Assert.Equal("Custom failure.", actualPayload["message"]!.GetValue<string>());
+			Assert.Equal(42, actualPayload["quota"]!.GetValue<int>());
+		}
+		else
+		{
+			JsonObject schemaProperties = Assert.IsType<JsonObject>(Assert.IsType<JsonObject>(Assert.IsType<JsonObject>(schema["definitions"])[typeof(MappingException).FullName!])["properties"]);
+			Assert.Equal(new[] { "Message", "Quota" }, schemaProperties.Select(static property => property.Key).OrderBy(static key => key, StringComparer.Ordinal));
+			JsonRpcValue typedPayload = GetTypedExceptionPayload(diagnosticValue);
+			MessagePackReader payloadReader = new(typedPayload.AsMessagePack());
+			Assert.Equal(2, payloadReader.ReadMapHeader());
+			Assert.Equal("Message", payloadReader.ReadString());
+			Assert.Equal("Custom failure.", payloadReader.ReadString());
+			Assert.Equal("Quota", payloadReader.ReadString());
+			Assert.Equal(42, payloadReader.ReadInt32());
+		}
+	}
+
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Test]
+	public async Task OpenRpcRecursiveExceptionSurrogateSchemaResolvesAndMatchesWirePayload(JsonRpcEncoding encoding)
+	{
+		RemoteExceptionTypeMapping mapping = new();
+		mapping.Add<RecursivePayloadException>();
+		JsonRpcOptions options = new() { AdditionalExceptionTypes = mapping };
+		(IDuplexPipe serverPipe, IDuplexPipe peerPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc server = new(CreateTestChannel(serverPipe, encoding), options);
+		await using JsonRpcPipeChannel peer = CreateTestChannel(peerPipe, encoding);
+		server.AddRpcTarget(new FailingService(), new JsonRpcTargetOptions { MethodNameTransform = CommonMethodNameTransforms.Identity });
+
+		JsonObject method = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(server.GetOpenRpcDocument()["methods"]!).Where(item => item?["name"]?.GetValue<string>() == "FailRecursive")));
+		JsonObject internalError = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(method["errors"]!).Where(item => item?["code"]?.GetValue<int>() == (int)JsonRpcErrorCode.InternalError)));
+		Assert.False(internalError.ContainsKey("x-exceptionPayloads"));
+		JsonObject exceptionDescription = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(method["x-exceptionPayloads"]!)));
+		JsonObject schema = Assert.IsType<JsonObject>(exceptionDescription["schema"]);
+		OpenRpcSchemaAssertions.AssertLocalDefinitionReferencesResolve(schema);
+
+		server.Start();
+		peer.Start();
+		await peer.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = "FailRecursive", Arguments = EmptyParameters(encoding) }, this.TimeoutToken);
+		JsonRpcError response = Assert.IsType<JsonRpcError>(await peer.Reader.ReadAsync(this.TimeoutToken));
+		JsonRpcValue diagnosticValue = Assert.IsType<JsonRpcValue>(response.Error.Data);
+		JsonObject actualPayload;
+		if (encoding == JsonRpcEncoding.Json)
+		{
+			JsonNode diagnostics = JsonNode.Parse(diagnosticValue.Bytes.Span)!;
+			actualPayload = Assert.IsType<JsonObject>(diagnostics["exception"]);
+		}
+		else
+		{
+			JsonRpcValue typedPayload = GetTypedExceptionPayload(diagnosticValue);
+			actualPayload = Assert.IsType<JsonObject>(JsonNode.Parse(((MessagePackSerializerPlugin)peer.Serializer).Serializer.ConvertToJson(typedPayload.AsMessagePack())));
+		}
+
+		JsonObject schemaProperties = FindSchemaProperties(schema, actualPayload);
+		Assert.Equal(actualPayload.Select(static property => property.Key).OrderBy(static key => key, StringComparer.Ordinal), schemaProperties.Select(static property => property.Key).OrderBy(static key => key, StringComparer.Ordinal));
+		JsonObject actualRecursivePayload = Assert.IsType<JsonObject>(actualPayload[encoding == JsonRpcEncoding.Json ? "payload" : "Payload"]);
+		Assert.Equal("exception", actualRecursivePayload[encoding == JsonRpcEncoding.Json ? "name" : "Name"]!.GetValue<string>());
+	}
+
+	[Test]
 	public void Add_RequiresSurrogateShape()
 	{
 		RemoteExceptionTypeMapping mapping = new();
@@ -359,10 +451,74 @@ public partial class RemoteExceptionTests : TestBase
 		}
 	}
 
+	private static JsonObject FindSchemaProperties(JsonObject schema, JsonObject actualPayload)
+	{
+		if (schema["properties"] is JsonObject directProperties)
+		{
+			return directProperties;
+		}
+
+		JsonObject definitions = Assert.IsType<JsonObject>(schema["definitions"]);
+		return Assert.IsType<JsonObject>(Assert.Single(definitions.Select(static definition => definition.Value)
+			.OfType<JsonObject>()
+			.Where(definition => definition["properties"] is JsonObject properties && actualPayload.All(property => properties.ContainsKey(property.Key))))["properties"]);
+	}
+
+	private static JsonRpcValue GetTypedExceptionPayload(JsonRpcValue diagnostics)
+	{
+		MessagePackReader reader = new(diagnostics.AsMessagePack());
+		SerializationContext context = new();
+		int propertyCount = reader.ReadMapHeader();
+		for (int i = 0; i < propertyCount; i++)
+		{
+			int key = reader.ReadInt32();
+			if (key != 5)
+			{
+				reader.Skip(context);
+				continue;
+			}
+
+			int extensionCount = reader.ReadMapHeader();
+			for (int j = 0; j < extensionCount; j++)
+			{
+				string name = reader.ReadString()!;
+				if (name == "exception")
+				{
+					return JsonRpcValue.FromMessagePack(reader.ReadRaw(context));
+				}
+
+				reader.Skip(context);
+			}
+		}
+
+		throw new InvalidOperationException("The serialized diagnostics did not contain a typed exception payload.");
+	}
+
 	private static JsonRpcValue EmptyParameters(JsonRpcEncoding encoding)
 		=> encoding == JsonRpcEncoding.Json
 			? JsonRpcValue.FromJson("[]"u8.ToArray())
 			: JsonRpcValue.FromMessagePack(EmptyParamsMsgPack);
+
+	[GenerateShape(Marshaler = typeof(Marshaler))]
+	internal sealed partial class RecursivePayloadException : Exception
+	{
+		public RecursivePayloadException(string message, OpenRpcRecursivePayload? payload)
+			: base(message)
+		{
+			this.Payload = payload;
+		}
+
+		public OpenRpcRecursivePayload? Payload { get; }
+
+		internal sealed record ExceptionData(string Message, OpenRpcRecursivePayload? Payload);
+
+		internal sealed class Marshaler : PolyType.IMarshaler<RecursivePayloadException, ExceptionData?>
+		{
+			public RecursivePayloadException? Unmarshal(ExceptionData? value) => value is null ? null : new(value.Message, value.Payload);
+
+			public ExceptionData? Marshal(RecursivePayloadException? value) => value is null ? null : new(value.Message, value.Payload);
+		}
+	}
 
 	[GenerateShape(Marshaler = typeof(Marshaler))]
 	internal sealed partial class MappingException : Exception
@@ -408,6 +564,8 @@ public partial class RemoteExceptionTests : TestBase
 		public void Fail() => throw new InvalidOperationException("The remote operation failed.", new FormatException("Nested failure."));
 
 		public void FailCustom() => throw new MappingException("Custom failure.", 42);
+
+		public void FailRecursive() => throw new RecursivePayloadException("Recursive failure.", new OpenRpcRecursivePayload { Name = "exception", Next = new OpenRpcRecursivePayload { Name = "nested" } });
 
 		public void FailEmptyAggregate() => throw new AggregateException("No inner failures.");
 
