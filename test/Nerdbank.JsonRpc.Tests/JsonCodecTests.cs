@@ -13,6 +13,33 @@ using PolyType;
 public class JsonCodecTests : TestBase
 {
 	[Test]
+	public async Task ExcessiveJsonParameterCountIsRejected()
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcJsonChannel clientChannel = new(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited);
+		clientChannel.Start();
+		await using JsonRpcJsonChannel serverChannel = new(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited);
+		serverChannel.Start();
+		using JsonRpc client = new(clientChannel);
+		using JsonRpc server = new(serverChannel);
+		server.AddRpcTarget<ICalculator>(new Calculator());
+		client.Start();
+		server.Start();
+
+		string arguments = "[" + string.Join(",", Enumerable.Repeat("0", 65_537)) + "]";
+		JsonRpcRequest request = new()
+		{
+			Id = 1,
+			Method = "add",
+			Arguments = JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(arguments)),
+		};
+		await clientChannel.Writer.WriteAsync(request, this.TimeoutToken);
+
+		JsonRpcError error = Assert.IsType<JsonRpcError>(await clientChannel.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal(JsonRpcErrorCode.InvalidParams, error.Error.Code);
+	}
+
+	[Test]
 	[Arguments(JsonRpcJsonFraming.NewlineDelimited)]
 	[Arguments(JsonRpcJsonFraming.ContentLength)]
 	public async Task DirectGeneratedProxyAndBatch(JsonRpcJsonFraming framing)
@@ -20,8 +47,10 @@ public class JsonCodecTests : TestBase
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 		JsonSerializerPlugin clientPlugin = new(new Nerdbank.Json.JsonSerializer());
 		JsonSerializerPlugin serverPlugin = new(new Nerdbank.Json.JsonSerializer());
-		await using JsonRpcJsonChannel clientChannel = new(clientPipe, clientPlugin, framing, LoggerFactory.CreateLogger("client"));
-		await using JsonRpcJsonChannel serverChannel = new(serverPipe, serverPlugin, framing, LoggerFactory.CreateLogger("server"));
+		await using JsonRpcJsonChannel clientChannel = new(clientPipe, clientPlugin, framing);
+		clientChannel.Start();
+		await using JsonRpcJsonChannel serverChannel = new(serverPipe, serverPlugin, framing);
+		serverChannel.Start();
 		using JsonRpc client = new(clientChannel);
 		using JsonRpc server = new(serverChannel);
 		Assert.NotSame(clientPlugin.Serializer, Assert.IsType<JsonSerializerPlugin>(((IJsonRpcClient)client).Serializer).Serializer);
@@ -60,8 +89,10 @@ public class JsonCodecTests : TestBase
 		(IDuplexPipe firstPipe, IDuplexPipe secondPipe) = FullDuplexStream.CreatePipePair();
 		JsonSerializerPlugin firstPlugin = new(new Nerdbank.Json.JsonSerializer { WriteIndented = true });
 		JsonSerializerPlugin secondPlugin = new(new Nerdbank.Json.JsonSerializer());
-		await using JsonRpcJsonChannel first = new(firstPipe, firstPlugin, framing, LoggerFactory.CreateLogger("first"));
-		await using JsonRpcJsonChannel second = new(secondPipe, secondPlugin, framing, LoggerFactory.CreateLogger("second"));
+		await using JsonRpcJsonChannel first = new(firstPipe, firstPlugin, framing);
+		first.Start();
+		await using JsonRpcJsonChannel second = new(secondPipe, secondPlugin, framing);
+		second.Start();
 		foreach ((RequestId id, string expected) in new[] { (new RequestId("15"), "15"), (new RequestId(15), "15"), (default(RequestId), "null"), (default(RequestId), "null") })
 		{
 			await first.Writer.WriteAsync(new JsonRpcRequest { Method = "echo", Id = id, Arguments = JsonRpcValue.FromJson("[]"u8.ToArray()) }, this.TimeoutToken);
@@ -96,8 +127,10 @@ public class JsonCodecTests : TestBase
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 		JsonSerializerPlugin plugin = new(new Nerdbank.Json.JsonSerializer());
-		await using JsonRpcJsonChannel clientChannel = new(clientPipe, plugin, framing, LoggerFactory.CreateLogger("client"));
-		await using JsonRpcJsonChannel serverChannel = new(serverPipe, new JsonSerializerPlugin(new Nerdbank.Json.JsonSerializer()), framing, LoggerFactory.CreateLogger("server"));
+		await using JsonRpcJsonChannel clientChannel = new(clientPipe, plugin, framing);
+		clientChannel.Start();
+		await using JsonRpcJsonChannel serverChannel = new(serverPipe, new JsonSerializerPlugin(new Nerdbank.Json.JsonSerializer()), framing);
+		serverChannel.Start();
 		using JsonRpc client = new(clientChannel);
 		client.Start();
 		ITypeShape<int> intShape = PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32;
@@ -120,7 +153,8 @@ public class JsonCodecTests : TestBase
 	{
 		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
 		JsonSerializerPlugin plugin = new(new Nerdbank.Json.JsonSerializer());
-		await using JsonRpcJsonChannel channel = new(local, plugin, JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("local"));
+		await using JsonRpcJsonChannel channel = new(local, plugin, JsonRpcJsonFraming.NewlineDelimited);
+		channel.Start();
 		using JsonRpc rpc = new(channel);
 		Assert.Same(plugin, channel.Serializer);
 		Assert.NotSame(plugin, ((IJsonRpcClient)rpc).Serializer);
@@ -144,7 +178,8 @@ public class JsonCodecTests : TestBase
 
 		JsonSerializerPlugin plugin = new(new Nerdbank.Json.JsonSerializer());
 		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
-		JsonRpcJsonChannel channel = new(local, plugin, JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("local"));
+		JsonRpcJsonChannel channel = new(local, plugin, JsonRpcJsonFraming.NewlineDelimited);
+		channel.Start();
 		using JsonRpc rpc = new(channel);
 		rpc.Start();
 		ArgumentException jsonMismatch = Assert.Throws<ArgumentException>(() => rpc.NotifyAsync("method", JsonRpcValue.FromMessagePack(NilMsgPack), this.TimeoutToken));
@@ -159,17 +194,48 @@ public class JsonCodecTests : TestBase
 	}
 
 	[Test]
+	public async Task MalformedJsonArgumentsAreRejectedBeforeQueuing()
+	{
+		(IDuplexPipe local, IDuplexPipe remote) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcJsonChannel channel = new(local, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited);
+		channel.Start();
+		using JsonRpc rpc = new(channel);
+		rpc.Start();
+		foreach (string malformed in new[] { "[1] {}", "[1", "{\"a\":}" })
+		{
+			JsonRpcValue arguments = JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(malformed));
+			Assert.ThrowsAny<JsonException>(() => rpc.NotifyAsync("method", arguments, this.TimeoutToken));
+			Assert.False(rpc.Completion.IsFaulted);
+		}
+
+		await using JsonRpcJsonChannel peer = new(remote, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited);
+		peer.Start();
+		await channel.Writer.WriteAsync(new JsonRpcRequest { Method = "method", Arguments = JsonRpcValue.FromJson("[]"u8.ToArray()) }, this.TimeoutToken);
+		Assert.Equal("method", Assert.IsType<JsonRpcRequest>(await peer.Reader.ReadAsync(this.TimeoutToken)).Method);
+	}
+
+	[Test]
+	public void RequestIdDeserializationRejectsTrailingJson()
+	{
+		JsonRpcSerializer serializer = new JsonSerializerPlugin(new Nerdbank.Json.JsonSerializer());
+		JsonRpcValue value = JsonRpcValue.FromJson("1 2"u8.ToArray());
+		Assert.ThrowsAny<JsonException>(() => serializer.Deserialize(value, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.RequestId, this.TimeoutToken));
+	}
+
+	[Test]
 	[Arguments(JsonRpcEncoding.Json)]
 	[Arguments(JsonRpcEncoding.MessagePack)]
 	public async Task ErrorDataDistinguishesAbsentAndExplicitNull(JsonRpcEncoding encoding)
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 		await using JsonRpcPipeChannel client = encoding == JsonRpcEncoding.Json
-			? new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("client"))
-			: new JsonRpcMessagePackChannel(clientPipe, LoggerFactory.CreateLogger("client"));
+			? new JsonRpcJsonChannel(clientPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
+			: new JsonRpcMessagePackChannel(clientPipe);
+		client.Start();
 		await using JsonRpcPipeChannel server = encoding == JsonRpcEncoding.Json
-			? new JsonRpcJsonChannel(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("server"))
-			: new JsonRpcMessagePackChannel(serverPipe, LoggerFactory.CreateLogger("server"));
+			? new JsonRpcJsonChannel(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
+			: new JsonRpcMessagePackChannel(serverPipe);
+		server.Start();
 		await client.Writer.WriteAsync(new JsonRpcError { Id = 1, Error = new() { Code = -32603, Message = "oops", Data = default(JsonRpcValue) } }, this.TimeoutToken);
 		JsonRpcError response = Assert.IsType<JsonRpcError>(await server.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Null(response.Error.Data);
@@ -194,7 +260,8 @@ public class JsonCodecTests : TestBase
 	public async Task MessagePackErrorDataWirePresence()
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
-		await using JsonRpcMessagePackChannel channel = new(local, LoggerFactory.CreateLogger("local"));
+		await using JsonRpcMessagePackChannel channel = new(local, JsonRpcMessagePackChannel.DefaultSerializer, JsonRpcMessagePackFraming.SelfDelimiting);
+		channel.Start();
 		MessagePackSerializer serializer = new();
 		JsonRpcErrorDetails error = new() { Code = -32603, Message = "oops" };
 		await channel.Writer.WriteAsync(new JsonRpcError { Id = 1, Error = error }, this.TimeoutToken);
@@ -375,8 +442,10 @@ public class JsonCodecTests : TestBase
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 		Nerdbank.Json.JsonSerializer configured = new();
-		await using JsonRpcJsonChannel clientChannel = new(clientPipe, configured, framing, LoggerFactory.CreateLogger("client"));
-		await using JsonRpcJsonChannel serverChannel = new(serverPipe, new Nerdbank.Json.JsonSerializer(), framing, LoggerFactory.CreateLogger("server"));
+		await using JsonRpcJsonChannel clientChannel = new(clientPipe, configured, framing);
+		clientChannel.Start();
+		await using JsonRpcJsonChannel serverChannel = new(serverPipe, new Nerdbank.Json.JsonSerializer(), framing);
+		serverChannel.Start();
 		using JsonRpc client = new(clientChannel);
 		Assert.NotSame(configured, Assert.IsType<JsonSerializerPlugin>(((IJsonRpcClient)client).Serializer).Serializer);
 		client.Start();
@@ -402,8 +471,10 @@ public class JsonCodecTests : TestBase
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 		JsonSerializerPlugin clientPlugin = new(new Nerdbank.Json.JsonSerializer());
 		JsonSerializerPlugin serverPlugin = new(new Nerdbank.Json.JsonSerializer());
-		await using JsonRpcJsonChannel clientChannel = new(clientPipe, clientPlugin, framing, LoggerFactory.CreateLogger("client"));
-		await using JsonRpcJsonChannel serverChannel = new(serverPipe, serverPlugin, framing, LoggerFactory.CreateLogger("server"));
+		await using JsonRpcJsonChannel clientChannel = new(clientPipe, clientPlugin, framing);
+		clientChannel.Start();
+		await using JsonRpcJsonChannel serverChannel = new(serverPipe, serverPlugin, framing);
+		serverChannel.Start();
 		using JsonRpc client = new(clientChannel);
 		using JsonRpc server = new(serverChannel);
 		CancellableTarget target = new();
@@ -416,8 +487,9 @@ public class JsonCodecTests : TestBase
 		await batch.SendAsync(this.TimeoutToken);
 		await target.Started.Task.WithCancellation(this.TimeoutToken);
 		await batch.CancelAllAsync();
-		JsonRpcException exception = await Assert.ThrowsAsync<JsonRpcException>(() => pending.WithCancellation(this.TimeoutToken));
-		Assert.Equal(JsonRpcErrorCode.RequestCancelled, exception.ErrorDetails.Code);
+		OperationCanceledException exception = await Assert.ThrowsAsync<OperationCanceledException>(() => pending.WithCancellation(this.TimeoutToken));
+		Assert.Equal(CancellationToken.None, exception.CancellationToken);
+		Assert.Contains("without the caller requesting cancellation", exception.Message, StringComparison.Ordinal);
 	}
 
 	[Test]
@@ -428,8 +500,10 @@ public class JsonCodecTests : TestBase
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 		JsonSerializerPlugin clientPlugin = new(new Nerdbank.Json.JsonSerializer());
 		JsonSerializerPlugin serverPlugin = new(new Nerdbank.Json.JsonSerializer());
-		await using JsonRpcJsonChannel clientChannel = new(clientPipe, clientPlugin, framing, LoggerFactory.CreateLogger("client"));
-		await using JsonRpcJsonChannel serverChannel = new(serverPipe, serverPlugin, framing, LoggerFactory.CreateLogger("server"));
+		await using JsonRpcJsonChannel clientChannel = new(clientPipe, clientPlugin, framing);
+		clientChannel.Start();
+		await using JsonRpcJsonChannel serverChannel = new(serverPipe, serverPlugin, framing);
+		serverChannel.Start();
 		using JsonRpc server = new(serverChannel);
 		server.AddRpcTarget<ICalculator>(new Calculator(), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.ICalculator, new JsonRpcTargetOptions { MethodNameTransform = CommonMethodNameTransforms.Identity });
 		server.Start();
@@ -454,7 +528,8 @@ public class JsonCodecTests : TestBase
 	public async Task WritesExplicitProtocolVersionWithoutReplacingIt(JsonRpcJsonFraming framing)
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
-		await using JsonRpcJsonChannel channel = new(local, new Nerdbank.Json.JsonSerializer(), framing, LoggerFactory.CreateLogger("local"));
+		await using JsonRpcJsonChannel channel = new(local, new Nerdbank.Json.JsonSerializer(), framing);
+		channel.Start();
 		await channel.Writer.WriteAsync(new JsonRpcRequest { Method = "example", Version = "3.0" }, this.TimeoutToken);
 		ReadResult read = await peer.Input.ReadAsync(this.TimeoutToken);
 		Assert.Contains("\"jsonrpc\":\"3.0\"", Encoding.UTF8.GetString(read.Buffer.ToArray()));
@@ -466,8 +541,8 @@ public class JsonCodecTests : TestBase
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
 		JsonSerializerPlugin serializer = new(new Nerdbank.Json.JsonSerializer());
-		Assert.Throws<ArgumentOutOfRangeException>(() => new JsonRpcJsonChannel(local, serializer, (JsonRpcJsonFraming)int.MaxValue, LoggerFactory.CreateLogger("local")));
-		Assert.Throws<ArgumentNullException>(() => new JsonRpcJsonChannel(local, (JsonSerializerPlugin)null!, JsonRpcJsonFraming.NewlineDelimited, LoggerFactory.CreateLogger("local")));
+		Assert.Throws<ArgumentOutOfRangeException>(() => new JsonRpcJsonChannel(local, serializer, (JsonRpcJsonFraming)int.MaxValue));
+		Assert.Throws<ArgumentNullException>(() => new JsonRpcJsonChannel(local, (JsonSerializerPlugin)null!, JsonRpcJsonFraming.NewlineDelimited));
 		peer.Output.Write("still available"u8);
 		await peer.Output.FlushAsync(this.TimeoutToken);
 		ReadResult read = await local.Input.ReadAsync(this.TimeoutToken);
@@ -481,7 +556,8 @@ public class JsonCodecTests : TestBase
 	public async Task HandlesFragmentedAndCoalescedFrames(JsonRpcJsonFraming framing)
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
-		await using JsonRpcJsonChannel channel = new(local, new Nerdbank.Json.JsonSerializer(), framing, LoggerFactory.CreateLogger("local"));
+		await using JsonRpcJsonChannel channel = new(local, new Nerdbank.Json.JsonSerializer(), framing);
+		channel.Start();
 		static byte[] Frame(string json, JsonRpcJsonFraming mode)
 		{
 			byte[] payload = Encoding.UTF8.GetBytes(json);
@@ -511,7 +587,8 @@ public class JsonCodecTests : TestBase
 	public async Task InvalidOrIncompleteFramingFaultsTransport(JsonRpcJsonFraming framing, string incompleteFrame)
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
-		await using JsonRpcJsonChannel channel = new(local, new Nerdbank.Json.JsonSerializer(), framing, LoggerFactory.CreateLogger("local"));
+		await using JsonRpcJsonChannel channel = new(local, new Nerdbank.Json.JsonSerializer(), framing);
+		channel.Start();
 		peer.Output.Write(Encoding.UTF8.GetBytes(framing == JsonRpcJsonFraming.NewlineDelimited && incompleteFrame.Length == 0 ? "\n" : incompleteFrame));
 		await peer.Output.CompleteAsync();
 		await Assert.ThrowsAnyAsync<Exception>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
@@ -525,11 +602,21 @@ public class JsonCodecTests : TestBase
 	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"jsonrpc\":\"2.0\",\"method\":\"echo\"}")]
 	[Arguments(JsonRpcJsonFraming.ContentLength, "{\"jsonrpc\":\"2.0\",\"id\":1e0,\"method\":\"echo\"}")]
 	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "[{\"jsonrpc\":\"2.0\",\"method\":\"echo\"},42]")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "[]")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\"} x")]
+	[Arguments(JsonRpcJsonFraming.ContentLength, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\"}{}")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"1.0\",\"method\":\"echo\"}")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":2,\"method\":\"echo\"}")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"method\":5}")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"id\":{}}")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":1.5,\"message\":\"m\"}}")]
+	[Arguments(JsonRpcJsonFraming.NewlineDelimited, "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":1}}")]
 	public async Task InvalidJsonEnvelopeFaultsTransport(JsonRpcJsonFraming framing, string json)
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
 		JsonSerializerPlugin plugin = new(new Nerdbank.Json.JsonSerializer());
-		await using JsonRpcJsonChannel channel = new(local, plugin, framing, LoggerFactory.CreateLogger("local"));
+		await using JsonRpcJsonChannel channel = new(local, plugin, framing);
+		channel.Start();
 		byte[] payload = Encoding.UTF8.GetBytes(json);
 		if (framing == JsonRpcJsonFraming.NewlineDelimited)
 		{
@@ -545,13 +632,65 @@ public class JsonCodecTests : TestBase
 	}
 
 	[Test]
+	public async Task ReceivedValuesPreserveTheirRawJson()
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcJsonChannel channel = new(local, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited);
+		channel.Start();
+		peer.Output.Write(Encoding.UTF8.GetBytes(
+			"{\"json\\u0072pc\":\"2.0\",\"m\\u0065thod\":\"echo\",\"params\":[1, \"two\", {\"x\":null}],\"id\":7,\"ext\":{\"ignored\":[1]}}\n" +
+			"{\"jsonrpc\":\"2.0\",\"id\":8,\"result\":{\"a\": [1,2]}}\n" +
+			"{\"jsonrpc\":\"2.0\",\"id\":9,\"error\":{\"extra\":[{}],\"code\":-1,\"data\":{\"x\":1},\"message\":\"m\"}}\n"));
+		await peer.Output.FlushAsync(this.TimeoutToken);
+
+		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await channel.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal("echo", request.Method);
+		Assert.Equal(new RequestId(7), request.Id);
+		Assert.Equal("[1, \"two\", {\"x\":null}]", Encoding.UTF8.GetString(request.Arguments.Bytes.ToArray()));
+
+		JsonRpcResult result = Assert.IsType<JsonRpcResult>(await channel.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal(new RequestId(8), result.Id);
+		Assert.Equal("{\"a\": [1,2]}", Encoding.UTF8.GetString(result.Result.Bytes.ToArray()));
+
+		JsonRpcError error = Assert.IsType<JsonRpcError>(await channel.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal(-1, error.Error.Code);
+		Assert.Equal("m", error.Error.Message);
+		Assert.Equal("{\"x\":1}", Encoding.UTF8.GetString(error.Error.Data!.Value.Bytes.ToArray()));
+	}
+
+	[Test]
+	public async Task RepeatedMethodNamesDecodeConsistently()
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcJsonChannel channel = new(local, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited);
+		channel.Start();
+		string[] wireNames = ["caf\u00e9", "café", "café", "cafe", "caf\u00e9", "cafë", "café"];
+		string[] expected = ["café", "café", "café", "cafe", "café", "cafë", "café"];
+		StringBuilder frames = new();
+		foreach (string wireName in wireNames)
+		{
+			frames.Append("{\"jsonrpc\":\"2.0\",\"method\":\"").Append(wireName).Append("\"}\n");
+		}
+
+		peer.Output.Write(Encoding.UTF8.GetBytes(frames.ToString()));
+		await peer.Output.FlushAsync(this.TimeoutToken);
+
+		foreach (string name in expected)
+		{
+			JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await channel.Reader.ReadAsync(this.TimeoutToken));
+			Assert.Equal(name, request.Method);
+		}
+	}
+
+	[Test]
 	[Arguments(JsonRpcJsonFraming.NewlineDelimited)]
 	[Arguments(JsonRpcJsonFraming.ContentLength)]
 	public async Task MalformedEnvelopeFaultsPendingCalls(JsonRpcJsonFraming framing)
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe peerPipe) = FullDuplexStream.CreatePipePair();
 		JsonSerializerPlugin plugin = new(new Nerdbank.Json.JsonSerializer());
-		await using JsonRpcJsonChannel channel = new(clientPipe, plugin, framing, LoggerFactory.CreateLogger("client"));
+		await using JsonRpcJsonChannel channel = new(clientPipe, plugin, framing);
+		channel.Start();
 		using JsonRpc client = new(channel);
 		client.Start();
 		Task<int> pending = client.RequestAsync<int>("method", JsonRpcValue.FromJson("[]"u8.ToArray()), PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.Int32, this.TimeoutToken).AsTask();
@@ -566,7 +705,7 @@ public class JsonCodecTests : TestBase
 		}
 
 		await peerPipe.Output.FlushAsync(this.TimeoutToken);
-		await Assert.ThrowsAnyAsync<Exception>(() => pending.WithCancellation(this.TimeoutToken));
-		Assert.True(client.Completion.IsFaulted);
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => pending.WithCancellation(this.TimeoutToken));
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => client.Completion.WithCancellation(this.TimeoutToken));
 	}
 }

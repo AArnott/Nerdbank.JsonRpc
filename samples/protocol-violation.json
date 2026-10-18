@@ -1,0 +1,7 @@
+{
+  "jsonrpc": "2.0",
+  "method": "$/protocolViolation",
+  "params": {
+    "reason": "Unexpected JSON-RPC message envelope."
+  }
+}

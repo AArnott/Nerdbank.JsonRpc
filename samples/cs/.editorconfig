@@ -1,0 +1,3 @@
+# Sample sources use filenames that match documentation topics rather than declared types.
+[*.cs]
+dotnet_diagnostic.SA1649.severity = none

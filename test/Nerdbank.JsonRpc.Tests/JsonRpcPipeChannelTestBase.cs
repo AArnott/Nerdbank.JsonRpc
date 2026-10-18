@@ -5,15 +5,24 @@
 
 using Nerdbank.Streams;
 
-public abstract class JsonRpcPipeChannelTestBase((JsonRpcPipeChannel Alice, JsonRpcPipeChannel Bob) pair) : TestBase
+public abstract class JsonRpcPipeChannelTestBase : TestBase
 {
+	private readonly (JsonRpcPipeChannel Alice, JsonRpcPipeChannel Bob) pair;
+
+	protected JsonRpcPipeChannelTestBase((JsonRpcPipeChannel Alice, JsonRpcPipeChannel Bob) pair)
+	{
+		this.pair = pair;
+		this.pair.Alice.Start();
+		this.pair.Bob.Start();
+	}
+
 	[Test]
 	public async Task SendAndReceiveOneRequest()
 	{
 		JsonRpcRequest sent = new() { Id = 1, Method = "testMethod" };
-		await pair.Alice.Writer.WriteAsync(sent, this.TimeoutToken);
+		await this.pair.Alice.Writer.WriteAsync(sent, this.TimeoutToken);
 
-		JsonRpcRequest recv = Assert.IsAssignableFrom<JsonRpcRequest>(await pair.Bob.Reader.ReadAsync(this.TimeoutToken));
+		JsonRpcRequest recv = Assert.IsAssignableFrom<JsonRpcRequest>(await this.pair.Bob.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(sent.Method, recv.Method);
 	}
 
@@ -26,9 +35,9 @@ public abstract class JsonRpcPipeChannelTestBase((JsonRpcPipeChannel Alice, Json
 		msgpackWriter.Flush();
 
 		JsonRpcResult sent = new() { Id = 1, Result = (RawMessagePack)seq.AsReadOnlySequence };
-		await pair.Alice.Writer.WriteAsync(sent, this.TimeoutToken);
+		await this.pair.Alice.Writer.WriteAsync(sent, this.TimeoutToken);
 
-		JsonRpcResult recv = Assert.IsAssignableFrom<JsonRpcResult>(await pair.Bob.Reader.ReadAsync(this.TimeoutToken));
+		JsonRpcResult recv = Assert.IsAssignableFrom<JsonRpcResult>(await this.pair.Bob.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(sent.Result, recv.Result);
 	}
 
@@ -41,9 +50,9 @@ public abstract class JsonRpcPipeChannelTestBase((JsonRpcPipeChannel Alice, Json
 		msgpackWriter.Flush();
 
 		JsonRpcError sent = new() { Id = 1, Error = new JsonRpcErrorDetails { Code = 123, Message = "msg", Data = JsonRpcValue.FromMessagePack((RawMessagePack)new byte[] { 42 }) } };
-		await pair.Alice.Writer.WriteAsync(sent, this.TimeoutToken);
+		await this.pair.Alice.Writer.WriteAsync(sent, this.TimeoutToken);
 
-		JsonRpcError recv = Assert.IsAssignableFrom<JsonRpcError>(await pair.Bob.Reader.ReadAsync(this.TimeoutToken));
+		JsonRpcError recv = Assert.IsAssignableFrom<JsonRpcError>(await this.pair.Bob.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(sent.Error.Message, recv.Error.Message);
 		Assert.Equal(sent.Error.Data, recv.Error.Data);
 	}
@@ -53,13 +62,13 @@ public abstract class JsonRpcPipeChannelTestBase((JsonRpcPipeChannel Alice, Json
 	{
 		JsonRpcRequest sent1 = new() { Id = 1, Method = "testMethod" };
 		JsonRpcRequest sent2 = new() { Id = 2, Method = "testMethod2" };
-		await pair.Alice.Writer.WriteAsync(sent1, this.TimeoutToken);
-		await pair.Alice.Writer.WriteAsync(sent2, this.TimeoutToken);
+		await this.pair.Alice.Writer.WriteAsync(sent1, this.TimeoutToken);
+		await this.pair.Alice.Writer.WriteAsync(sent2, this.TimeoutToken);
 
-		JsonRpcRequest recv1 = Assert.IsAssignableFrom<JsonRpcRequest>(await pair.Bob.Reader.ReadAsync(this.TimeoutToken));
+		JsonRpcRequest recv1 = Assert.IsAssignableFrom<JsonRpcRequest>(await this.pair.Bob.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(sent1.Method, recv1.Method);
 
-		JsonRpcRequest recv2 = Assert.IsAssignableFrom<JsonRpcRequest>(await pair.Bob.Reader.ReadAsync(this.TimeoutToken));
+		JsonRpcRequest recv2 = Assert.IsAssignableFrom<JsonRpcRequest>(await this.pair.Bob.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(sent2.Method, recv2.Method);
 	}
 }

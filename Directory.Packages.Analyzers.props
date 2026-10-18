@@ -1,0 +1,20 @@
+<Project>
+  <!-- These versions support the oldest compiler host targeted by this generator: Roslyn 4.11.0 (Visual Studio 2022 17.11 / .NET SDK 8.0.400). Keep this complete runtime dependency closure aligned with that host; update manually after reviewing https://learn.microsoft.com/visualstudio/extensibility/roslyn-version-support. These deliberate pins differ from the repository-wide Roslyn version. -->
+  <PropertyGroup>
+    <CodeAnalysisVersionForAnalyzers>4.11.0</CodeAnalysisVersionForAnalyzers>
+    <!-- Apply compatibility pins to dependencies that are only transitive for the generator. -->
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Update="Microsoft.CodeAnalysis.Common" Version="$(CodeAnalysisVersionForAnalyzers)" />
+    <PackageVersion Update="Microsoft.CodeAnalysis.CSharp" Version="$(CodeAnalysisVersionForAnalyzers)" />
+    <PackageVersion Include="System.Buffers" Version="4.5.1" />
+    <PackageVersion Include="System.Collections.Immutable" Version="8.0.0" />
+    <PackageVersion Include="System.Memory" Version="4.5.5" />
+    <PackageVersion Include="System.Numerics.Vectors" Version="4.5.0" />
+    <PackageVersion Include="System.Reflection.Metadata" Version="8.0.0" />
+    <PackageVersion Include="System.Runtime.CompilerServices.Unsafe" Version="6.0.0" />
+    <PackageVersion Include="System.Text.Encoding.CodePages" Version="7.0.0" />
+    <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.5.4" />
+  </ItemGroup>
+</Project>

@@ -1,8 +1,9 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 namespace Nerdbank.JsonRpc;
 
+[TypeShape(Kind = TypeShapeKind.None)]
 internal struct DispatchRequest
 {
 	internal JsonRpcSerializer UserDataSerializer => this.JsonRpc.UserDataSerializer;
@@ -12,6 +13,8 @@ internal struct DispatchRequest
 	internal required object? TargetInstance { get; init; }
 
 	internal required JsonRpcRequest Request { get; init; }
+
+	internal required RpcCallState CallState { get; init; }
 
 	internal required CancellationToken CancellationToken { get; init; }
 

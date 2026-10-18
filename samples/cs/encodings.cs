@@ -15,7 +15,7 @@ public static class Example
     {
         #region json-encoding
         var configured = new Nerdbank.Json.JsonSerializer();
-        var channel = new JsonRpcJsonChannel(pipe, configured, JsonRpcJsonFraming.ContentLength, logger);
+        var channel = new JsonRpcJsonChannel(pipe, configured, JsonRpcJsonFraming.ContentLength);
         var rpc = new JsonRpc(channel) { Logger = logger };
         rpc.Start();
         #endregion

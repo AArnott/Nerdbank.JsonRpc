@@ -1,7 +1,17 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.Collections.Immutable;
+using System.Linq;
+using System.Threading;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Testing;
+using Nerdbank.JsonRpc;
+using Nerdbank.JsonRpc.SourceGeneration;
+using Nerdbank.MessagePack;
+using Nerdbank.Streams;
+using PolyType;
 using TUnit.Core;
 using Xunit;
 
@@ -10,7 +20,7 @@ public class ClientProxyGeneratorTests
 	[Test]
 	public async Task UnsupportedMethodSignaturesProduceDiagnosticsAndNoProxy()
 	{
-		const string Source = """
+		const string Source = /* lang=c#-test */ """
 			using System.Threading;
 			using System.Threading.Tasks;
 			using Nerdbank.JsonRpc;
@@ -57,7 +67,7 @@ public class ClientProxyGeneratorTests
 	[Test]
 	public async Task UnsupportedInterfacesProduceDiagnosticsAndNoProxy()
 	{
-		const string Source = """
+		const string Source = /* lang=c#-test */ """
 			using System.Threading;
 			using System.Threading.Tasks;
 			using Nerdbank.JsonRpc;
@@ -89,9 +99,69 @@ public class ClientProxyGeneratorTests
 	}
 
 	[Test]
+	public async Task DuplicateOptionalInterfaceIdsProduceDiagnostic()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System;
+			using System.Threading;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			internal interface IFirstOptional
+			{
+				Task FirstAsync(CancellationToken cancellationToken);
+			}
+
+			internal interface ISecondOptional
+			{
+				Task SecondAsync(CancellationToken cancellationToken);
+			}
+
+			[RpcMarshalable]
+			[RpcMarshalableOptionalInterface(1, typeof(IFirstOptional))]
+			[RpcMarshalableOptionalInterface(1, typeof(ISecondOptional))]
+			internal partial interface {|#0:IMarshalable|} : IDisposable
+			{
+				Task InvokeAsync(CancellationToken cancellationToken);
+			}
+			""";
+
+		DiagnosticResult duplicateId = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(0)
+			.WithArguments("IMarshalable", "optional interface ID 1 is declared more than once");
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, duplicateId);
+	}
+
+	[Test]
+	public async Task OverlappingOptionalInterfaceMembersAreDeduplicated()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System;
+			using System.Threading;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			[RpcMarshalableOptionalInterface(1, typeof(IOptional))]
+			internal interface IOptional : IDisposable
+			{
+				Task InvokeAsync(CancellationToken cancellationToken);
+			}
+
+			[RpcMarshalable]
+			[RpcMarshalableOptionalInterface(1, typeof(IOptional))]
+			internal partial interface IMarshalable : IDisposable
+			{
+				Task InvokeAsync(CancellationToken cancellationToken);
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source);
+	}
+
+	[Test]
 	public async Task NonPartialInterfaceProducesDiagnosticAndNoProxy()
 	{
-		const string Source = """
+		const string Source = /* lang=c#-test */ """
 			using System.Threading;
 			using System.Threading.Tasks;
 			using Nerdbank.JsonRpc;
@@ -113,7 +183,7 @@ public class ClientProxyGeneratorTests
 	[Test]
 	public async Task MatchingProxyNamesInDifferentNamespacesDoNotCollide()
 	{
-		const string Source = """
+		const string Source = /* lang=c#-test */ """
 			using System.Threading;
 			using System.Threading.Tasks;
 			using Nerdbank.JsonRpc;
@@ -144,9 +214,138 @@ public class ClientProxyGeneratorTests
 	}
 
 	[Test]
+	public async Task NotificationsCannotAcceptRpcMarshalableInterfaceParameters()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+			using PolyType;
+
+			[RpcMarshalable]
+			[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+			internal partial interface IRemoteObject : IDisposable
+			{
+				Task CallAsync();
+			}
+
+			[GenerateJsonRpcProxy]
+			[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+			internal partial interface INotificationContract
+			{
+				void {|#0:Notify|}(IRemoteObject remoteObject);
+				void {|#1:NotifyMany|}(IRemoteObject[] remoteObjects);
+				void {|#2:NotifyNested|}(System.Collections.Generic.IReadOnlyList<IRemoteObject> remoteObjects);
+			}
+			""";
+
+		DiagnosticResult directParameter = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(0)
+			.WithArguments("INotificationContract.Notify(IRemoteObject)", "notification methods cannot accept RPC-marshalable interface parameters");
+		DiagnosticResult arrayParameter = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(1)
+			.WithArguments("INotificationContract.NotifyMany(IRemoteObject[])", "notification methods cannot accept RPC-marshalable interface parameters");
+		DiagnosticResult nestedParameter = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(2)
+			.WithArguments("INotificationContract.NotifyNested(System.Collections.Generic.IReadOnlyList<IRemoteObject>)", "notification methods cannot accept RPC-marshalable interface parameters");
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, directParameter, arrayParameter, nestedParameter);
+	}
+
+	[Test]
+	public async Task RpcMarshalableInterfaceGeneratesProxyWithoutGenerateProxyAttribute()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System;
+			using System.Threading;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+			using PolyType;
+
+			[RpcMarshalable]
+			[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+			internal partial interface IRemoteObject : IDisposable
+			{
+				Task<int> CallAsync(CancellationToken cancellationToken);
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source);
+	}
+
+	[Test]
+	public async Task CallScopedRpcMarshalableInterfaceDoesNotRequireDisposable()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System.Threading;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+			using PolyType;
+
+			[RpcMarshalable(CallScopedLifetime = true)]
+			[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+			internal partial interface ITemporaryObject
+			{
+				Task<int> GetValueAsync(CancellationToken cancellationToken);
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source);
+	}
+
+	[Test]
+	public async Task RpcMarshalableInterfacesMustExtendDisposableAndCannotDeclarePropertiesOrEvents()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			[RpcMarshalable]
+			internal partial interface {|#0:INotDisposable|}
+			{
+				Task CallAsync();
+			}
+
+			[RpcMarshalable]
+			internal partial interface {|#1:IHasProperty|} : IDisposable
+			{
+				int Count { get; }
+			}
+
+			[RpcMarshalable]
+			internal partial interface {|#2:IHasEvent|} : IDisposable
+			{
+				event EventHandler Changed;
+			}
+
+			[RpcMarshalable]
+			internal partial interface IHasNotification : IDisposable
+			{
+				void {|#3:Notify|}();
+			}
+			""";
+
+		DiagnosticResult noDisposable = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(0)
+			.WithArguments("INotDisposable", "marshalable interfaces must extend IDisposable");
+		DiagnosticResult hasProperty = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(1)
+			.WithArguments("IHasProperty", "marshalable interfaces cannot declare properties or events");
+		DiagnosticResult hasEvent = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(2)
+			.WithArguments("IHasEvent", "marshalable interfaces cannot declare properties or events");
+		DiagnosticResult hasNotification = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(3)
+			.WithArguments("IHasNotification.Notify()", "marshalable interface methods must return Task or ValueTask");
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, noDisposable, hasProperty, hasEvent, hasNotification);
+	}
+
+	[Test]
 	public async Task KeywordIdentifiersAreEscapedInGeneratedProxy()
 	{
-		const string Source = """
+		const string Source = /* lang=c#-test */ """
 			using System.Threading;
 			using System.Threading.Tasks;
 			using Nerdbank.JsonRpc;
@@ -161,5 +360,137 @@ public class ClientProxyGeneratorTests
 			""";
 
 		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source);
+	}
+
+	[Test]
+	public async Task ParameterNamesMatchingGeneratedLocalsAndNullableResultsCompileCleanly()
+	{
+		const string Source = /* lang=c#-test */ """
+			#nullable enable
+			using System.Threading;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+			using PolyType;
+
+			[GenerateJsonRpcProxy]
+			internal partial interface ICollidingLocals
+			{
+				Task<string?> GetAsync(string arguments, string argumentsBuilder, CancellationToken cancellationToken);
+
+				ValueTask<string?> GetValueAsync(string arguments, CancellationToken cancellationToken);
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(
+			Source,
+			CompilerDiagnostics.Warnings,
+			DiagnosticResult.CompilerError("CS0311")
+				.WithSpan(System.IO.Path.Combine("Nerdbank.JsonRpc.SourceGeneration", "Nerdbank.JsonRpc.SourceGeneration.ClientProxyGenerator", "CollidingLocalsProxy.g.cs"), 23, 107, 23, 140)
+				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<ICollidingLocals>", "T", "ICollidingLocals"));
+	}
+
+	[Test]
+	public async Task ProxyFactoryNameAvoidsCollisionWithInterfaceMembers()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			[GenerateJsonRpcProxy]
+			internal partial interface ICollidingNames
+			{
+				Task NerdbankJsonRpc_ProxyFactoryAttribute();
+
+				Task NerdbankJsonRpc_ProxyFactoryAttribute_();
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, validateGeneratedCode: true);
+	}
+
+	[Test]
+	public async Task UnchangedOutputsAreCachedAndOnlyChangedProxyIsRegenerated()
+	{
+		const string Contracts = /* lang=c#-test */ """
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			[GenerateJsonRpcProxy]
+			internal partial interface IFirst { }
+
+			[GenerateJsonRpcProxy]
+			internal partial interface ISecond { }
+			""";
+		const string ChangedContracts = /* lang=c#-test */ """
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			[GenerateJsonRpcProxy]
+			internal partial interface IFirst
+			{
+				Task<int> GetAsync();
+			}
+
+			[GenerateJsonRpcProxy]
+			internal partial interface ISecond { }
+			""";
+
+		CSharpParseOptions parseOptions = new(LanguageVersion.Preview);
+		SyntaxTree contractsTree = CSharpSyntaxTree.ParseText(Contracts, parseOptions, "Contracts.cs");
+		ImmutableArray<MetadataReference> references = await ReferenceAssemblies.Net.Net90.ResolveAsync(LanguageNames.CSharp, CancellationToken.None);
+		references = references
+			.Add(MetadataReference.CreateFromFile(typeof(GenerateJsonRpcProxyAttribute).Assembly.Location))
+			.Add(MetadataReference.CreateFromFile(typeof(MessagePackSerializer).Assembly.Location))
+			.Add(MetadataReference.CreateFromFile(typeof(Sequence<>).Assembly.Location))
+			.Add(MetadataReference.CreateFromFile(typeof(ITypeShape<>).Assembly.Location));
+		CSharpCompilation compilation = CSharpCompilation.Create(
+			"IncrementalGeneratorTests",
+			[contractsTree],
+			references,
+			new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+		GeneratorDriver driver = CSharpGeneratorDriver.Create(
+			[new ClientProxyGenerator().AsSourceGenerator()],
+			parseOptions: parseOptions,
+			driverOptions: new GeneratorDriverOptions(IncrementalGeneratorOutputKind.None, trackIncrementalGeneratorSteps: true));
+		driver = driver.RunGenerators(compilation);
+		driver = driver.RunGenerators(compilation);
+		GeneratorRunResult identicalRun = driver.GetRunResult().Results.Single();
+		if (!AreOutputsStable(identicalRun))
+		{
+			throw new InvalidOperationException("Running the generator again with identical inputs should reuse every output.");
+		}
+
+		SyntaxTree unrelatedTree = CSharpSyntaxTree.ParseText("internal class Unrelated { }", parseOptions, "Unrelated.cs");
+		CSharpCompilation compilationWithUnrelatedSource = compilation.AddSyntaxTrees(unrelatedTree);
+		driver = driver.RunGenerators(compilationWithUnrelatedSource);
+		GeneratorRunResult unchangedRun = driver.GetRunResult().Results.Single();
+		if (!AreOutputsStable(unchangedRun))
+		{
+			throw new InvalidOperationException("Adding an unrelated source file should leave every generated proxy unchanged or cached.");
+		}
+
+		if (unchangedRun.GeneratedSources.Any(static source => source.SourceText.ToString().Contains('\r')))
+		{
+			throw new InvalidOperationException("Generated source must use deterministic LF newlines.");
+		}
+
+		SyntaxTree changedTree = CSharpSyntaxTree.ParseText(ChangedContracts, parseOptions, "Contracts.cs");
+		CSharpCompilation compilationWithChangedProxy = compilationWithUnrelatedSource.ReplaceSyntaxTree(contractsTree, changedTree);
+		driver = driver.RunGenerators(compilationWithChangedProxy);
+		GeneratorRunResult changedRun = driver.GetRunResult().Results.Single();
+		IncrementalStepRunReason[] outputReasons = changedRun.TrackedSteps["GenerateJsonRpcProxyOutputs"]
+			.SelectMany(static step => step.Outputs)
+			.Select(static output => output.Reason)
+			.ToArray();
+		bool hasUnchangedProxy = outputReasons.Contains(IncrementalStepRunReason.Cached) || outputReasons.Contains(IncrementalStepRunReason.Unchanged);
+		if (!outputReasons.Contains(IncrementalStepRunReason.Modified) || !hasUnchangedProxy)
+		{
+			throw new InvalidOperationException($"Changing one contract should regenerate only its proxy. Reasons: {string.Join(", ", outputReasons)}");
+		}
+
+		static bool AreOutputsStable(GeneratorRunResult run)
+			=> run.TrackedSteps["GenerateJsonRpcProxyOutputs"]
+				.SelectMany(static step => step.Outputs)
+				.All(static output => output.Reason is IncrementalStepRunReason.Cached or IncrementalStepRunReason.Unchanged);
 	}
 }

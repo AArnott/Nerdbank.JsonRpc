@@ -1,6 +1,7 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Testing;
@@ -17,16 +18,27 @@ internal static class CSharpSourceGeneratorVerifier
 	internal static DiagnosticResult Diagnostic(string diagnosticId)
 		=> new(diagnosticId, DiagnosticSeverity.Warning);
 
-	internal static async Task VerifyGeneratorAsync(string source, params DiagnosticResult[] expected)
+	internal static Task VerifyGeneratorAsync([StringSyntax("c#-test")] string source, params DiagnosticResult[] expected)
+		=> VerifyGeneratorAsync(source, validateGeneratedCode: false, expected);
+
+	internal static Task VerifyGeneratorAsync([StringSyntax("c#-test")] string source, bool validateGeneratedCode, params DiagnosticResult[] expected)
+		=> VerifyGeneratorAsync(source, validateGeneratedCode ? CompilerDiagnostics.Errors : CompilerDiagnostics.None, expected);
+
+	internal static async Task VerifyGeneratorAsync([StringSyntax("c#-test")] string source, CompilerDiagnostics compilerDiagnostics, params DiagnosticResult[] expected)
 	{
+		bool validateGeneratedCode = compilerDiagnostics != CompilerDiagnostics.None;
 		Test test = new()
 		{
-			CompilerDiagnostics = CompilerDiagnostics.None,
+			CompilerDiagnostics = compilerDiagnostics,
 			TestCode = source,
 			ReferenceAssemblies = ReferenceAssemblies.Net.Net90,
-			TestBehaviors = TestBehaviors.SkipGeneratedCodeCheck | TestBehaviors.SkipGeneratedSourcesCheck,
+			TestBehaviors = validateGeneratedCode
+				? TestBehaviors.SkipGeneratedSourcesCheck
+				: TestBehaviors.SkipGeneratedCodeCheck | TestBehaviors.SkipGeneratedSourcesCheck,
 		};
 
+		test.DisabledDiagnostics.Add("CS1701");
+		test.DisabledDiagnostics.Add("CS1702");
 		test.TestState.AdditionalReferences.Add(typeof(GenerateJsonRpcProxyAttribute).Assembly);
 		test.TestState.AdditionalReferences.Add(typeof(MessagePackSerializer).Assembly);
 		test.TestState.AdditionalReferences.Add(typeof(Sequence<>).Assembly);

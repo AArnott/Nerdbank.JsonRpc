@@ -8,4 +8,10 @@ internal interface IArgumentsBuilderContext
 	JsonRpcSerializer Serializer { get; }
 
 	MarshaledObjectManager MarshaledObjects { get; }
+
+	ProgressManager Progress { get; }
+
+	OutOfBandStreamManager OutOfBandStreams { get; }
+
+	AsyncEnumerableManager AsyncEnumerables { get; }
 }

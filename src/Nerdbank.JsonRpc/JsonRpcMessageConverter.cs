@@ -1,6 +1,7 @@
-// Copyright (c) Andrew Arnott. All rights reserved.
+﻿// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.Buffers;
 using System.Collections.Immutable;
 using System.Net;
 using Nerdbank.MessagePack;
@@ -8,6 +9,7 @@ using Nerdbank.MessagePack;
 namespace Nerdbank.JsonRpc;
 
 /// <summary>Adapts an encoding-neutral message to the MessagePack transport serializer.</summary>
+/// <param name="message">The protocol message to wrap.</param>
 [GenerateShape]
 [MessagePackConverter(typeof(JsonRpcMessageConverter))]
 internal readonly partial struct JsonRpcMessagePackEnvelope(JsonRpcMessage message)
@@ -19,6 +21,9 @@ internal readonly partial struct JsonRpcMessagePackEnvelope(JsonRpcMessage messa
 #pragma warning disable NBMsgPack031 // This discriminating converter conditionally reads exactly one MessagePack structure.
 internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePackEnvelope>
 {
+	/// <summary>The maximum number of entries accepted in one MessagePack batch or parameter collection.</summary>
+	internal const int MaximumCollectionCount = 65_536;
+
 	private static readonly JsonRpcErrorDetailsConverter ErrorConverter = new();
 
 	public override JsonRpcMessagePackEnvelope Read(ref MessagePackReader reader, SerializationContext context)
@@ -37,23 +42,48 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 	private static JsonRpcMessage ReadBatch(ref MessagePackReader reader, SerializationContext context)
 	{
 		int count = reader.ReadArrayHeader();
+		if (count > MaximumCollectionCount || count > reader.Sequence.Length - reader.Consumed)
+		{
+			throw new ProtocolViolationException("The JSON-RPC batch contains too many entries or is truncated.");
+		}
+
 		if (count == 0)
 		{
 			throw new ProtocolViolationException("A JSON-RPC batch must not be empty.");
 		}
 
 		ImmutableArray<JsonRpcMessage>.Builder messages = ImmutableArray.CreateBuilder<JsonRpcMessage>(count);
-		for (int i = 0; i < count; i++)
+		try
 		{
-			if (reader.NextMessagePackType != MessagePackType.Map)
+			for (int i = 0; i < count; i++)
 			{
-				throw new ProtocolViolationException("Every JSON-RPC batch entry must be a message object.");
+				if (reader.NextMessagePackType != MessagePackType.Map)
+				{
+					throw new ProtocolViolationException("Every JSON-RPC batch entry must be a message object.");
+				}
+
+				messages.Add(ReadSingleMessage(ref reader, context));
 			}
 
-			messages.Add(ReadSingleMessage(ref reader, context));
+			return new JsonRpcMessageBatch(messages.MoveToImmutable());
 		}
+		catch
+		{
+			foreach (JsonRpcMessage message in messages)
+			{
+				if (message is JsonRpcRequest request)
+				{
+					request.SplitArguments.Return();
+					request.Arguments.Release();
+				}
+				else if (message is JsonRpcResult result)
+				{
+					result.Result.Release();
+				}
+			}
 
-		return new JsonRpcMessageBatch(messages.MoveToImmutable());
+			throw;
+		}
 	}
 
 	private static JsonRpcMessage ReadSingleMessage(ref MessagePackReader reader, SerializationContext context)
@@ -63,98 +93,237 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 		RequestId id = default;
 		string? methodName = null;
 		JsonRpcValue arguments = default, resultValue = default;
+		ArgumentList splitArguments = default;
 		JsonRpcErrorDetails? errorDetails = null;
-		for (int i = 0; i < count; i++)
+		TopLevelProperties? extensions = null;
+		try
 		{
-			if (reader.NextMessagePackType != MessagePackType.String)
+			for (int i = 0; i < count; i++)
 			{
-				throw new ProtocolViolationException("A JSON-RPC property name must be a string.");
-			}
-
-			ReadOnlySpan<byte> name = reader.ReadStringSpan();
-			if (name.SequenceEqual("jsonrpc"u8))
-			{
-				if (version || reader.NextMessagePackType != MessagePackType.String || !reader.ReadStringSpan().SequenceEqual("2.0"u8))
+				if (reader.NextMessagePackType != MessagePackType.String)
 				{
-					throw new ProtocolViolationException("A JSON-RPC message must declare version 2.0 exactly once.");
+					throw new ProtocolViolationException("A JSON-RPC property name must be a string.");
 				}
 
-				version = true;
-			}
-			else if (name.SequenceEqual("id"u8))
-			{
-				if (idPresent)
+				ReadOnlySpan<byte> name = reader.ReadStringSpan();
+				if (name.SequenceEqual("jsonrpc"u8))
 				{
-					throw new ProtocolViolationException("A JSON-RPC message contains duplicate IDs.");
+					if (version || reader.NextMessagePackType != MessagePackType.String || !reader.ReadStringSpan().SequenceEqual("2.0"u8))
+					{
+						throw new ProtocolViolationException("A JSON-RPC message must declare version 2.0 exactly once.");
+					}
+
+					version = true;
+				}
+				else if (name.SequenceEqual("id"u8))
+				{
+					if (idPresent)
+					{
+						throw new ProtocolViolationException("A JSON-RPC message contains duplicate IDs.");
+					}
+
+					idPresent = true;
+					id = context.GetConverter<RequestId>().Read(ref reader, context);
+				}
+				else if (name.SequenceEqual("method"u8))
+				{
+					if (method || reader.NextMessagePackType != MessagePackType.String)
+					{
+						throw new ProtocolViolationException("A JSON-RPC method must be a string supplied once.");
+					}
+
+					method = true;
+					methodName = Utf8StringCache.ReadString(ref reader);
+				}
+				else if (name.SequenceEqual("params"u8))
+				{
+					if (parameters || reader.NextMessagePackType is not (MessagePackType.Map or MessagePackType.Array))
+					{
+						throw new ProtocolViolationException("JSON-RPC params must be an array or object supplied once.");
+					}
+
+					parameters = true;
+					arguments = ReadParameters(ref reader, context, out splitArguments);
+				}
+				else if (name.SequenceEqual("result"u8))
+				{
+					if (result)
+					{
+						throw new ProtocolViolationException("A JSON-RPC result must be supplied once.");
+					}
+
+					result = true;
+					resultValue = JsonRpcValue.FromPooledMessagePack(reader.ReadRaw(context));
+				}
+				else if (name.SequenceEqual("error"u8))
+				{
+					if (error || reader.NextMessagePackType != MessagePackType.Map)
+					{
+						throw new ProtocolViolationException("A JSON-RPC error must be an object supplied once.");
+					}
+
+					error = true;
+					errorDetails = ErrorConverter.Read(ref reader, context);
+				}
+				else
+				{
+					ReadExtension(ref reader, name, ref extensions, context);
+				}
+			}
+
+			if (!version || (method ? result || error : result == error || !idPresent || parameters))
+			{
+				throw new ProtocolViolationException("Unexpected JSON-RPC message envelope.");
+			}
+
+			return method
+				? new JsonRpcRequest { Method = methodName!, Arguments = arguments, SplitArguments = splitArguments, Id = idPresent ? id : (RequestId?)null, TopLevelProperties = extensions }
+				: result
+					? new JsonRpcResult { Id = id, Result = resultValue, TopLevelProperties = extensions }
+					: new JsonRpcError { Id = id, Error = errorDetails!, TopLevelProperties = extensions };
+		}
+		catch
+		{
+			splitArguments.Return();
+			arguments.Release();
+			resultValue.Release();
+
+			throw;
+		}
+	}
+
+	/// <summary>Reads request params, locating each argument on the same pass that finds where the params end.</summary>
+	/// <param name="reader">The reader, positioned at the params map or array.</param>
+	/// <param name="context">The serialization context.</param>
+	/// <param name="split">Receives the individual arguments, which share the returned value's buffer.</param>
+	/// <returns>The params, copied into a pooled buffer.</returns>
+	private static JsonRpcValue ReadParameters(ref MessagePackReader reader, SerializationContext context, out ArgumentList split)
+	{
+		ReadOnlySequence<byte> sequence = reader.Sequence;
+		SequencePosition start = reader.Position;
+		split = default;
+		MessagePackType type = reader.NextMessagePackType;
+		if (type is not (MessagePackType.Map or MessagePackType.Array))
+		{
+			// Leave malformed params for the user data serializer to reject when the request is dispatched.
+			return JsonRpcValue.FromPooledMessagePack(reader.ReadRaw(context));
+		}
+
+		long startConsumed = reader.Consumed;
+		bool named = type == MessagePackType.Map;
+		int count = named ? reader.ReadMapHeader() : reader.ReadArrayHeader();
+		long minimumBytesPerEntry = named ? 2 : 1;
+		long remainingBytes = sequence.Length - reader.Consumed;
+		if (count > MaximumCollectionCount || count > remainingBytes / minimumBytesPerEntry)
+		{
+			throw new ProtocolViolationException("The JSON-RPC params contain too many entries or are truncated.");
+		}
+
+		(string? Name, JsonRpcValue Value)[] values = ArgumentList.Rent(count);
+		try
+		{
+			Span<(int Offset, int Length)> ranges = count <= 16 ? stackalloc (int, int)[count] : new (int, int)[count];
+			bool valid = true;
+			for (int i = 0; i < count; i++)
+			{
+				string? name = null;
+				if (named)
+				{
+					if (reader.NextMessagePackType is not (MessagePackType.String or MessagePackType.Nil))
+					{
+						valid = false;
+					}
+
+					if (valid)
+					{
+						name = Utf8StringCache.ReadString(ref reader);
+					}
+					else
+					{
+						reader.Skip(context);
+					}
 				}
 
-				idPresent = true;
-				id = context.GetConverter<RequestId>().Read(ref reader, context);
+				int offset = checked((int)(reader.Consumed - startConsumed));
+				reader.Skip(context);
+				ranges[i] = (offset, checked((int)(reader.Consumed - startConsumed)) - offset);
+				values[i] = (name, default);
 			}
-			else if (name.SequenceEqual("method"u8))
+
+			JsonRpcValue parameters = JsonRpcValue.FromPooledBytes(sequence.Slice(start, reader.Position), JsonRpcEncoding.MessagePack);
+			if (valid)
 			{
-				if (method || reader.NextMessagePackType != MessagePackType.String)
+				for (int i = 0; i < count; i++)
 				{
-					throw new ProtocolViolationException("A JSON-RPC method must be a string supplied once.");
+					values[i] = (values[i].Name, parameters.Slice(ranges[i].Offset, ranges[i].Length));
 				}
 
-				method = true;
-				methodName = reader.ReadString();
-			}
-			else if (name.SequenceEqual("params"u8))
-			{
-				if (parameters || reader.NextMessagePackType is not (MessagePackType.Map or MessagePackType.Array))
-				{
-					throw new ProtocolViolationException("JSON-RPC params must be an array or object supplied once.");
-				}
-
-				parameters = true;
-				arguments = JsonRpcValue.FromMessagePack(reader.ReadRaw(context));
-			}
-			else if (name.SequenceEqual("result"u8))
-			{
-				if (result)
-				{
-					throw new ProtocolViolationException("A JSON-RPC result must be supplied once.");
-				}
-
-				result = true;
-				resultValue = JsonRpcValue.FromMessagePack(reader.ReadRaw(context));
-			}
-			else if (name.SequenceEqual("error"u8))
-			{
-				if (error || reader.NextMessagePackType != MessagePackType.Map)
-				{
-					throw new ProtocolViolationException("A JSON-RPC error must be an object supplied once.");
-				}
-
-				error = true;
-				errorDetails = ErrorConverter.Read(ref reader, context);
+				split = new(values, count, named);
 			}
 			else
 			{
-				reader.Skip(context);
+				new ArgumentList(values, count, named).Return();
 			}
-		}
 
-		if (!version || (method ? result || error : result == error || !idPresent || parameters))
+			return parameters;
+		}
+		catch
 		{
-			throw new ProtocolViolationException("Unexpected JSON-RPC message envelope.");
+			new ArgumentList(values, count, named).Return();
+
+			throw;
+		}
+	}
+
+	/// <summary>Retains a primitive extension property, skipping values of other types.</summary>
+	/// <param name="reader">The reader, positioned at the property value.</param>
+	/// <param name="name">The UTF-8 property name.</param>
+	/// <param name="extensions">The lazily created property bag.</param>
+	/// <param name="context">The serialization context.</param>
+	private static void ReadExtension(ref MessagePackReader reader, ReadOnlySpan<byte> name, ref TopLevelProperties? extensions, SerializationContext context)
+	{
+		TopLevelPropertyValue? primitive = null;
+		bool isNil = reader.NextMessagePackType == MessagePackType.Nil;
+		switch (reader.NextMessagePackType)
+		{
+			case MessagePackType.String:
+				primitive = reader.ReadString()!;
+				break;
+			case MessagePackType.Integer when reader.NextCode != MessagePackCode.UInt64:
+				primitive = reader.ReadInt64();
+				break;
+			case MessagePackType.Integer:
+				ulong unsigned = reader.ReadUInt64();
+				if (unsigned <= long.MaxValue)
+				{
+					primitive = (long)unsigned;
+				}
+
+				break;
+			case MessagePackType.Nil:
+				reader.ReadNil();
+				break;
+			default:
+				reader.Skip(context);
+				break;
 		}
 
-		return method
-			? new JsonRpcRequest { Method = methodName!, Arguments = arguments, Id = idPresent ? id : (RequestId?)null }
-			: result
-				? new JsonRpcResult { Id = id, Result = resultValue }
-				: new JsonRpcError { Id = id, Error = errorDetails! };
+		string propertyName = StringEncoding.UTF8.GetString(name);
+		if (primitive is null && !isNil && TopLevelProperties.TryGetRequiredKind(propertyName, out TopLevelPropertyKind kind))
+		{
+			throw new ProtocolViolationException($"The JSON-RPC '{propertyName}' property must be a {kind} value.");
+		}
+
+		(extensions ??= new()).AddReceived(propertyName, primitive);
 	}
 
 	private static void WriteMessage(ref MessagePackWriter writer, JsonRpcMessage message, SerializationContext context)
 	{
+		int extensionCount = message.TopLevelProperties?.Count ?? 0;
 		switch (message)
 		{
 			case JsonRpcRequest request:
-				writer.WriteMapHeader(2 + (request.HasId ? 1 : 0) + (request.Arguments.HasValue ? 1 : 0));
+				writer.WriteMapHeader(2 + (request.HasId ? 1 : 0) + (request.Arguments.HasValue ? 1 : 0) + extensionCount);
 				writer.Write("jsonrpc");
 				writer.Write(request.Version);
 				writer.Write("method");
@@ -162,7 +331,7 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 				if (request.Arguments.HasValue)
 				{
 					writer.Write("params");
-					writer.WriteRaw(request.Arguments.AsMessagePack().MsgPack);
+					writer.WriteRaw(request.Arguments.AsOwnedMessagePack().MsgPack);
 				}
 
 				if (request.HasId)
@@ -170,22 +339,25 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 					WriteId(ref writer, request.Id!.Value, context);
 				}
 
+				WriteExtensions(ref writer, message);
 				break;
 			case JsonRpcResult result:
-				writer.WriteMapHeader(3);
+				writer.WriteMapHeader(3 + extensionCount);
 				writer.Write("jsonrpc");
 				writer.Write(result.Version);
 				writer.Write("result");
-				writer.WriteRaw(result.Result.AsMessagePack().MsgPack);
+				writer.WriteRaw(result.Result.AsOwnedMessagePack().MsgPack);
 				WriteId(ref writer, result.Id, context);
+				WriteExtensions(ref writer, message);
 				break;
 			case JsonRpcError error:
-				writer.WriteMapHeader(3);
+				writer.WriteMapHeader(3 + extensionCount);
 				writer.Write("jsonrpc");
 				writer.Write(error.Version);
 				writer.Write("error");
 				ErrorConverter.Write(ref writer, error.Error, context);
 				WriteId(ref writer, error.Id, context);
+				WriteExtensions(ref writer, message);
 				break;
 			case JsonRpcMessageBatch batch:
 				writer.WriteArrayHeader(batch.Messages.Length);
@@ -208,5 +380,24 @@ internal class JsonRpcMessageConverter : MessagePackConverter<JsonRpcMessagePack
 	{
 		writer.Write("id");
 		context.GetConverter<RequestId>().Write(ref writer, id, context);
+	}
+
+	private static void WriteExtensions(ref MessagePackWriter writer, JsonRpcMessage message)
+	{
+		if (message.TopLevelProperties is { Count: > 0 } extensions)
+		{
+			foreach (KeyValuePair<string, TopLevelPropertyValue> property in extensions.Properties)
+			{
+				writer.Write(property.Key);
+				if (property.Value.Int64Value is long integer)
+				{
+					writer.Write(integer);
+				}
+				else
+				{
+					writer.Write(property.Value.StringValue);
+				}
+			}
+		}
 	}
 }

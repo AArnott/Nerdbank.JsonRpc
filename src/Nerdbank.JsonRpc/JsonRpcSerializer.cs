@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
+using System.Text.Json.Nodes;
 using Nerdbank.MessagePack;
 
 namespace Nerdbank.JsonRpc;
@@ -31,7 +32,7 @@ public abstract class JsonRpcSerializer
 	/// <param name="shape">The type shape.</param>
 	/// <param name="cancellationToken">A cancellation token.</param>
 	/// <returns>An owned encoded value.</returns>
-	public abstract JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, CancellationToken cancellationToken = default);
+	public JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => this.Serialize(value, shape, callState: null, cancellationToken);
 
 	/// <summary>Deserializes a typed value with its type shape.</summary>
 	/// <typeparam name="T">The result type.</typeparam>
@@ -39,20 +40,52 @@ public abstract class JsonRpcSerializer
 	/// <param name="shape">The result shape.</param>
 	/// <param name="cancellationToken">A cancellation token.</param>
 	/// <returns>The deserialized value.</returns>
-	public abstract T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, CancellationToken cancellationToken = default);
+	public T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, CancellationToken cancellationToken = default) => this.Deserialize(value, shape, callState: null, cancellationToken);
+
+	/// <summary>Produces the configured serializer's JSON Schema for a type shape.</summary>
+	/// <param name="shape">The type shape to describe.</param>
+	/// <returns>The schema document.</returns>
+	internal abstract JsonNode GetJsonSchema(ITypeShape shape);
+
+	/// <summary>Serializes a JSON object as a value in the connection's wire encoding.</summary>
+	/// <param name="document">The JSON object.</param>
+	/// <returns>The encoded object value.</returns>
+	internal abstract JsonRpcValue SerializeJsonObject(JsonObject document);
+
+	/// <summary>Serializes a typed value with the scopes that apply to one RPC message.</summary>
+	/// <typeparam name="T">The type of the value.</typeparam>
+	/// <param name="value">The value.</param>
+	/// <param name="shape">The type shape.</param>
+	/// <param name="callState">The scopes that converters for marshaled values require, if any.</param>
+	/// <param name="cancellationToken">A cancellation token.</param>
+	/// <returns>An owned encoded value.</returns>
+	internal abstract JsonRpcValue Serialize<T>(in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken);
+
+	/// <summary>Deserializes a typed value with the scopes that apply to one RPC message.</summary>
+	/// <typeparam name="T">The result type.</typeparam>
+	/// <param name="value">An encoded value.</param>
+	/// <param name="shape">The result shape.</param>
+	/// <param name="callState">The scopes that converters for marshaled values require, if any.</param>
+	/// <param name="cancellationToken">A cancellation token.</param>
+	/// <returns>The deserialized value.</returns>
+	internal abstract T Deserialize<T>(JsonRpcValue value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken);
 
 	/// <summary>Creates a serializer configured to marshal disposable values for one RPC connection.</summary>
 	/// <param name="manager">The connection's marshaled-object manager.</param>
+	/// <param name="progress">The connection's progress manager.</param>
+	/// <param name="outOfBandStreams">The connection's out-of-band stream manager.</param>
+	/// <param name="asyncEnumerables">The connection's async enumerable manager.</param>
 	/// <returns>A serializer configured for the connection.</returns>
-	internal virtual JsonRpcSerializer WithMarshaledObjectManager(MarshaledObjectManager manager) => this;
+	internal virtual JsonRpcSerializer WithMarshaledObjectManager(MarshaledObjectManager manager, ProgressManager progress, OutOfBandStreamManager outOfBandStreams, AsyncEnumerableManager asyncEnumerables) => this;
 
 	/// <summary>Serializes a parameter into an existing argument buffer.</summary>
 	/// <typeparam name="T">The parameter type.</typeparam>
 	/// <param name="buffer">The output buffer.</param>
 	/// <param name="value">The parameter value.</param>
 	/// <param name="shape">The parameter type shape.</param>
+	/// <param name="callState">The scopes that converters for marshaled values require, if any.</param>
 	/// <param name="cancellationToken">A cancellation token.</param>
-	internal abstract void SerializeTo<T>(IBufferWriter<byte> buffer, in T value, ITypeShape<T> shape, CancellationToken cancellationToken);
+	internal abstract void SerializeTo<T>(IBufferWriter<byte> buffer, in T value, ITypeShape<T> shape, RpcCallState? callState, CancellationToken cancellationToken);
 
 	/// <summary>Writes an encoded argument name into an existing buffer.</summary>
 	/// <param name="buffer">The output buffer.</param>
@@ -120,20 +153,28 @@ public abstract class JsonRpcSerializer
 	/// <summary>Extracts owned parameter values without converting user DTOs.</summary>
 	/// <param name="arguments">The encoded parameter collection.</param>
 	/// <returns>The named or positional entries.</returns>
-	internal abstract (bool Named, List<(string? Name, JsonRpcValue Value)> Values) ReadArguments(JsonRpcValue arguments);
+	internal abstract (bool Named, ArgumentList Values) ReadArguments(JsonRpcValue arguments);
+
+	/// <summary>Gets a request's individual arguments, reusing any the transport already located while reading the message.</summary>
+	/// <param name="request">The request whose arguments to read.</param>
+	/// <returns>Whether the arguments are named, and the arguments themselves.</returns>
+	internal (bool Named, ArgumentList Values) ReadArguments(JsonRpcRequest request)
+	{
+		if (request.SplitArguments is { IsDefault: false } split)
+		{
+			return (split.Named, split);
+		}
+
+		(bool named, ArgumentList values) = this.ReadArguments(request.Arguments);
+		request.SplitArguments = values;
+		return (named, values);
+	}
 
 	/// <summary>Encodes a cancellation notification using the protocol ID token.</summary>
 	/// <param name="id">The ID to cancel.</param>
 	/// <param name="cancellationToken">A cancellation token.</param>
 	/// <returns>Encoded cancellation parameters.</returns>
 	internal abstract JsonRpcValue SerializeCancellation(RequestId id, CancellationToken cancellationToken);
-
-	/// <summary>Decodes an application parameter with its runtime shape.</summary>
-	/// <param name="value">The encoded application value.</param>
-	/// <param name="shape">The application type shape.</param>
-	/// <param name="cancellationToken">A cancellation token.</param>
-	/// <returns>The deserialized application value.</returns>
-	internal abstract object? DeserializeObject(JsonRpcValue value, ITypeShape shape, CancellationToken cancellationToken);
 
 	private void ValidateValue(JsonRpcValue value)
 	{

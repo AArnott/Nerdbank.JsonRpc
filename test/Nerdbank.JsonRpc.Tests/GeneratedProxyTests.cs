@@ -17,8 +17,10 @@ public class GeneratedProxyTests
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 
-		JsonRpcMessagePackChannel clientChannel = new(clientPipe, NullLogger.Instance);
-		JsonRpcMessagePackChannel serverChannel = new(serverPipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel clientChannel = new(clientPipe);
+		clientChannel.Start();
+		JsonRpcMessagePackChannel serverChannel = new(serverPipe);
+		serverChannel.Start();
 
 		JsonRpc clientRpc = new(clientChannel);
 		clientRpc.Start();
@@ -69,7 +71,9 @@ public class GeneratedProxyTests
 
 		Assert.Equal(1, properties["__jsonrpc_marshaled"]);
 		Assert.IsType<long>(properties["handle"]);
-		Assert.Equal("explicit", properties["lifetime"]);
+
+		// Explicit lifetime is the default, so the property is omitted for wire compatibility with StreamJsonRpc.
+		Assert.False(properties.ContainsKey("lifetime"));
 	}
 
 	[Test]
@@ -185,12 +189,166 @@ public class GeneratedProxyTests
 	}
 
 	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task GeneratedProxy_MarshalsAttributedInterfaceEndToEnd(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		RemoteCounterService target = new();
+		serverRpc.AddRpcTarget<IRemoteCounterService>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IRemoteCounterService client = clientRpc.Attach<IRemoteCounterService>();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+
+		IRemoteCounter remoteCounter = await client.GetCounterAsync(cts.Token);
+		Assert.Equal(1, await remoteCounter.IncrementAsync(cts.Token));
+		Assert.True(await client.IsSameCounterAsync(remoteCounter, cts.Token));
+
+		remoteCounter.Dispose();
+
+		await target.Counter.Disposed.Task.WithCancellation(cts.Token);
+		Assert.True(target.Counter.IsDisposed);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task MarshaledInterfaceCannotBeSentInNotification(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc rpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IRemoteCounterService>(new RemoteCounterService());
+		serverRpc.Start();
+		rpc.Start();
+		IRemoteCounterService remoteService = rpc.Attach<IRemoteCounterService>();
+		IRemoteCounter remoteCounter = await remoteService.GetCounterAsync(CancellationToken.None);
+		CallScopedCounter localCounter = new();
+
+		await Assert.ThrowsAsync<InvalidOperationException>(() => rpc.NotifyAsync("notify", localCounter, ShapeProvider.Default.ICallScopedCounter, CancellationToken.None).AsTask());
+		await Assert.ThrowsAsync<InvalidOperationException>(() => rpc.NotifyAsync("notify", remoteCounter, ShapeProvider.Default.IRemoteCounter, CancellationToken.None).AsTask());
+		using JsonRpcBatch batch = rpc.CreateBatch();
+		Assert.Throws<InvalidOperationException>(() => batch.NotifyAsync("notify", remoteCounter, ShapeProvider.Default.IRemoteCounter, CancellationToken.None));
+
+		JsonRpcValue forwardedArguments;
+		using (JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named: false, count: 1, CancellationToken.None))
+		{
+			builder.Add(null, remoteCounter, ShapeProvider.Default.IRemoteCounter);
+			forwardedArguments = builder.Build();
+		}
+
+		await Assert.ThrowsAsync<InvalidOperationException>(() => rpc.NotifyAsync("notify", forwardedArguments, CancellationToken.None).AsTask());
+		using (JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named: false, count: 1, CancellationToken.None))
+		{
+			builder.Add(null, remoteCounter, ShapeProvider.Default.IRemoteCounter);
+			JsonRpcValue batchedArguments = builder.Build();
+			Assert.Throws<InvalidOperationException>(() => batch.NotifyAsync("notify", batchedArguments, CancellationToken.None));
+		}
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task InvokeProxyAfterHandleReleaseReturnsNoMarshaledObjectFound(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		RemoteCounterService target = new();
+		serverRpc.AddRpcTarget<IRemoteCounterService>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+
+		// Read the raw wire marker instead of a generated proxy so the test can drive the protocol directly.
+		MarshaledObjectMarker marker = await clientRpc.RequestAsync("getCounter", CreateEmptyArguments(clientRpc), ShapeProvider.Default.MarshaledObjectMarker, CancellationToken.None);
+		string incrementMethod = $"$/invokeProxy/{marker.Handle}/increment";
+		Assert.Equal(1, await clientRpc.RequestAsync(incrementMethod, CreateEmptyArguments(clientRpc), ShapeProvider.Default.Int32, CancellationToken.None));
+
+		await clientRpc.NotifyAsync("$/releaseMarshaledObject", marker, ShapeProvider.Default.MarshaledObjectMarker, CancellationToken.None);
+		await target.Counter.Disposed.Task;
+
+		RemoteInvocationException exception = await Assert.ThrowsAsync<RemoteInvocationException>(() => clientRpc.RequestAsync(incrementMethod, CreateEmptyArguments(clientRpc), ShapeProvider.Default.Int32, CancellationToken.None).AsTask());
+		Assert.Equal(JsonRpcErrorCode.NoMarshaledObjectFound, exception.ErrorDetails.Code);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task CallScopedMarshalableInterfaceLivesOnlyForCall(JsonRpcEncoding encoding)
+	{
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		RemoteCounterService target = new();
+		CallScopedCounter localCounter = new();
+		clientRpc.AddRpcTarget<ICallScopedCounter>(localCounter);
+		serverRpc.AddRpcTarget<IRemoteCounterService>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IRemoteCounterService client = clientRpc.Attach<IRemoteCounterService>();
+
+		Assert.Equal(1, await client.UseCallScopedCounterAsync(localCounter, cts.Token));
+		Assert.Equal(1, localCounter.Count);
+		Assert.NotNull(target.LastCallScopedProxy);
+		await Assert.ThrowsAsync<ObjectDisposedException>(() => target.LastCallScopedProxy.IncrementAsync(cts.Token));
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task CallScopedMarshalableInterfaceCannotBeReturned(JsonRpcEncoding encoding)
+	{
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		RemoteCounterService target = new();
+		serverRpc.AddRpcTarget<IRemoteCounterService>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IRemoteCounterService client = clientRpc.Attach<IRemoteCounterService>();
+
+		await Assert.ThrowsAsync<RemoteInvocationException>(() => client.ReturnCallScopedCounterAsync(cts.Token));
+		CallScopedCounter localCounter = new();
+		await Assert.ThrowsAsync<RemoteInvocationException>(() => client.EchoCallScopedCounterAsync(localCounter, cts.Token));
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Arguments(JsonRpcEncoding.Json)]
+	public async Task ExplicitMarshalableArgumentsAreReleasedAndInvalidatedAfterRemoteError(JsonRpcEncoding encoding)
+	{
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		RemoteCounterService target = new();
+		serverRpc.AddRpcTarget<IRemoteCounterService>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IRemoteCounterService client = clientRpc.Attach<IRemoteCounterService>();
+		RemoteCounter localCounter = new();
+
+		await Assert.ThrowsAsync<RemoteInvocationException>(() => client.FailAfterReceivingAsync(localCounter, cts.Token));
+
+		Assert.True(localCounter.IsDisposed);
+		Assert.NotNull(target.LastExplicitProxy);
+		await Assert.ThrowsAsync<ObjectDisposedException>(() => target.LastExplicitProxy.IncrementAsync(cts.Token));
+	}
+
+	[Test]
 	public async Task GeneratedProxy_IncludesInheritedInterfaceMethods()
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 
-		JsonRpcMessagePackChannel clientChannel = new(clientPipe, NullLogger.Instance);
-		JsonRpcMessagePackChannel serverChannel = new(serverPipe, NullLogger.Instance);
+		JsonRpcMessagePackChannel clientChannel = new(clientPipe);
+		clientChannel.Start();
+		JsonRpcMessagePackChannel serverChannel = new(serverPipe);
+		serverChannel.Start();
 
 		JsonRpc clientRpc = new(clientChannel);
 		clientRpc.Start();
@@ -351,11 +509,90 @@ public class GeneratedProxyTests
 		Assert.Contains("interface", ex.Message, StringComparison.OrdinalIgnoreCase);
 	}
 
+	[Test]
+	public void GeneratedProxy_AttachSupportsLegacyMetadata()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
+
+		Assert.IsType<LegacyGeneratedProxy>(clientRpc.Attach(typeof(ILegacyGeneratedProxyContract)));
+		Assert.IsType<LegacyGeneratedProxy>(clientRpc.Attach<ILegacyGeneratedProxyContract>());
+	}
+
+	[Test]
+	public void GeneratedProxy_AttachGenericRequiresInterfaceType()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
+
+		ArgumentException ex = Assert.Throws<ArgumentException>(() => clientRpc.Attach<string>());
+		Assert.Contains("interface", ex.Message, StringComparison.OrdinalIgnoreCase);
+	}
+
+	[Test]
+	public void GeneratedProxy_AttachFailuresAreRepeatable()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
+
+		// Failures must not be cached as a type initialization failure that changes the exception on later calls.
+		for (int i = 0; i < 2; i++)
+		{
+			Assert.Throws<NotSupportedException>(() => clientRpc.Attach<INotGeneratedProxy>());
+			Assert.Throws<NotSupportedException>(() => clientRpc.Attach(typeof(INotGeneratedProxy)));
+			Assert.Throws<ArgumentException>(() => clientRpc.Attach<string>());
+		}
+	}
+
+	[Test]
+	public void GeneratedProxy_FactoryReturningNullThrowsProxyMismatchException()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
+
+		InvalidOperationException byType = Assert.Throws<InvalidOperationException>(() => clientRpc.Attach(typeof(INullFactoryProxy)));
+		Assert.Contains("returned null", byType.Message);
+
+		InvalidOperationException generic = Assert.Throws<InvalidOperationException>(() => clientRpc.Attach<INullFactoryProxy>());
+		Assert.Contains("returned null", generic.Message);
+	}
+
+	[Test]
+	public void GeneratedProxy_AttachByTypeCreatesProxy()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
+
+		object proxy = clientRpc.Attach(typeof(ICalculator));
+
+		Assert.IsAssignableFrom<ICalculator>(proxy);
+		Assert.NotSame(proxy, clientRpc.Attach(typeof(ICalculator)));
+	}
+
+	[Test]
+	public void GeneratedProxy_AttachFromGenericContext()
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
+
+		Assert.IsAssignableFrom<ICalculator>(AttachGeneric<ICalculator>(clientRpc));
+		Assert.IsAssignableFrom<IPositionalCalculator>(AttachGeneric<IPositionalCalculator>(clientRpc));
+
+		static T AttachGeneric<T>(JsonRpc rpc)
+			where T : class => rpc.Attach<T>();
+	}
+
+	private static JsonRpcValue CreateEmptyArguments(JsonRpc rpc)
+	{
+		using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named: false, count: 0);
+		return builder.Build();
+	}
+
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
 		=> encoding switch
 		{
-			JsonRpcEncoding.MessagePack => new JsonRpcMessagePackChannel(pipe, NullLogger.Instance),
-			JsonRpcEncoding.Json => new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited, NullLogger.Instance),
+			JsonRpcEncoding.MessagePack => new JsonRpcMessagePackChannel(pipe),
+			JsonRpcEncoding.Json => new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited),
 			_ => throw new ArgumentOutOfRangeException(nameof(encoding)),
 		};
 }

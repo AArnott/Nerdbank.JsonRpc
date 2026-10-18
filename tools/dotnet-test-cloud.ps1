@@ -6,7 +6,7 @@
 .PARAMETER Configuration
     The configuration within which to run tests
 .PARAMETER IncludeNativeAOT
-    Runs the NativeAOT-compiled runtime tests and fails if the expected image is missing.
+    Runs the NativeAOT-compiled tests and fails if the expected image is missing.
 .PARAMETER Agent
     The name of the agent. This is used in preparing test run titles.
 .PARAMETER PublishResults
@@ -53,9 +53,6 @@ if ($x86) {
 
 $testBinLog = Join-Path $ArtifactStagingFolder (Join-Path build_logs test.binlog)
 $testLogs = Join-Path $ArtifactStagingFolder test_logs
-if (Test-Path -LiteralPath $testLogs) {
-    Remove-Item -LiteralPath $testLogs -Recurse -Force
-}
 
 $globalJson = Get-Content $PSScriptRoot/../global.json | ConvertFrom-Json
 $isMTP = $globalJson.test.runner -eq 'Microsoft.Testing.Platform'
@@ -70,6 +67,8 @@ if ($isMTP) {
         ,'--hangdump-timeout','5m'
         ,'--crashdump'
         ,'--crashdump-type','Heap'
+        # The native crash report accompanies the dump and is often the only way to identify the
+        # faulting thread and instruction when a test host dies of an access violation on Linux.
         ,'--crash-report-if-supported'
     )
     $mtpArgs = @(
@@ -79,19 +78,21 @@ if ($isMTP) {
         ,'--results-directory',$testLogs
         ,'--report-trx'
     )
-    $tunitArgs = @($mtpArgs)
 
     if (-not $NoCoverage) {
-        $coverageArgs = @(
+        $mtpArgs += @(
             ,'--coverage'
             ,'--coverage-output-format','cobertura'
-        )
-        $mtpArgs += $coverageArgs + @(
             ,'--coverage-settings',"$PSScriptRoot/test.runsettings"
         )
-        $tunitArgs += $coverageArgs
     }
 
+    $solutionFiles = @(Get-ChildItem -LiteralPath $RepoRoot -File | Where-Object { $_.Extension -in '.sln', '.slnx' })
+    if ($solutionFiles.Count -ne 1) {
+        throw "Expected exactly one solution file in $RepoRoot, but found $($solutionFiles.Count)."
+    }
+
+    $solutionPath = $solutionFiles[0].FullName
     $testProjects = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'test') -Recurse -Filter '*.csproj')
     $nonTUnitProjects = @(
         foreach ($testProject in $testProjects) {
@@ -101,87 +102,56 @@ if ($isMTP) {
             }
         }
     )
-    foreach ($testProject in $nonTUnitProjects) {
-        & $dotnet test $testProject.FullName `
-            --no-build `
-            -c $Configuration `
-            -bl:"$testBinLog" `
-            -- `
-            --filter-not-trait 'TestCategory=FailsInCloudTest' `
-            @mtpArgs `
-            @dumpSwitches `
-            @extraArgs
-        if ($LASTEXITCODE -ne 0) { $failedTests += 1 }
+    if ($nonTUnitProjects.Count -gt 0) {
+        foreach ($testProject in $nonTUnitProjects) {
+            & $dotnet test $testProject.FullName --no-build -c $Configuration -bl:"$testBinLog" -- --filter-not-trait 'TestCategory=FailsInCloudTest' @mtpArgs @dumpSwitches @extraArgs
+            if ($LASTEXITCODE -ne 0) { $failedTests += 1 }
+        }
     }
 
     $tunitProjects = @($testProjects | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'PackageReference Include="TUnit.Engine"' -Quiet })
     foreach ($project in $tunitProjects) {
-        $projectName = $project.BaseName
         Write-Host "Running TUnit project '$($project.FullName)'." -ForegroundColor Cyan
         $frameworkInfo = (& $dotnet msbuild $project.FullName -getProperty:TargetFrameworks -getProperty:TargetFramework -nologo | ConvertFrom-Json).Properties
         $frameworks = @($frameworkInfo.TargetFrameworks, $frameworkInfo.TargetFramework) | Where-Object { $_ } | ForEach-Object { $_ -split ';' } | Select-Object -Unique
         foreach ($framework in $frameworks) {
             if ($framework -eq 'net472' -and -not $IsWindows) { continue }
-
-            $testAssemblyName = if ($framework -eq 'net472') { "$projectName.exe" } else { "$projectName.dll" }
-            $frameworkOutput = Join-Path $RepoRoot "bin/$projectName/$Configuration/$framework"
-            $testAssemblies = @(
-                Get-ChildItem -Path $frameworkOutput -Recurse -File -Filter $testAssemblyName -ErrorAction SilentlyContinue |
-                    Where-Object { $_.FullName -notmatch '[\\/](native|nativeaot|publish)[\\/]' }
-            )
-            if ($testAssemblies.Count -ne 1) {
-                Write-Error "Expected exactly one IL TUnit test assembly for $projectName $framework under '$frameworkOutput', but found $($testAssemblies.Count)."
+            $ilRunArgs = @($mtpArgs) + @('--report-trx-filename', "$($project.BaseName)_${framework}_IL_{arch}.trx")
+            if (-not $NoCoverage) {
+                $ilRunArgs += @('--coverage-output', "$($project.BaseName)_${framework}_IL.cobertura.xml")
+            }
+            & $dotnet run --project $project.FullName --no-build -c $Configuration --framework $framework -- '--treenode-filter=/**[Category!=FailsInCloudTest]' @ilRunArgs @dumpSwitches @extraArgs
+            if ($LASTEXITCODE -ne 0) { $failedTests += 1 }
+        }
+    }
+    if ($IncludeNativeAOT) {
+        $nativeAotTests = @(& "$PSScriptRoot/Get-NativeAOTTestProjects.ps1" -Configuration $Configuration)
+        foreach ($nativeAotTest in $nativeAotTests) {
+            $testExecutable = $nativeAotTest.ExecutablePath
+            if (-not (Test-Path -LiteralPath $testExecutable -PathType Leaf)) {
+                Write-Error "Expected NativeAOT TUnit test executable '$testExecutable' was not found."
                 $failedTests += 1
                 continue
             }
 
-            $ilRunArgs = @($tunitArgs) + @('--report-trx-filename', "${projectName}_${framework}_IL_{arch}.trx")
-            if (-not $NoCoverage) {
-                $ilRunArgs += @('--coverage-output', "${projectName}_${framework}_IL.cobertura.xml")
-            }
-
-            Write-Host "Running IL TUnit tests for $projectName $framework from '$($testAssemblies[0].FullName)'." -ForegroundColor Cyan
-            if ($framework -eq 'net472') {
-                & $testAssemblies[0].FullName `
-                    '--treenode-filter=/*/*/*/*[TestCategory!=FailsInCloudTest]' `
-                    @ilRunArgs `
-                    @dumpSwitches `
-                    @extraArgs
-            } else {
-                & $dotnet $testAssemblies[0].FullName `
-                    '--treenode-filter=/*/*/*/*[TestCategory!=FailsInCloudTest]' `
-                    @ilRunArgs `
-                    @dumpSwitches `
-                    @extraArgs
-            }
-            if ($LASTEXITCODE -ne 0) { $failedTests += 1 }
-        }
-    }
-
-    if ($IncludeNativeAOT) {
-        $projectName = 'Nerdbank.JsonRpc.Tests'
-        $framework = 'net10.0'
-        $testExecutableName = if ($IsMacOS -or $IsLinux) { $projectName } else { "$projectName.exe" }
-        $nativeAotExecutables = @(
-            Get-ChildItem -Path (Join-Path $RepoRoot "bin/$projectName/$Configuration/$framework/*/publish/$testExecutableName") -File -ErrorAction SilentlyContinue
-        )
-        if ($nativeAotExecutables.Count -ne 1) {
-            Write-Error "Expected exactly one NativeAOT test executable for $projectName $framework, but found $($nativeAotExecutables.Count)."
-            $failedTests += 1
-        } else {
-            $nativeAotArgs = @($tunitArgs) + @('--report-trx-filename', "${projectName}_${framework}_NativeAOT_{arch}.trx")
-            if (-not $NoCoverage) {
-                $nativeAotArgs += @('--coverage-output', "${projectName}_${framework}_NativeAOT.cobertura.xml")
-            }
+            $nativeAotArgs = @(
+                ,'--treenode-filter=/**[Category!=FailsInCloudTest]'
+                ,'--diagnostic'
+                ,'--diagnostic-output-directory',$testLogs
+                ,'--diagnostic-verbosity','Information'
+                ,'--results-directory',$testLogs
+                ,'--report-trx'
+                ,'--report-trx-filename',"$($nativeAotTest.ProjectName)_$($nativeAotTest.TargetFramework)_NativeAOT_{arch}.trx"
+            )
             if ($IsWindows) {
                 $nativeAotArgs += $dumpSwitches
             }
-
-            Write-Host "Running NativeAOT tests for $framework from '$($nativeAotExecutables[0].FullName)'." -ForegroundColor Cyan
-            & $nativeAotExecutables[0].FullName '--treenode-filter=/*/*/*/*[TestCategory!=FailsInCloudTest]' @nativeAotArgs @extraArgs
+            Write-Host "Running NativeAOT TUnit tests from '$testExecutable'." -ForegroundColor Cyan
+            & $testExecutable @nativeAotArgs @extraArgs
             if ($LASTEXITCODE -ne 0) { $failedTests += 1 }
         }
     }
+
     $trxFiles = Get-ChildItem -Recurse -Path $testLogs\*.trx
 } else {
     $testDiagLog = Join-Path $ArtifactStagingFolder (Join-Path test_logs diag.log)

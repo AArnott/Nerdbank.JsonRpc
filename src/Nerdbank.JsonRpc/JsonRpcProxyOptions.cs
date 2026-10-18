@@ -12,6 +12,9 @@ public sealed record JsonRpcProxyOptions
 {
 	private Func<string, string> methodNameTransform = CommonMethodNameTransforms.Default;
 
+	/// <summary>Gets a shared instance with default settings.</summary>
+	public static JsonRpcProxyOptions Default { get; } = new();
+
 	/// <summary>Gets a value indicating whether requests encode arguments by parameter name rather than position.</summary>
 	public bool UseNamedArguments { get; init; }
 

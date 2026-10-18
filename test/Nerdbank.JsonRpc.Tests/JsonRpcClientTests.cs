@@ -1,8 +1,11 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System.IO.Pipelines;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
 using Microsoft.VisualStudio.Threading;
+using Nerdbank.Streams;
 using PolyType;
 
 /// <summary>
@@ -24,9 +27,24 @@ public partial class JsonRpcClientTests : TestBase
 	}
 
 	[Test]
-	public void LoggerDefaultsToNullLoggerAndCanBeConfigured()
+	public async Task LoggerReceivesPreBufferedTransportMessage()
+	{
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		await using JsonRpcJsonChannel channel = new(local, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited);
+		await peer.Output.WriteAsync("{\"jsonrpc\":\"2.0\",\"method\":\"test\"}\n"u8.ToArray(), this.TimeoutToken);
+
+		RecordingLogger logger = new();
+		using JsonRpc rpc = new(channel) { Logger = logger };
+		rpc.Start();
+
+		Assert.Equal("JSON-RPC JsonRpcRequest", await logger.MessageReceived.Task.WithCancellation(this.TimeoutToken));
+	}
+
+	[Test]
+	public void LoggerConfiguresConnectionAndTransport()
 	{
 		Assert.Same(Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, this.jsonRpc.Logger);
+
 		Microsoft.Extensions.Logging.ILogger logger = LoggerFactory.CreateLogger("rpc");
 		using JsonRpc configured = new(new MockJsonRpcPipeChannel(Channel.CreateUnbounded<JsonRpcMessage>())) { Logger = logger };
 		Assert.Same(logger, configured.Logger);
@@ -133,6 +151,38 @@ public partial class JsonRpcClientTests : TestBase
 	}
 
 	[Test]
+	public async Task CancelPendingTypedRequestAndReuse()
+	{
+		using CancellationTokenSource cts = new();
+		Task<int> resultTask = this.jsonRpc.RequestAsync<AddNamedArguments, int, Witness>("Add", new AddNamedArguments { A = 2, B = 3 }, cts.Token).AsTask();
+		JsonRpcRequest requestMessage = Assert.IsType<JsonRpcRequest>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
+
+		cts.Cancel();
+		JsonRpcRequest cancelMessage = Assert.IsType<JsonRpcRequest>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal("$/cancelRequest", cancelMessage.Method);
+
+		JsonRpcError errorMessage = new()
+		{
+			Id = requestMessage.Id!.Value,
+			Error = new JsonRpcErrorDetails { Code = JsonRpcErrorCode.RequestCancelled, Message = "cancelled" },
+		};
+		await this.channel.Writer.WriteAsync(errorMessage, this.TimeoutToken);
+		OperationCanceledException exception = await Assert.ThrowsAsync<OperationCanceledException>(() => resultTask.WithCancellation(this.TimeoutToken));
+		Assert.Equal(cts.Token, exception.CancellationToken);
+
+		Task<int> nextResultTask = this.jsonRpc.RequestAsync<AddNamedArguments, int, Witness>("Add", new AddNamedArguments { A = 2, B = 3 }, this.TimeoutToken).AsTask();
+		JsonRpcRequest nextRequestMessage = Assert.IsType<JsonRpcRequest>(await this.channel.Reader.ReadAsync(this.TimeoutToken));
+		JsonRpcResult resultMessage = new()
+		{
+			Id = nextRequestMessage.Id!.Value,
+			Result = (RawMessagePack)((MessagePackSerializerPlugin)((IJsonRpcClient)this.jsonRpc).Serializer).Serializer.Serialize<int, Witness>(5, this.TimeoutToken),
+		};
+		await this.channel.Writer.WriteAsync(resultMessage, this.TimeoutToken);
+
+		Assert.Equal(5, await nextResultTask.WithCancellation(this.TimeoutToken));
+	}
+
+	[Test]
 	public async Task CancelPendingRequest()
 	{
 		using CancellationTokenSource cts = new();
@@ -167,8 +217,8 @@ public partial class JsonRpcClientTests : TestBase
 		await this.channel.Writer.WriteAsync(errorMessage, this.TimeoutToken);
 
 		// Verify that the client finally resolves.
-		JsonRpcException ex = await Assert.ThrowsAsync<JsonRpcException>(() => resultTask.WithCancellation(this.TimeoutToken));
-		Assert.Equal(JsonRpcErrorCode.RequestCancelled, ex.ErrorDetails.Code);
+		OperationCanceledException ex = await Assert.ThrowsAsync<OperationCanceledException>(() => resultTask.WithCancellation(this.TimeoutToken));
+		Assert.Equal(cts.Token, ex.CancellationToken);
 	}
 
 	[Test]
@@ -218,4 +268,22 @@ public partial class JsonRpcClientTests : TestBase
 	[GenerateShapeFor<int>]
 	[GenerateShapeFor<int[]>]
 	private partial class Witness;
+
+	private sealed class RecordingLogger : ILogger
+	{
+		internal TaskCompletionSource<string> MessageReceived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public IDisposable? BeginScope<TState>(TState state)
+			where TState : notnull => null;
+
+		public bool IsEnabled(LogLevel logLevel) => true;
+
+		public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+		{
+			if (eventId.Id == 2)
+			{
+				this.MessageReceived.TrySetResult(formatter(state, exception));
+			}
+		}
+	}
 }

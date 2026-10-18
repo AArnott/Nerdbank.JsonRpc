@@ -8,4 +8,6 @@ internal struct DispatchResponse
 	internal JsonRpcResponse? Response { get; init; }
 
 	internal bool IsProtocolViolation { get; set; }
+
+	internal bool IsError { get; init; }
 }

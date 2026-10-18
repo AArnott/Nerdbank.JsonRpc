@@ -6,3 +6,15 @@
 namespace Nerdbank.JsonRpc;
 
 internal delegate ValueTask<DispatchResponse> MethodInvoker(DispatchRequest request);
+
+/// <summary>Creates a delegate that forwards a raised CLR event to the given <see cref="JsonRpc"/> connection as a notification with the given method name.</summary>
+/// <param name="jsonRpc">The connection to send the notification over.</param>
+/// <param name="eventName">The RPC notification (method) name to use for the forwarded event.</param>
+/// <returns>A delegate, compatible with the event's handler type, that forwards invocations as JSON-RPC notifications.</returns>
+internal delegate Delegate CreateEventHandlerDelegate(JsonRpc jsonRpc, string eventName);
+
+/// <summary>Reads one event handler argument from the given argument state and adds it to the JSON-RPC notification arguments being built.</summary>
+/// <typeparam name="TArgumentState">The event handler delegate's argument state type, as produced by its <see cref="PolyType.Abstractions.IFunctionTypeShape{TFunction, TArgumentState, TResult}"/>.</typeparam>
+/// <param name="state">The argument state to read the parameter's value from.</param>
+/// <param name="builder">The notification arguments builder to add the parameter's value to.</param>
+internal delegate void EventArgumentWriter<TArgumentState>(ref TArgumentState state, ref JsonRpcArgumentsBuilder builder);

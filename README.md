@@ -3,7 +3,7 @@
 [![NuGet package](https://img.shields.io/nuget/v/Nerdbank.JsonRpc.svg)](https://www.nuget.org/packages?q=Nerdbank.JsonRpc)
 [![Build](https://github.com/AArnott/Nerdbank.JsonRpc/actions/workflows/build.yml/badge.svg)](https://github.com/AArnott/Nerdbank.JsonRpc/actions/workflows/build.yml)
 
-Nerdbank.JsonRpc is a .NET library for building strongly typed JSON-RPC clients and servers over MessagePack or UTF-8 JSON. It supports typed requests and notifications, generated client proxies, batching, cancellation, and configurable JSON framing.
+Nerdbank.JsonRpc is a NativeAOT-safe .NET library for building strongly typed JSON-RPC clients and servers over MessagePack or UTF-8 JSON. It supports requests and notifications, generated client proxies, batching, cancellation, and configurable JSON framing.
 
 ## Install
 
@@ -13,17 +13,7 @@ dotnet add package Nerdbank.JsonRpc
 
 ## Generated client proxy quick start
 
-Generated proxies require the source generator, which is currently built from this repository rather than included in the NuGet package. Add it to your project as an analyzer:
-
-```xml
-<ItemGroup>
-  <ProjectReference Include="path-to-Nerdbank.JsonRpc/src/Nerdbank.JsonRpc.SourceGeneration/Nerdbank.JsonRpc.SourceGeneration.csproj"
-                  OutputItemType="Analyzer"
-                  ReferenceOutputAssembly="false" />
-</ItemGroup>
-```
-
-Then define a shared contract and annotate it for PolyType method-shape and proxy generation:
+The `Nerdbank.JsonRpc` NuGet package includes its source generator as a C# analyzer. After installing the package, define a shared contract and annotate it for PolyType method-shape and proxy generation:
 
 ```csharp
 using Nerdbank.JsonRpc;
@@ -47,15 +37,17 @@ ICalculator calculator = rpc.Attach<ICalculator>();
 int sum = await calculator.AddAsync(1, 2, CancellationToken.None);
 ```
 
-MessagePack is the default encoding. Configure a `JsonRpcJsonChannel` when your protocol uses UTF-8 JSON, with either newline-delimited or `Content-Length` framing.
+MessagePack is the default encoding. By default each MessagePack message is preceded by a 4-byte big-endian length header (compatible with StreamJsonRpc's `LengthHeaderMessageHandler`); pass `JsonRpcMessagePackFraming.SelfDelimiting` to send bare MessagePack structures instead. Configure a `JsonRpcJsonChannel` when your protocol uses UTF-8 JSON, with either newline-delimited or `Content-Length` framing.
 
 ## Features
 
 - **Strongly typed RPC:** Register server targets and issue typed requests or notifications.
 - **Generated client proxies:** Use interface-backed clients with positional or named arguments.
-- **MessagePack or JSON:** Select MessagePack or UTF-8 JSON; choose newline-delimited or `Content-Length` framing for JSON.
+- **MessagePack or JSON:** Select MessagePack or UTF-8 JSON; choose length-header or self-delimiting framing for MessagePack, and newline-delimited or `Content-Length` framing for JSON.
 - **Batching:** Send independent requests and notifications in one JSON-RPC payload.
 - **Robust protocol behavior:** Propagate cancellation and distinguish malformed protocol messages from application value failures.
+- **Ordered dispatch:** Inbound requests start executing in the order they were sent, while still running concurrently and on the thread pool. Configurable via `JsonRpc.SynchronizationContext`.
+- **Deadlock mitigation:** Propagate `JoinableTaskFactory` context across processes, compatible with StreamJsonRpc.
 
 ## Documentation
 

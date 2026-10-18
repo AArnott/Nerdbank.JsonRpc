@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- This marks a shipping compiler extension so only it receives the isolated host-compatibility package pins. -->
+    <IsAnalyzerCompatibilityProject>true</IsAnalyzerCompatibilityProject>
+  </PropertyGroup>
+</Project>

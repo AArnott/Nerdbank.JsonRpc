@@ -44,7 +44,32 @@ Building, testing, and packing this repository can be done by using the standard
 You can use `dotnet test` to build and/or test the repo.
 
 There may be tests that are known to be unstable or have special requirements. These can be avoided by running tests using the [dotnet-test-cloud.ps1](tools/dotnet-test-cloud.ps1) script *after* running `dotnet build`.
-To include the pre-published NativeAOT runtime tests, pass `-IncludeNativeAOT` to that script.
+
+To validate the shipping library with the NativeAOT compiler, run `dotnet publish test -c Release`.
+Then run `./tools/dotnet-test-cloud.ps1 -Configuration Release -IncludeNativeAOT`.
+The `test/AotCompatibilityTest` project roots the shipping assembly and is published by the traversal.
+The runtime tests are also published and executed as NativeAOT on net10.0. Native execution requires
+a toolchain containing [the generic virtual dispatch fix](https://github.com/dotnet/runtime/pull/134821).
+The released .NET 10.0.13 toolchain predates that fix and still fails during native test execution.
+The StreamJsonRpc interoperability tests run in their own managed-only project because StreamJsonRpc
+requires dynamic code. The Roslyn-based generator tests also remain managed-only.
+Managed builds are RID-neutral by default and retain dynamic code, startup hooks, and event tracing for code coverage.
+Keep test projects in the solution as well as the traversal so managed testing continues to cover them.
+
+## Performance investigations
+
+The `test/Benchmarks` project uses BenchmarkDotNet and `MemoryDiagnoser`. Build it in Release, then run a focused workload without rebuilding:
+
+```powershell
+dotnet build .\test\Benchmarks\Benchmarks.csproj -c Release
+dotnet run --project .\test\Benchmarks\Benchmarks.csproj --no-build -c Release -- --filter "*RpcTransportBenchmarks.Ping*" "*RpcTransportBenchmarks.Add" --iterationCount 12 --warmupCount 6 --invocationCount 32768
+```
+
+The transport workload covers JSON and MessagePack over in-memory pipes, named pipes, and shared-memory IPC. `Ping` uses a Task-returning proxy contract; `PingValueTask` uses a ValueTask-returning contract; `Add` covers an adjacent small-argument request. Setup validates every result outside the measured operations. `RpcValueTaskPingBenchmarks` also compares ValueTask contracts with StreamJsonRpc.
+
+The `RpcTransportBenchmarks.Public*` workloads await 32 operations in a Task-returning loop and report per-operation values using `OperationsPerInvoke`. This amortizes the benchmark runner's own awaitable consumption and exposes the allocation difference between directly awaiting a pooled ValueTask and a Task-returning proxy's adapter. Run them with `--invocationCount 1024` for 32768 RPC calls per iteration. `RpcNotificationSubmissionBenchmarks` isolates synchronous and deliberately suspended outbound queue acceptance through the encoded API, serialized API, and void proxy; it does not measure wire serialization or remote execution.
+
+Compare baseline and candidate with the same runtime, parameters, operation counts, and CPU affinity. For allocation optimizations, use sampled allocation stacks for attribution and `Allocated` bytes per operation for the quantitative result. Repeat comparisons when scheduling or multimodal distributions obscure latency changes. Keep generated reports and traces outside source control; record the measured result and important tradeoffs in the change description.
 
 ## Releases
 
@@ -68,6 +93,9 @@ The workflow is written to leverage NuGet.org Trusted Publishing.
 You should set `NUGET_USER` as a repo secret to satisfy Trusted Publishing requirements.
 
 ## Tutorial and API documentation
+
+Markup links are checked in CI with [mlc](https://github.com/becheran/mlc).
+Run `mlc` from the repository root to use the same settings, configured in `.mlc.toml`.
 
 API and hand-written docs are found under the `docfx/` directory and are built by [docfx](https://dotnet.github.io/docfx/).
 
