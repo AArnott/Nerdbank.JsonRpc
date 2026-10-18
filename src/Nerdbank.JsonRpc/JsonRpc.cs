@@ -383,7 +383,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				{
 					["name"] = parameter.Name,
 					["required"] = parameter.IsRequired,
-					["schema"] = this.userDataSerializer.GetJsonSchema(parameter.Type),
+					["schema"] = parameter.Type.Type == typeof(RequestId) && this.userDataSerializer.Encoding == JsonRpcEncoding.Json
+						? new JsonObject
+						{
+							["$schema"] = "http://json-schema.org/draft-07/schema#",
+							["type"] = new JsonArray("string", "integer", "null"),
+						}
+						: this.userDataSerializer.GetJsonSchema(parameter.Type),
 				};
 				if (parameter.Description is not null)
 				{
@@ -1175,7 +1181,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				exceptionPayloads.Add((JsonNode?)new JsonObject
 				{
 					["type"] = exceptionType.FullName,
-					["schema"] = owner.userDataSerializer.GetJsonSchema(entry.Shape),
+					["schema"] = owner.channel.Serializer.GetJsonSchema(entry.Shape),
 				});
 			}
 		}

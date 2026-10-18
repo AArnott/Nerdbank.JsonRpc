@@ -12,5 +12,9 @@ public partial class OpenRpcTarget
 	[Description("Adds two values.")]
 	public int Add(int left, int right = 0) => left + right;
 
+	public string EchoId(RequestId id) => id.ToString();
+
+	public OpenRpcPayload EchoPayload(OpenRpcPayload payload) => payload;
+
 	public JsonRpcResult EchoRequest(JsonRpcRequest request) => new() { Id = request.Id ?? throw new ArgumentException("An ID is required.", nameof(request)) };
 }

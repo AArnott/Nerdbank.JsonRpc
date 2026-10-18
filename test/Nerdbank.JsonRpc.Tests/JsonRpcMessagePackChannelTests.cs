@@ -363,16 +363,27 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 			}
 		});
 		peer.Output.Write(Frame(message, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader));
-		try
+		Task<FlushResult> flush = peer.Output.FlushAsync(this.TimeoutToken).AsTask();
+		Task<System.Net.ProtocolViolationException> readerFailure = Assert.ThrowsAsync<System.Net.ProtocolViolationException>(
+			() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
+		Task completed = await Task.WhenAny(flush, readerFailure).WithCancellation(this.TimeoutToken);
+		if (completed == readerFailure)
 		{
-			await peer.Output.FlushAsync(this.TimeoutToken);
+			await readerFailure;
 		}
-		catch (System.Net.ProtocolViolationException)
+		else
 		{
-			// Depending on pipe timing, the parse error may surface from FlushAsync or Reader.Completion.
-		}
+			try
+			{
+				await flush;
+			}
+			catch (System.Net.ProtocolViolationException)
+			{
+				return;
+			}
 
-		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
+			await readerFailure;
+		}
 	}
 
 	[Test]

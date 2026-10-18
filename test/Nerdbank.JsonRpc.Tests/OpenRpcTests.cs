@@ -37,6 +37,66 @@ public class OpenRpcTests : TestBase
 		Assert.Equal(JsonRpcErrorCode.InvalidParams, Property(Element(Property(method, "errors"), 0), "code").GetValue<int>());
 	}
 
+	[Test]
+	public async Task RequestIdParameterSchemaMatchesJsonDecoderWireValues()
+	{
+		(IDuplexPipe serverPipe, IDuplexPipe clientPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc server = new(CreateChannel(serverPipe, JsonRpcEncoding.Json));
+		await using JsonRpcPipeChannel clientChannel = CreateChannel(clientPipe, JsonRpcEncoding.Json);
+		server.AddRpcTarget(new OpenRpcTarget());
+
+		JsonObject document = server.GetOpenRpcDocument();
+		JsonObject echoId = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(document["methods"]!).Where(item => item?["name"]?.GetValue<string>() == "echoId")));
+		JsonArray acceptedTypes = Assert.IsType<JsonArray>(Property(Element(Property(echoId, "params"), 0), "schema")["type"]);
+		Assert.Equal(new[] { "string", "integer", "null" }, acceptedTypes.Select(static type => type!.GetValue<string>()));
+
+		server.Start();
+		clientChannel.Start();
+		foreach (string rawArgument in new[] { "\"string-id\"", "42", "null" })
+		{
+			JsonRpcRequest request = new()
+			{
+				Id = 1,
+				Method = "echoId",
+				Arguments = JsonRpcValue.FromJson(System.Text.Encoding.UTF8.GetBytes($"[{rawArgument}]")),
+			};
+			await clientChannel.Writer.WriteAsync(request, this.TimeoutToken);
+			JsonRpcResult response = Assert.IsType<JsonRpcResult>(await clientChannel.Reader.ReadAsync(this.TimeoutToken));
+			Assert.Equal(rawArgument.Trim('"'), JsonNode.Parse(response.Result.Bytes.Span)!.GetValue<string>());
+		}
+	}
+
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Test]
+	public async Task GetOpenRpcDocument_UsesConfiguredSerializerForParameterAndResult(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe serverPipe, IDuplexPipe clientPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc server = new(CreateChannel(serverPipe, encoding, snakeCase: true));
+		await using JsonRpcPipeChannel clientChannel = CreateChannel(clientPipe, encoding, snakeCase: true);
+		server.AddRpcTarget(new OpenRpcTarget());
+
+		JsonObject method = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(server.GetOpenRpcDocument()["methods"]!).Where(item => item?["name"]?.GetValue<string>() == "echoPayload")));
+		Assert.True(ContainsProperty(Property(Element(Property(method, "params"), 0), "schema"), "display_name"));
+		Assert.True(ContainsProperty(Property(Property(method, "result"), "schema"), "display_name"));
+
+		server.Start();
+		clientChannel.Start();
+		JsonRpcValue arguments;
+		using (JsonRpcArgumentsBuilder argumentsBuilder = server.CreateArguments(named: false, count: 1))
+		{
+			argumentsBuilder.Add(null, new OpenRpcPayload { DisplayName = "configured" }, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.OpenRpcPayload);
+			arguments = argumentsBuilder.Build();
+		}
+
+		await clientChannel.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = "echoPayload", Arguments = arguments }, this.TimeoutToken);
+		JsonRpcResult response = Assert.IsType<JsonRpcResult>(await clientChannel.Reader.ReadAsync(this.TimeoutToken));
+		JsonNode wireResult = encoding == JsonRpcEncoding.Json
+			? JsonNode.Parse(response.Result.Bytes.Span)!
+			: JsonNode.Parse(((MessagePackSerializerPlugin)clientChannel.Serializer).Serializer.ConvertToJson(response.Result.AsMessagePack()))!;
+		Assert.Equal("configured", wireResult["display_name"]!.GetValue<string>());
+	}
+
 	[Arguments(JsonRpcEncoding.Json)]
 	[Arguments(JsonRpcEncoding.MessagePack)]
 	[Test]
@@ -147,8 +207,16 @@ public class OpenRpcTests : TestBase
 	private static JsonNode Element(JsonNode? node, int index)
 		=> Assert.IsType<JsonArray>(node)[index] ?? throw new InvalidOperationException($"Expected element at index {index}.");
 
-	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
+	private static bool ContainsProperty(JsonNode? node, string propertyName)
+		=> node switch
+		{
+			JsonObject jsonObject => jsonObject.ContainsKey(propertyName) || jsonObject.Any(property => ContainsProperty(property.Value, propertyName)),
+			JsonArray jsonArray => jsonArray.Any(item => ContainsProperty(item, propertyName)),
+			_ => false,
+		};
+
+	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding, bool snakeCase = false)
 		=> encoding == JsonRpcEncoding.Json
-			? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
-			: new JsonRpcMessagePackChannel(pipe);
+			? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer { PropertyNamingPolicy = snakeCase ? Nerdbank.Json.JsonNamingPolicy.SnakeLowerCase : Nerdbank.Json.JsonNamingPolicy.CamelCase }, JsonRpcJsonFraming.NewlineDelimited)
+			: new JsonRpcMessagePackChannel(pipe, serializer: new Nerdbank.MessagePack.MessagePackSerializer { PropertyNamingPolicy = snakeCase ? Nerdbank.MessagePack.MessagePackNamingPolicy.SnakeLowerCase : null });
 }
