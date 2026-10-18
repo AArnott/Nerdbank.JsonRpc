@@ -249,7 +249,8 @@ public partial class RemoteExceptionTests : TestBase
 
 		JsonObject method = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(server.GetOpenRpcDocument()["methods"]!).Where(item => item?["name"]?.GetValue<string>() == "FailCustom")));
 		JsonObject internalError = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(method["errors"]!).Where(item => item?["code"]?.GetValue<int>() == (int)JsonRpcErrorCode.InternalError)));
-		JsonObject exceptionDescription = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(internalError["x-exceptionPayloads"]!)));
+		Assert.False(internalError.ContainsKey("x-exceptionPayloads"));
+		JsonObject exceptionDescription = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(method["x-exceptionPayloads"]!)));
 		JsonObject schema = Assert.IsType<JsonObject>(exceptionDescription["schema"]);
 
 		server.Start();
@@ -296,7 +297,8 @@ public partial class RemoteExceptionTests : TestBase
 
 		JsonObject method = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(server.GetOpenRpcDocument()["methods"]!).Where(item => item?["name"]?.GetValue<string>() == "FailRecursive")));
 		JsonObject internalError = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(method["errors"]!).Where(item => item?["code"]?.GetValue<int>() == (int)JsonRpcErrorCode.InternalError)));
-		JsonObject exceptionDescription = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(internalError["x-exceptionPayloads"]!)));
+		Assert.False(internalError.ContainsKey("x-exceptionPayloads"));
+		JsonObject exceptionDescription = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(method["x-exceptionPayloads"]!)));
 		JsonObject schema = Assert.IsType<JsonObject>(exceptionDescription["schema"]);
 		OpenRpcSchemaAssertions.AssertLocalDefinitionReferencesResolve(schema);
 

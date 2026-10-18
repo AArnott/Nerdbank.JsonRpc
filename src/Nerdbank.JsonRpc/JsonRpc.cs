@@ -412,8 +412,14 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 					["name"] = "result",
 					["schema"] = CreateOpenRpcSchema(this.userDataSerializer, method.ResultType, $"method:{method.Name}:result", method.ResultIsNullable),
 				},
-				["errors"] = CreateOpenRpcErrors(this, method),
+				["errors"] = CreateOpenRpcErrors(method),
 			};
+			JsonArray exceptionPayloads = CreateOpenRpcExceptionPayloads(this);
+			if (exceptionPayloads.Count > 0)
+			{
+				openRpcMethod["x-exceptionPayloads"] = exceptionPayloads;
+			}
+
 			if (method.Description is not null)
 			{
 				openRpcMethod["description"] = method.Description;
@@ -1207,12 +1213,21 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private static string CreateOpenRpcSchemaId(string identity)
 		=> "urn:nerdbank-jsonrpc:openrpc:" + Uri.EscapeDataString(identity);
 
-	private static JsonArray CreateOpenRpcErrors(JsonRpc owner, JsonRpcMethodDescription method)
+	private static JsonArray CreateOpenRpcErrors(JsonRpcMethodDescription method)
 	{
 		JsonArray errors = [];
 		errors.Add((JsonNode?)new JsonObject { ["code"] = JsonRpcErrorCode.InvalidParams, ["message"] = "Invalid params" });
+		errors.Add((JsonNode?)new JsonObject { ["code"] = JsonRpcErrorCode.InternalError, ["message"] = "Internal error" });
+		if (method.SupportsCancellation)
+		{
+			errors.Add((JsonNode?)new JsonObject { ["code"] = JsonRpcErrorCode.RequestCancelled, ["message"] = "Request cancelled" });
+		}
 
-		JsonObject internalError = new() { ["code"] = JsonRpcErrorCode.InternalError, ["message"] = "Internal error" };
+		return errors;
+	}
+
+	private static JsonArray CreateOpenRpcExceptionPayloads(JsonRpc owner)
+	{
 		JsonArray exceptionPayloads = [];
 		foreach (Type exceptionType in owner.Options.AdditionalExceptionTypes)
 		{
@@ -1226,18 +1241,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			}
 		}
 
-		if (exceptionPayloads.Count > 0)
-		{
-			internalError["x-exceptionPayloads"] = exceptionPayloads;
-		}
-
-		errors.Add((JsonNode?)internalError);
-		if (method.SupportsCancellation)
-		{
-			errors.Add((JsonNode?)new JsonObject { ["code"] = JsonRpcErrorCode.RequestCancelled, ["message"] = "Request cancelled" });
-		}
-
-		return errors;
+		return exceptionPayloads;
 	}
 
 	/// <summary>Invokes a request handler as a child of the caller's joinable task.</summary>
