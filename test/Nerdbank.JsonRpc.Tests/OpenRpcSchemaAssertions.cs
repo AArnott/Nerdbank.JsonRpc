@@ -50,7 +50,7 @@ internal static class OpenRpcSchemaAssertions
 					foreach (JsonObject descendant in DescendantsAndSelf(child))
 					{
 						yield return descendant;
-				}
+					}
 				}
 			}
 		}
