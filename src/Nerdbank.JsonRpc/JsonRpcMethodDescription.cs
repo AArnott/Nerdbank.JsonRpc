@@ -138,7 +138,7 @@ internal sealed record JsonRpcMethodDescription(
 		CustomAttributeData? attribute = attributes.FirstOrDefault(static item => item.AttributeType.FullName == "System.Runtime.CompilerServices.NullableAttribute");
 		if (attribute?.ConstructorArguments.FirstOrDefault().Value is byte flag)
 		{
-			return index == 0 ? flag : null;
+			return flag;
 		}
 
 		if (attribute?.ConstructorArguments.FirstOrDefault().Value is IEnumerable<CustomAttributeTypedArgument> flags)

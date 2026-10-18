@@ -23,5 +23,8 @@ public partial class OpenRpcTarget
 	[MethodShape(Name = "echoNullableAsync")]
 	public Task<string?> EchoNullableAsync(string? value) => Task.FromResult(value);
 
+	[MethodShape(Name = "echoNullableAsyncCompressed")]
+	public Task<string?>? EchoNullableAsyncCompressed(string? value) => Task.FromResult(value);
+
 	public JsonRpcResult EchoRequest(JsonRpcRequest request) => new() { Id = request.Id ?? throw new ArgumentException("An ID is required.", nameof(request)) };
 }

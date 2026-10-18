@@ -114,7 +114,7 @@ public class OpenRpcTests : TestBase
 		OpenRpcSchemaAssertions.AssertLocalDefinitionReferencesResolve(parameterSchema);
 		OpenRpcSchemaAssertions.AssertLocalDefinitionReferencesResolve(resultSchema);
 
-		foreach (string methodName in new[] { "echoNullable", "echoNullableAsync" })
+		foreach (string methodName in new[] { "echoNullable", "echoNullableAsync", "echoNullableAsyncCompressed" })
 		{
 			JsonObject nullable = FindMethod(document, methodName);
 			OpenRpcSchemaAssertions.AssertNullable(Property(Element(Property(nullable, "params"), 0), "schema"));
