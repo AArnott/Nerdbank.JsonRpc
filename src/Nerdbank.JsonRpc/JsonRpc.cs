@@ -379,17 +379,20 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			JsonArray parameters = [];
 			foreach (JsonRpcParameterDescription parameter in method.Parameters)
 			{
+				string parameterSchemaId = $"method:{method.Name}:parameter:{parameter.Name}";
+				JsonNode parameterSchema = parameter.Type.Type == typeof(RequestId) && this.userDataSerializer.Encoding == JsonRpcEncoding.Json
+					? new JsonObject
+					{
+						["$schema"] = "http://json-schema.org/draft-07/schema#",
+						["$id"] = CreateOpenRpcSchemaId(parameterSchemaId),
+						["type"] = new JsonArray("string", "integer", "null"),
+					}
+					: CreateOpenRpcSchema(this.userDataSerializer, parameter.Type, parameterSchemaId, parameter.IsNullable);
 				JsonObject openRpcParameter = new()
 				{
 					["name"] = parameter.Name,
 					["required"] = parameter.IsRequired,
-					["schema"] = parameter.Type.Type == typeof(RequestId) && this.userDataSerializer.Encoding == JsonRpcEncoding.Json
-						? new JsonObject
-						{
-							["$schema"] = "http://json-schema.org/draft-07/schema#",
-							["type"] = new JsonArray("string", "integer", "null"),
-						}
-						: this.userDataSerializer.GetJsonSchema(parameter.Type),
+					["schema"] = parameterSchema,
 				};
 				if (parameter.Description is not null)
 				{
@@ -407,7 +410,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				["result"] = new JsonObject
 				{
 					["name"] = "result",
-					["schema"] = this.userDataSerializer.GetJsonSchema(method.ResultType),
+					["schema"] = CreateOpenRpcSchema(this.userDataSerializer, method.ResultType, $"method:{method.Name}:result", method.ResultIsNullable),
 				},
 				["errors"] = CreateOpenRpcErrors(this, method),
 			};
@@ -1167,6 +1170,43 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		request.Arguments.Release();
 	}
 
+	private static JsonNode CreateOpenRpcSchema(JsonRpcSerializer serializer, ITypeShape shape, string identity, bool nullable)
+	{
+		string schemaId = CreateOpenRpcSchemaId(identity);
+		JsonNode schema = serializer.GetJsonSchema(shape);
+		if (schema is JsonObject schemaObject)
+		{
+			if (!schemaObject.ContainsKey("$id"))
+			{
+				schemaObject["$id"] = schemaId + ":value";
+			}
+		}
+		else
+		{
+			schema = new JsonObject
+			{
+				["$schema"] = "http://json-schema.org/draft-07/schema#",
+				["$id"] = schemaId + ":value",
+				["allOf"] = new JsonArray(schema),
+			};
+		}
+
+		if (!nullable)
+		{
+			return schema;
+		}
+
+		return new JsonObject
+		{
+			["$schema"] = "http://json-schema.org/draft-07/schema#",
+			["$id"] = schemaId,
+			["anyOf"] = new JsonArray(schema, new JsonObject { ["type"] = "null" }),
+		};
+	}
+
+	private static string CreateOpenRpcSchemaId(string identity)
+		=> "urn:nerdbank-jsonrpc:openrpc:" + Uri.EscapeDataString(identity);
+
 	private static JsonArray CreateOpenRpcErrors(JsonRpc owner, JsonRpcMethodDescription method)
 	{
 		JsonArray errors = [];
@@ -1181,7 +1221,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				exceptionPayloads.Add((JsonNode?)new JsonObject
 				{
 					["type"] = exceptionType.FullName,
-					["schema"] = owner.channel.Serializer.GetJsonSchema(entry.Shape),
+					["schema"] = CreateOpenRpcSchema(owner.channel.Serializer, entry.Shape, $"exception:{exceptionType.FullName}", nullable: false),
 				});
 			}
 		}

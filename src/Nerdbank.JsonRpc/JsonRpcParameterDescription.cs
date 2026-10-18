@@ -9,5 +9,6 @@ namespace Nerdbank.JsonRpc;
 /// <param name="Name">The parameter name used for named arguments.</param>
 /// <param name="Type">The parameter type shape.</param>
 /// <param name="IsRequired">Whether the remote caller must provide the parameter.</param>
+/// <param name="IsNullable">Whether the parameter accepts null.</param>
 /// <param name="Description">The parameter description, if supplied.</param>
-internal sealed record JsonRpcParameterDescription(string Name, ITypeShape Type, bool IsRequired, string? Description);
+internal sealed record JsonRpcParameterDescription(string Name, ITypeShape Type, bool IsRequired, bool IsNullable, string? Description);

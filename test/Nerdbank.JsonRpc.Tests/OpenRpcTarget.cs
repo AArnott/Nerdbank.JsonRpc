@@ -16,5 +16,12 @@ public partial class OpenRpcTarget
 
 	public OpenRpcPayload EchoPayload(OpenRpcPayload payload) => payload;
 
+	public OpenRpcRecursivePayload? EchoRecursive(OpenRpcRecursivePayload? payload) => payload;
+
+	public string? EchoNullable(string? value) => value;
+
+	[MethodShape(Name = "echoNullableAsync")]
+	public Task<string?> EchoNullableAsync(string? value) => Task.FromResult(value);
+
 	public JsonRpcResult EchoRequest(JsonRpcRequest request) => new() { Id = request.Id ?? throw new ArgumentException("An ID is required.", nameof(request)) };
 }

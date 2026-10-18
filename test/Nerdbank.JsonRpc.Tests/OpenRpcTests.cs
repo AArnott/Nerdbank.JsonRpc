@@ -100,6 +100,48 @@ public class OpenRpcTests : TestBase
 	[Arguments(JsonRpcEncoding.Json)]
 	[Arguments(JsonRpcEncoding.MessagePack)]
 	[Test]
+	public async Task GetOpenRpcDocument_UsesNullableAndRecursiveSchemas(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe serverPipe, IDuplexPipe clientPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc server = new(CreateChannel(serverPipe, encoding));
+		server.AddRpcTarget(new OpenRpcTarget());
+		JsonObject document = server.GetOpenRpcDocument();
+		JsonObject recursive = FindMethod(document, "echoRecursive");
+		JsonNode parameterSchema = Property(Element(Property(recursive, "params"), 0), "schema");
+		JsonNode resultSchema = Property(Property(recursive, "result"), "schema");
+		OpenRpcSchemaAssertions.AssertNullable(parameterSchema);
+		OpenRpcSchemaAssertions.AssertNullable(resultSchema);
+		OpenRpcSchemaAssertions.AssertLocalDefinitionReferencesResolve(parameterSchema);
+		OpenRpcSchemaAssertions.AssertLocalDefinitionReferencesResolve(resultSchema);
+
+		foreach (string methodName in new[] { "echoNullable", "echoNullableAsync" })
+		{
+			JsonObject nullable = FindMethod(document, methodName);
+			OpenRpcSchemaAssertions.AssertNullable(Property(Element(Property(nullable, "params"), 0), "schema"));
+			OpenRpcSchemaAssertions.AssertNullable(Property(Property(nullable, "result"), "schema"));
+		}
+
+		await using JsonRpcPipeChannel peer = CreateChannel(clientPipe, encoding);
+		server.Start();
+		peer.Start();
+		JsonRpcValue arguments;
+		using (JsonRpcArgumentsBuilder builder = server.CreateArguments(named: false, count: 1))
+		{
+			builder.Add<string?>(null, null, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.String);
+			arguments = builder.Build();
+		}
+
+		await peer.Writer.WriteAsync(new JsonRpcRequest { Id = 1, Method = "echoNullable", Arguments = arguments }, this.TimeoutToken);
+		JsonRpcResult response = Assert.IsType<JsonRpcResult>(await peer.Reader.ReadAsync(this.TimeoutToken));
+		JsonNode? nullResult = encoding == JsonRpcEncoding.Json
+			? JsonNode.Parse(response.Result.Bytes.Span)
+			: JsonNode.Parse(((MessagePackSerializerPlugin)peer.Serializer).Serializer.ConvertToJson(response.Result.AsMessagePack()));
+		Assert.Null(nullResult);
+	}
+
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	[Test]
 	public async Task RpcDiscover_ReturnsOpenRpcDocumentUsingConnectionEncoding(JsonRpcEncoding encoding)
 	{
 		(IDuplexPipe serverPipe, IDuplexPipe clientPipe) = FullDuplexStream.CreatePipePair();
@@ -200,6 +242,9 @@ public class OpenRpcTests : TestBase
 		JsonRpcResult applicationResult = clientChannel.Serializer.Deserialize(response.Result, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.JsonRpcResult, this.TimeoutToken);
 		Assert.Equal(new RequestId(99), applicationResult.Id);
 	}
+
+	private static JsonObject FindMethod(JsonObject document, string name)
+		=> Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(document["methods"]!).Where(item => item?["name"]?.GetValue<string>() == name)));
 
 	private static JsonNode Property(JsonNode? node, string name)
 		=> Assert.IsType<JsonObject>(node)[name] ?? throw new InvalidOperationException($"Expected property '{name}'.");

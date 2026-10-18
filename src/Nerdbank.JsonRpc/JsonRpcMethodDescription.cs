@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.ComponentModel;
+using System.Reflection;
 using PolyType.Abstractions;
 
 namespace Nerdbank.JsonRpc;
@@ -11,12 +12,14 @@ namespace Nerdbank.JsonRpc;
 /// <param name="Description">The method description, if supplied.</param>
 /// <param name="Parameters">The RPC parameters, excluding injected parameters.</param>
 /// <param name="ResultType">The method result type shape.</param>
+/// <param name="ResultIsNullable">Whether the method result accepts null.</param>
 /// <param name="SupportsCancellation">Whether the method accepts a cancellation token.</param>
 internal sealed record JsonRpcMethodDescription(
 	string Name,
 	string? Description,
 	IReadOnlyList<JsonRpcParameterDescription> Parameters,
 	ITypeShape ResultType,
+	bool ResultIsNullable,
 	bool SupportsCancellation)
 {
 	/// <summary>Creates an RPC method contract from the same PolyType shape used for dispatch.</summary>
@@ -31,6 +34,7 @@ internal sealed record JsonRpcMethodDescription(
 				parameter.Name,
 				parameter.ParameterType,
 				parameter.IsRequired,
+				!parameter.ParameterType.Type.IsValueType && !parameter.IsNonNullable,
 				parameter.AttributeProvider?.GetCustomAttribute<DescriptionAttribute>()?.Description))
 			.ToArray();
 		return new JsonRpcMethodDescription(
@@ -38,6 +42,102 @@ internal sealed record JsonRpcMethodDescription(
 			method.AttributeProvider?.GetCustomAttribute<DescriptionAttribute>()?.Description,
 			parameters,
 			method.ReturnType,
+			IsNullableResult(method),
 			method.Parameters.Any(static parameter => parameter.ParameterType.Type == typeof(CancellationToken)));
 	}
+
+	private static bool IsNullableResult(IMethodShape method)
+	{
+		if (method.ReturnType.Type.IsValueType)
+		{
+			return false;
+		}
+
+#if NET
+		if (method.MethodBase is MethodInfo methodInfo)
+		{
+			NullabilityInfo returnInfo = new NullabilityInfoContext().Create(methodInfo.ReturnParameter);
+			if (methodInfo.ReturnType == method.ReturnType.Type)
+			{
+				return returnInfo.ReadState == NullabilityState.Nullable;
+			}
+
+			if (methodInfo.ReturnType.IsGenericType)
+			{
+				Type[] returnTypes = methodInfo.ReturnType.GetGenericArguments();
+				for (int i = 0; i < returnTypes.Length; i++)
+				{
+					if (returnTypes[i] == method.ReturnType.Type && i < returnInfo.GenericTypeArguments.Length)
+					{
+						return returnInfo.GenericTypeArguments[i].ReadState == NullabilityState.Nullable;
+					}
+				}
+			}
+		}
+#else
+		if (method.MethodBase is MethodInfo methodInfo)
+		{
+			int resultFlagIndex = 0;
+			if (methodInfo.ReturnType != method.ReturnType.Type && methodInfo.ReturnType.IsGenericType)
+			{
+				Type[] genericArguments = methodInfo.ReturnType.GetGenericArguments();
+				int argumentIndex = Array.IndexOf(genericArguments, method.ReturnType.Type);
+				if (argumentIndex >= 0)
+				{
+					resultFlagIndex = argumentIndex + 1;
+				}
+			}
+
+			byte? returnFlag = GetNullableFlag(methodInfo.ReturnParameter.GetCustomAttributesData(), resultFlagIndex)
+				?? GetNullableFlag(methodInfo.GetCustomAttributesData(), resultFlagIndex);
+			if (returnFlag == 1)
+			{
+				return false;
+			}
+
+			if (returnFlag == 2)
+			{
+				return true;
+			}
+
+			byte? context = GetNullableContext(methodInfo.GetCustomAttributesData())
+				?? GetNullableContext(methodInfo.DeclaringType?.GetCustomAttributesData());
+			if (context == 1)
+			{
+				return false;
+			}
+
+			if (context == 2)
+			{
+				return true;
+			}
+		}
+#endif
+
+		// Unknown nullability should not advertise a narrower contract than the method can implement.
+		return true;
+	}
+
+#if !NET
+	private static byte? GetNullableContext(IEnumerable<CustomAttributeData>? attributes)
+		=> attributes?.FirstOrDefault(static attribute => attribute.AttributeType.FullName == "System.Runtime.CompilerServices.NullableContextAttribute")?.ConstructorArguments.FirstOrDefault().Value is byte value
+			? value
+			: null;
+
+	private static byte? GetNullableFlag(IEnumerable<CustomAttributeData> attributes, int index)
+	{
+		CustomAttributeData? attribute = attributes.FirstOrDefault(static item => item.AttributeType.FullName == "System.Runtime.CompilerServices.NullableAttribute");
+		if (attribute?.ConstructorArguments.FirstOrDefault().Value is byte flag)
+		{
+			return index == 0 ? flag : null;
+		}
+
+		if (attribute?.ConstructorArguments.FirstOrDefault().Value is IEnumerable<CustomAttributeTypedArgument> flags)
+		{
+			return flags.Skip(index).Select(static item => item.Value).OfType<byte>().FirstOrDefault();
+		}
+
+		return null;
+	}
+#endif
 }
