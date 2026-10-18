@@ -56,10 +56,19 @@ internal sealed record JsonRpcMethodDescription(
 #if NET
 		if (method.MethodBase is MethodInfo methodInfo)
 		{
-			NullabilityInfo returnInfo = new NullabilityInfoContext().Create(methodInfo.ReturnParameter);
+			NullabilityInfo? returnInfo;
+			try
+			{
+				returnInfo = new NullabilityInfoContext().Create(methodInfo.ReturnParameter);
+			}
+			catch (InvalidOperationException)
+			{
+				return true;
+			}
+
 			if (methodInfo.ReturnType == method.ReturnType.Type)
 			{
-				return returnInfo.ReadState == NullabilityState.Nullable;
+				return returnInfo.ReadState != NullabilityState.NotNull;
 			}
 
 			if (methodInfo.ReturnType.IsGenericType)
@@ -69,7 +78,7 @@ internal sealed record JsonRpcMethodDescription(
 				{
 					if (returnTypes[i] == method.ReturnType.Type && i < returnInfo.GenericTypeArguments.Length)
 					{
-						return returnInfo.GenericTypeArguments[i].ReadState == NullabilityState.Nullable;
+						return returnInfo.GenericTypeArguments[i].ReadState != NullabilityState.NotNull;
 					}
 				}
 			}

@@ -330,7 +330,27 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 
 		writer.Flush();
 		peer.Output.Write(Frame(sequence.AsReadOnlySequence.ToArray(), JsonRpcMessagePackFraming.BigEndianInt32LengthHeader));
-		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(async () => await peer.Output.FlushAsync(this.TimeoutToken));
+		Task<FlushResult> flush = peer.Output.FlushAsync(this.TimeoutToken).AsTask();
+		Task<System.Net.ProtocolViolationException> readerFailure = Assert.ThrowsAsync<System.Net.ProtocolViolationException>(
+			() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
+		Task completed = await Task.WhenAny(flush, readerFailure).WithCancellation(this.TimeoutToken);
+		if (completed == readerFailure)
+		{
+			await readerFailure;
+		}
+		else
+		{
+			try
+			{
+				await flush;
+			}
+			catch (System.Net.ProtocolViolationException)
+			{
+				return;
+			}
+
+			await readerFailure;
+		}
 	}
 
 	[Test]
