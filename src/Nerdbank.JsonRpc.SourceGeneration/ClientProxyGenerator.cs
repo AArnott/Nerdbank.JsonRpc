@@ -328,11 +328,6 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			{
 				return "params parameters are not supported yet";
 			}
-
-			if (parameter.HasExplicitDefaultValue)
-			{
-				return "optional parameters with default values are not supported yet";
-			}
 		}
 
 		if (GetMethodKind(method.ReturnType, out _) is ProxyMethodKind.Unsupported)

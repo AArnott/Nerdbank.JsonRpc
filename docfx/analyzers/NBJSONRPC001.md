@@ -10,7 +10,7 @@ The source generator reports this diagnostic when an interface annotated with `G
 
 ## Why this is reported
 
-The generator must emit a proxy whose signatures and wire behavior match the contract. It reports unsupported input rather than emitting an incomplete proxy. Current restrictions include non-partial, nested, and generic interfaces; properties and events on RPC-marshalable interfaces; and methods with generic, optional, `params`, or by-reference parameters. Proxy methods must return `Task`, `Task<T>`, `ValueTask`, `ValueTask<T>`, or `void` where notifications are allowed. Cancellation tokens must be the final parameter. RPC-marshalable interfaces must extend `IDisposable` unless they use call-scoped lifetime.
+The generator must emit a proxy whose signatures and wire behavior match the contract. It reports unsupported input rather than emitting an incomplete proxy. Current restrictions include non-partial, nested, and generic interfaces; properties and events on RPC-marshalable interfaces; and methods with generic, `params`, or by-reference parameters. Proxy methods must return `Task`, `Task<T>`, `ValueTask`, `ValueTask<T>`, or `void` where notifications are allowed. Cancellation tokens must be the final parameter. RPC-marshalable interfaces must extend `IDisposable` unless they use call-scoped lifetime.
 
 ## Examples
 

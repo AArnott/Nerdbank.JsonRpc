@@ -30,8 +30,6 @@ public class ClientProxyGeneratorTests
 			{
 				ValueTask<T> {|#1:GenericAsync|}<T>(T value, CancellationToken cancellationToken);
 
-				ValueTask<int> {|#2:OptionalAsync|}(int value = 1);
-
 				ValueTask<int> {|#3:ParamsAsync|}(params int[] values);
 
 				ValueTask<int> {|#4:RefAsync|}(ref int value);
@@ -45,9 +43,6 @@ public class ClientProxyGeneratorTests
 		DiagnosticResult genericMethod = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
 			.WithLocation(1)
 			.WithArguments("IUnsupportedProxySignatures.GenericAsync<T>(T, System.Threading.CancellationToken)", "generic methods are not supported yet");
-		DiagnosticResult optionalParameter = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
-			.WithLocation(2)
-			.WithArguments("IUnsupportedProxySignatures.OptionalAsync(int)", "optional parameters with default values are not supported yet");
 		DiagnosticResult paramsParameter = CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
 			.WithLocation(3)
 			.WithArguments("IUnsupportedProxySignatures.ParamsAsync(params int[])", "params parameters are not supported yet");
@@ -61,7 +56,41 @@ public class ClientProxyGeneratorTests
 			.WithLocation(6)
 			.WithArguments("IUnsupportedProxySignatures.UnsupportedReturnAsync(int)", "return type 'string' is not supported yet");
 
-		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, genericMethod, optionalParameter, paramsParameter, refParameter, cancellationTokenNotLast, unsupportedReturn);
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, genericMethod, paramsParameter, refParameter, cancellationTokenNotLast, unsupportedReturn);
+	}
+
+	[Test]
+	public async Task OptionalParametersDoNotProduceDiagnostics()
+	{
+		const string Source = /* lang=c#-test */ """
+			#nullable enable
+			using System;
+			using System.Threading;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			internal interface IBaseContract
+			{
+				ValueTask<int> GetAsync(int value = 42, CancellationToken cancellationToken = default);
+			}
+
+			[GenerateJsonRpcProxy]
+			internal partial interface IOptionalParameters : IBaseContract
+			{
+				Task<string?> EchoAsync(string? value = "default", CancellationToken cancellationToken = default);
+
+				ValueTask SetAsync(bool enabled = true, DayOfWeek day = DayOfWeek.Monday, decimal amount = 1.5m);
+
+				void Notify(string? value = null);
+			}
+
+			[RpcMarshalable]
+			internal partial interface IOptionalMarshalable : IDisposable, IBaseContract
+			{
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source);
 	}
 
 	[Test]
