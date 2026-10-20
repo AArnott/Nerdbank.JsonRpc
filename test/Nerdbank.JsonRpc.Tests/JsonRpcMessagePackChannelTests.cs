@@ -489,7 +489,15 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 		channel.Start();
 		byte[] oversized = EncodeRequest(new string('m', (8 * 1024 * 1024) + 1), 1);
 		peer.Output.Write(oversized);
-		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(async () => await peer.Output.FlushAsync(this.TimeoutToken));
+		try
+		{
+			await peer.Output.FlushAsync(this.TimeoutToken);
+		}
+		catch (System.Net.ProtocolViolationException)
+		{
+		}
+
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => channel.Reader.Completion);
 	}
 
 	private static JsonRpcMessagePackChannel CreateChannel(IDuplexPipe pipe, JsonRpcMessagePackFraming framing)
