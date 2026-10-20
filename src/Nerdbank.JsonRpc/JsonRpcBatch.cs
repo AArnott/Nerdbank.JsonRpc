@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Microsoft;
 
 namespace Nerdbank.JsonRpc;
@@ -499,14 +500,46 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			throw;
 		}
 
-		return this.AwaitBatchResponseAsync(responseTcs, entry, request, timeoutSource, cancellationToken);
+		return timeoutSource is null
+			? this.AwaitBatchResponseAsync(responseTcs, entry, request)
+			: this.AwaitBatchResponseWithTimeoutAsync(responseTcs, entry, request, timeoutSource, cancellationToken);
 	}
 
-	private async ValueTask<JsonRpcResponse> AwaitBatchResponseAsync(
+	private async ValueTask<JsonRpcResponse> AwaitBatchResponseAsync(TaskCompletionSource<JsonRpcResponse> responseTcs, Entry entry, JsonRpcRequest request)
+	{
+		using Activity? activity = JsonRpcTracing.StartClientActivity(request.Method);
+		JsonRpcTracing.ApplyTraceContext(request);
+		try
+		{
+#pragma warning disable VSTHRD003 // Awaiting a TaskCompletionSource completed by inbound JSON-RPC responses.
+			JsonRpcResponse response = await responseTcs.Task.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+			if (response is JsonRpcError)
+			{
+				activity?.SetStatus(ActivityStatusCode.Error);
+			}
+
+			return response;
+		}
+		catch
+		{
+			activity?.SetStatus(ActivityStatusCode.Error);
+			throw;
+		}
+		finally
+		{
+			entry.Dispose();
+		}
+	}
+
+#if NET
+	[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+	private async ValueTask<JsonRpcResponse> AwaitBatchResponseWithTimeoutAsync(
 		TaskCompletionSource<JsonRpcResponse> responseTcs,
 		Entry entry,
 		JsonRpcRequest request,
-		CancellationTokenSource? timeoutSource,
+		CancellationTokenSource timeoutSource,
 		CancellationToken cancellationToken)
 	{
 		using (timeoutSource)
@@ -516,9 +549,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			try
 			{
 #pragma warning disable VSTHRD003 // Awaiting a TaskCompletionSource completed by inbound JSON-RPC responses.
-				JsonRpcResponse response = timeoutSource is null
-					? await responseTcs.Task.ConfigureAwait(false)
-					: await this.owner.AwaitOutboundResponseAsync(responseTcs.Task, timeoutSource.Token, cancellationToken).ConfigureAwait(false);
+				JsonRpcResponse response = await this.owner.AwaitOutboundResponseAsync(responseTcs.Task, timeoutSource.Token, cancellationToken).ConfigureAwait(false);
 #pragma warning restore VSTHRD003
 				if (response is JsonRpcError)
 				{
@@ -527,7 +558,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 
 				return response;
 			}
-			catch (TimeoutException) when (timeoutSource?.IsCancellationRequested is true && !cancellationToken.IsCancellationRequested)
+			catch (TimeoutException) when (timeoutSource.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
 			{
 				activity?.SetStatus(ActivityStatusCode.Error);
 				this.OnEntryCanceled(entry);
