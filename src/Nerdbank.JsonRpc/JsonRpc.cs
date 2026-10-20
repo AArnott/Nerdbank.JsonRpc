@@ -98,6 +98,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			throw new ArgumentException("The channel encoding must match its serializer.", nameof(channel));
 		}
 
+		this.channel.SetMaximumMessageSize(this.Options.MaximumMessageSize);
 		this.channel.SetConnectionOwner();
 		this.marshaledObjects = new(this);
 		this.progress = new(this);
@@ -118,49 +119,12 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <summary>Gets the immutable options used to configure this connection.</summary>
 	public JsonRpcOptions Options { get; }
 
-	/// <summary>Gets or initializes the maximum encoded message size, in bytes.</summary>
-	/// <value>Defaults to 8 MiB. The built-in JSON and MessagePack channels apply this limit to received messages; the JSON channel also applies it to sent messages.</value>
-	/// <exception cref="ArgumentOutOfRangeException">Thrown when set to zero or a negative value.</exception>
-	public int MaximumMessageSize
-	{
-		get => this.channel.GetMaximumMessageSize();
-		init => this.channel.SetMaximumMessageSize(value);
-	}
-
 	/// <summary>Gets or initializes the multiplexing stream used to send and receive out-of-band streams.</summary>
 	/// <remarks>Initialize this property before calling <see cref="Start"/>.</remarks>
 	public MultiplexingStream? MultiplexingStream
 	{
 		get => this.outOfBandStreams.MultiplexingStream;
 		init => this.outOfBandStreams.MultiplexingStream = value;
-	}
-
-	/// <summary>Gets or initializes the options used for proxies implicitly created for RPC-marshalable objects.</summary>
-	/// <value>Defaults to <see cref="JsonRpcProxyOptions.Default"/>, the same naming convention used for ordinary RPC proxies.</value>
-	/// <remarks>
-	/// To communicate with StreamJsonRpc's default RPC-marshalable objects, set this property to
-	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> in the <see cref="JsonRpc"/> object initializer.
-	/// This does not change options for proxies attached through <see cref="Attach{T}(JsonRpcProxyOptions?)"/>.
-	/// </remarks>
-	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
-	public JsonRpcProxyOptions MarshaledProxyOptions
-	{
-		get => field ??= JsonRpcProxyOptions.Default;
-		init => field = Requires.NotNull(value);
-	}
-
-	/// <summary>Gets or initializes the options used when implicitly registering RPC-marshalable targets.</summary>
-	/// <value>Defaults to <see cref="JsonRpcTargetOptions.Default"/>, the same naming convention used for ordinary RPC targets.</value>
-	/// <remarks>
-	/// To communicate with StreamJsonRpc's default RPC-marshalable objects, set this property to
-	/// <c>new() { MethodNameTransform = CommonMethodNameTransforms.Identity }</c> in the <see cref="JsonRpc"/> object initializer.
-	/// This does not change options for targets registered through <see cref="AddRpcTarget{T}(T, ITypeShape{T}, JsonRpcTargetOptions?)"/>.
-	/// </remarks>
-	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
-	public JsonRpcTargetOptions MarshaledTargetOptions
-	{
-		get => field ??= JsonRpcTargetOptions.Default;
-		init => field = Requires.NotNull(value);
 	}
 
 	/// <summary>Gets or initializes the logger for request, connection, and transport diagnostics.</summary>
@@ -268,11 +232,6 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	/// <summary>Gets the connection's lifecycle state, retaining the original shutdown mode after disposal.</summary>
 	public JsonRpcState ConnectionState => this.terminated ? this.terminalState : this.readerTask is not null ? JsonRpcState.Running : JsonRpcState.NotStarted;
-
-	/// <summary>Gets the connection's lifecycle state, retaining the original shutdown mode after disposal.</summary>
-	/// <remarks>Use <see cref="ConnectionState"/> instead.</remarks>
-	[Obsolete("Use ConnectionState instead.")]
-	public JsonRpcState State => this.ConnectionState;
 
 	/// <summary>Gets a task that completes when the connection has shut down.</summary>
 	/// <remarks>Deliberate disposal and EOF between messages without pending outbound requests succeed. Other connection failures fault this task with the original cause. EOF with pending requests faults it with <see cref="EndOfStreamException"/>.</remarks>

@@ -52,7 +52,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			throw new InvalidOperationException($"Explicit-lifetime marshalable values of '{shape.Type}' must implement IDisposable.");
 		}
 
-		TargetRegistration registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, owner.MarshaledTargetOptions)!;
+		TargetRegistration registration = (TargetRegistration)shape.Accept(RpcTargetVisitor.Instance, owner.Options.MarshaledTarget)!;
 		List<(int InterfaceId, TargetRegistration Registration)> optionalRegistrations = [];
 		HashSet<int> interfaceIds = [];
 		foreach (RpcMarshalableOptionalInterfaceAttribute optionalInterface in MarshalableCache<T>.OptionalInterfaces)
@@ -66,7 +66,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			{
 				ITypeShape optionalShape = shape.Provider.GetTypeShape(optionalInterface.OptionalInterface)
 					?? throw new NotSupportedException($"A PolyType shape is required for optional interface '{optionalInterface.OptionalInterface}'.");
-				TargetRegistration optionalRegistration = (TargetRegistration)optionalShape.Accept(RpcTargetVisitor.Instance, owner.MarshaledTargetOptions)!;
+				TargetRegistration optionalRegistration = (TargetRegistration)optionalShape.Accept(RpcTargetVisitor.Instance, owner.Options.MarshaledTarget)!;
 				optionalRegistrations.Add((optionalInterface.InterfaceId, optionalRegistration));
 			}
 		}
@@ -153,10 +153,10 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 		// Prefer explicit legacy metadata when present. Old assemblies have no factory attributes, but this also makes the compatibility behavior deterministic if both are applied.
 		T proxy = legacyOptionalProxy is not null
-			? JsonRpc.CastProxy<T>(JsonRpc.CreateLegacyProxy(legacyOptionalProxy.ProxyType, client, owner.MarshaledProxyOptions))
+			? JsonRpc.CastProxy<T>(JsonRpc.CreateLegacyProxy(legacyOptionalProxy.ProxyType, client, owner.Options.MarshaledProxy))
 			: optionalProxyFactory is not null
-				? JsonRpc.CastProxy<T>(optionalProxyFactory.CreateProxy(client, owner.MarshaledProxyOptions))
-				: JsonRpc.AttachCore<T>(client, owner.MarshaledProxyOptions);
+				? JsonRpc.CastProxy<T>(optionalProxyFactory.CreateProxy(client, owner.Options.MarshaledProxy))
+				: JsonRpc.AttachCore<T>(client, owner.Options.MarshaledProxy);
 		RemoteHandles.Add(proxy!, new(this, handle, callScopedLifetime, callScopedHandle));
 		return proxy;
 	}

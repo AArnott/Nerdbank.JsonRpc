@@ -31,11 +31,12 @@ public static class MethodNamingExamples
         ArgumentNullException.ThrowIfNull(channel);
 
         #region marshaled-interop-naming
-        JsonRpc rpc = new(channel)
+        JsonRpcOptions options = new()
         {
-            MarshaledTargetOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity },
-            MarshaledProxyOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity },
+            MarshaledTarget = new() { MethodNameTransform = CommonMethodNameTransforms.Identity },
+            MarshaledProxy = new() { MethodNameTransform = CommonMethodNameTransforms.Identity },
         };
+        JsonRpc rpc = new(channel, options);
         #endregion
 
         return rpc;

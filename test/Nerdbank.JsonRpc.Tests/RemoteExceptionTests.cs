@@ -104,7 +104,7 @@ public partial class RemoteExceptionTests : TestBase
 	public async Task CompleteErrorFrameSize_IncludesLargeEchoedId(JsonRpcEncoding encoding)
 	{
 		(IDuplexPipe rpcPipe, IDuplexPipe peerPipe) = FullDuplexStream.CreatePipePair();
-		using JsonRpc server = new(CreateTestChannel(rpcPipe, encoding)) { MaximumMessageSize = 4096 };
+		using JsonRpc server = new(CreateTestChannel(rpcPipe, encoding), new JsonRpcOptions { MaximumMessageSize = 4096 });
 		server.AddRpcTarget(new FailingService(), new JsonRpcTargetOptions { MethodNameTransform = CommonMethodNameTransforms.Identity });
 		await using JsonRpcPipeChannel peer = CreateTestChannel(peerPipe, encoding);
 		server.Start();
@@ -604,10 +604,15 @@ public partial class RemoteExceptionTests : TestBase
 		{
 			(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 			this.Client = new JsonRpc(CreateTestChannel(clientPipe, encoding), clientOptions ?? JsonRpcOptions.Default);
-			this.Server = new JsonRpc(CreateTestChannel(serverPipe, encoding), serverOptions ?? JsonRpcOptions.Default)
+			JsonRpcOptions effectiveServerOptions = serverOptions ?? JsonRpcOptions.Default;
+			if (maximumMessageSize is int limit)
+			{
+				effectiveServerOptions = effectiveServerOptions with { MaximumMessageSize = limit };
+			}
+
+			this.Server = new JsonRpc(CreateTestChannel(serverPipe, encoding), effectiveServerOptions)
 			{
 				Logger = serverLogger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance,
-				MaximumMessageSize = maximumMessageSize ?? 8 * 1024 * 1024,
 			};
 			this.Service = new FailingService();
 			this.Server.AddRpcTarget(this.Service, new JsonRpcTargetOptions { MethodNameTransform = CommonMethodNameTransforms.Identity });

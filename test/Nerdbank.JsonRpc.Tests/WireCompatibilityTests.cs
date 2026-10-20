@@ -357,8 +357,8 @@ public class WireCompatibilityTests : TestBase
 			}
 
 			return server
-				? new(channel) { MarshaledTargetOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity } }
-				: new(channel) { MarshaledProxyOptions = new() { MethodNameTransform = CommonMethodNameTransforms.Identity } };
+				? new(channel, new JsonRpcOptions { MarshaledTarget = new() { MethodNameTransform = CommonMethodNameTransforms.Identity } })
+				: new(channel, new JsonRpcOptions { MarshaledProxy = new() { MethodNameTransform = CommonMethodNameTransforms.Identity } });
 		}
 	}
 }
