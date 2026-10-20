@@ -35,7 +35,10 @@ public partial class ConnectionLifecycleTests : TestBase
 		await peer.Output.CompleteAsync();
 		await rpc.Completion.WithCancellation(this.TimeoutToken);
 		Assert.True(rpc.IsDisposed);
-		Assert.Equal(JsonRpcState.Disconnected, rpc.State);
+		Assert.Equal(JsonRpcState.Disconnected, rpc.ConnectionState);
+#pragma warning disable CS0618 // Verify the compatibility property.
+		Assert.Equal(rpc.ConnectionState, rpc.State);
+#pragma warning restore CS0618
 		EndOfStreamException cause = Assert.IsType<EndOfStreamException>(rpc.TerminationException);
 		await Assert.ThrowsAsync<EndOfStreamException>(async () => await rpc.RequestAsync("late", default, this.TimeoutToken));
 		await Assert.ThrowsAsync<EndOfStreamException>(async () => await rpc.NotifyAsync("late", default, this.TimeoutToken));
@@ -43,7 +46,7 @@ public partial class ConnectionLifecycleTests : TestBase
 		await Assert.ThrowsAsync<ObjectDisposedException>(async () => await rpc.RequestAsync("late", default, this.TimeoutToken));
 		await Assert.ThrowsAsync<ObjectDisposedException>(async () => await rpc.NotifyAsync("late", default, this.TimeoutToken));
 		Assert.Same(cause, rpc.TerminationException);
-		Assert.Equal(JsonRpcState.Disconnected, rpc.State);
+		Assert.Equal(JsonRpcState.Disconnected, rpc.ConnectionState);
 		Assert.Equal(TaskStatus.RanToCompletion, rpc.Completion.Status);
 		await peer.Input.CompleteAsync();
 	}
@@ -74,7 +77,7 @@ public partial class ConnectionLifecycleTests : TestBase
 		}
 
 		Assert.Null(rpc.TerminationException);
-		Assert.Equal(JsonRpcState.Disposed, rpc.State);
+		Assert.Equal(JsonRpcState.Disposed, rpc.ConnectionState);
 		Assert.True(rpc.IsDisposed);
 		await Assert.ThrowsAsync<ObjectDisposedException>(async () => await rpc.RequestAsync("late", default, this.TimeoutToken));
 		await Assert.ThrowsAsync<ObjectDisposedException>(async () => await rpc.NotifyAsync("late", default, this.TimeoutToken));
@@ -111,7 +114,7 @@ public partial class ConnectionLifecycleTests : TestBase
 		Assert.Same(firstError, completionError);
 		Assert.Same(firstError, rpc.TerminationException);
 		Assert.Contains("2 pending outbound requests", completionError.Message);
-		Assert.Equal(JsonRpcState.Disconnected, rpc.State);
+		Assert.Equal(JsonRpcState.Disconnected, rpc.ConnectionState);
 		rpc.Dispose();
 		Assert.Same(completionError, rpc.TerminationException);
 		Assert.True(rpc.Completion.IsFaulted);
@@ -143,7 +146,7 @@ public partial class ConnectionLifecycleTests : TestBase
 		Assert.Same(error, await Assert.ThrowsAsync<ProtocolViolationException>(() => rpc.Completion.WithCancellation(this.TimeoutToken)));
 		Assert.Same(error, rpc.TerminationException);
 		Assert.True(rpc.IsDisposed);
-		Assert.Equal(JsonRpcState.Faulted, rpc.State);
+		Assert.Equal(JsonRpcState.Faulted, rpc.ConnectionState);
 		await Assert.ThrowsAsync<ProtocolViolationException>(async () => await rpc.NotifyAsync("late", default, this.TimeoutToken));
 		Assert.False(await peerChannel.Reader.WaitToReadAsync(this.TimeoutToken));
 		rpc.Dispose();
@@ -173,7 +176,7 @@ public partial class ConnectionLifecycleTests : TestBase
 		await peerRpc.Completion.WithCancellation(this.TimeoutToken);
 		Assert.Contains(logger.Messages, m => m.Contains("Peer-reported JSON-RPC protocol violation"));
 		Assert.Equal(LogLevel.Critical, await logger.ProtocolDiagnostic.Task.WithCancellation(this.TimeoutToken));
-		Assert.Equal(JsonRpcState.Disconnected, peerRpc.State);
+		Assert.Equal(JsonRpcState.Disconnected, peerRpc.ConnectionState);
 		Assert.DoesNotContain(logger.Messages, m => m.Contains("Could not flush the final"));
 	}
 
@@ -266,7 +269,7 @@ public partial class ConnectionLifecycleTests : TestBase
 			? await Assert.ThrowsAsync<ProtocolViolationException>(() => rpc.Completion.WithCancellation(this.TimeoutToken))
 			: await Assert.ThrowsAsync<EndOfStreamException>(() => rpc.Completion.WithCancellation(this.TimeoutToken));
 		Assert.Same(cause, rpc.TerminationException);
-		Assert.Equal(JsonRpcState.Faulted, rpc.State);
+		Assert.Equal(JsonRpcState.Faulted, rpc.ConnectionState);
 		await peer.Input.CompleteAsync();
 	}
 
@@ -327,7 +330,7 @@ public partial class ConnectionLifecycleTests : TestBase
 		rpc.Dispose();
 		await Assert.ThrowsAsync<ObjectDisposedException>(async () => await rpc.NotifyAsync("late", default, this.TimeoutToken));
 		Assert.Same(original, await Assert.ThrowsAsync<ProtocolViolationException>(() => rpc.Completion.WithCancellation(this.TimeoutToken)));
-		Assert.Equal(JsonRpcState.Faulted, rpc.State);
+		Assert.Equal(JsonRpcState.Faulted, rpc.ConnectionState);
 		await peer.Input.CompleteAsync();
 		await peer.Output.CompleteAsync();
 	}
@@ -485,7 +488,7 @@ public partial class ConnectionLifecycleTests : TestBase
 			await Assert.ThrowsAsync<EndOfStreamException>(() => rpc.Completion.WithCancellation(this.TimeoutToken));
 		}
 
-		Assert.Equal(JsonRpcState.Disconnected, rpc.State);
+		Assert.Equal(JsonRpcState.Disconnected, rpc.ConnectionState);
 	}
 
 	/// <summary>Verifies no later batch entry is dispatched after an earlier entry rejects the protocol.</summary>
@@ -594,7 +597,7 @@ public partial class ConnectionLifecycleTests : TestBase
 			Assert.Equal(connectionError.Message, cancellation.Message);
 		}
 
-		Assert.Equal(JsonRpcState.Faulted, rpc.State);
+		Assert.Equal(JsonRpcState.Faulted, rpc.ConnectionState);
 		await peer.Output.CompleteAsync();
 		await peer.Input.CompleteAsync();
 	}
@@ -648,7 +651,7 @@ public partial class ConnectionLifecycleTests : TestBase
 		};
 		await peerChannel.Writer.WriteAsync(response, this.TimeoutToken);
 		await call.WithCancellation(this.TimeoutToken);
-		Assert.Equal(JsonRpcState.Running, rpc.State);
+		Assert.Equal(JsonRpcState.Running, rpc.ConnectionState);
 	}
 
 	/// <summary>Exposes subscriptions with independently observable cleanup, including one failure.</summary>

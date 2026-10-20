@@ -298,7 +298,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			}
 
 			this.owner.ThrowIfClosed();
-			Verify.Operation(this.owner.State == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.owner.State}.");
+			Verify.Operation(this.owner.ConnectionState == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.owner.ConnectionState}.");
 			foreach (Entry entry in snapshot)
 			{
 				if (!entry.TryMarkSent())

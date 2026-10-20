@@ -38,7 +38,7 @@ internal static class Examples
             // Also records an idle EOF, for which Completion succeeds.
             logger.LogInformation(
                 "Original RPC state: {State}; cause: {Cause}",
-                rpc.State,
+                rpc.ConnectionState,
                 rpc.TerminationException);
             rpc.Dispose();
         }
