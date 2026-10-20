@@ -20,7 +20,12 @@ This guidance applies to the ValueTasks returned by the connection and batch req
 
 Generated proxy contracts must be `partial`, non-nested, non-generic interfaces. Their methods must be non-generic and may return `ValueTask<T>`, `Task<T>`, `ValueTask`, or `Task` for requests, `IAsyncEnumerable<T>` for streaming requests, or `void` for notifications. Generated proxies do not implement properties or events, so omit abstract properties and events from the contract (or provide default interface implementations). To receive remote event notifications, register methods that match their names and arguments; see [Events as notifications](events.md#receiving-the-notifications).
 
-Parameters may not be optional, `params`, `ref`, `out`, or `in`. Method parameters and return values must have PolyType shapes so the connection's serializer can encode and decode them. A method may include one `CancellationToken`, which must be its final parameter and is not serialized as an argument. For requests, cancellation after sending propagates to the remote target using `$/cancelRequest`. Notifications have no request ID, so their token controls only local argument serialization and enqueueing. See [Cancellation](protocol-behavior.md#cancellation).
+Parameters may not be `params`, `ref`, `out`, or `in`. Method parameters and return values must have PolyType shapes so the connection's serializer can encode and decode them. A method may include one `CancellationToken`, which must be its final parameter and is not serialized as an argument. For requests, cancellation after sending propagates to the remote target using `$/cancelRequest`. Notifications have no request ID, so their token controls only local argument serialization and enqueueing. See [Cancellation](protocol-behavior.md#cancellation).
+
+Optional parameters are supported, including a final cancellation token with `= default`.
+When calling through the interface, the C# compiler supplies omitted arguments using the interface's defaults, and the proxy serializes those values like explicitly supplied arguments.
+When an incoming request omits optional arguments, the server uses the defaults from the contract type registered with <xref:Nerdbank.JsonRpc.JsonRpc.AddRpcTarget*>.
+Register the interface as the target contract to use its defaults, even if the implementation declares no defaults.
 
 The proxy resolves its type-shape provider once and caches the shapes it needs. <xref:Nerdbank.JsonRpc.JsonRpc.Attach*> and <xref:Nerdbank.JsonRpc.JsonRpcBatch.Attach*> accept an optional immutable <xref:Nerdbank.JsonRpc.JsonRpcProxyOptions> record for per-proxy argument encoding:
 

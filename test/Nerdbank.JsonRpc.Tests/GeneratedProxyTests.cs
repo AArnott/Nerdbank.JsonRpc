@@ -48,6 +48,105 @@ public class GeneratedProxyTests
 	}
 
 	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, true)]
+	[Arguments(JsonRpcEncoding.Json, false)]
+	[Arguments(JsonRpcEncoding.Json, true)]
+	public async Task GeneratedProxy_SupportsOptionalParameters(JsonRpcEncoding encoding, bool useNamedArguments)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IOptionalParameterContract>(new OptionalParameterTarget());
+		serverRpc.Start();
+		clientRpc.Start();
+		IOptionalParameterContract client = clientRpc.Attach<IOptionalParameterContract>(new JsonRpcProxyOptions { UseNamedArguments = useNamedArguments });
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+
+		Assert.Equal(45, await client.AddAsync(3, cancellationToken: cts.Token));
+		Assert.Equal(10, await client.AddAsync(3, 7, cts.Token));
+		Assert.Equal(42, await client.GetValueAsync().AsTask().WithCancellation(cts.Token));
+		Assert.Equal("interface default", await client.EchoAsync(cancellationToken: cts.Token));
+		Assert.Null(await client.EchoAsync(null, cts.Token));
+	}
+
+	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task GeneratedProxy_SerializesCompilerSuppliedDefault(bool useNamedArguments)
+	{
+		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
+		using JsonRpc rpc = new(new MockJsonRpcPipeChannel(transport));
+		rpc.Start();
+		IOptionalParameterContract client = rpc.Attach<IOptionalParameterContract>(new JsonRpcProxyOptions { UseNamedArguments = useNamedArguments });
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+
+		Task<int> resultTask = client.AddAsync(3, cancellationToken: cts.Token).AsTask();
+
+		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(cts.Token));
+		MessagePackReader reader = new(request.Arguments.AsMessagePack());
+		if (useNamedArguments)
+		{
+			Assert.Equal(2, reader.ReadMapHeader());
+			Assert.Equal("left", reader.ReadString());
+		}
+		else
+		{
+			Assert.Equal(2, reader.ReadArrayHeader());
+		}
+
+		Assert.Equal(3, reader.ReadInt32());
+		if (useNamedArguments)
+		{
+			Assert.Equal("right", reader.ReadString());
+		}
+
+		Assert.Equal(42, reader.ReadInt32());
+		await remote.Writer.WriteAsync(new JsonRpcResult { Id = request.Id!.Value, Result = ((IJsonRpcClient)rpc).Serializer.Serialize(45, ShapeProvider.Default.Int32, cts.Token) }, cts.Token);
+		Assert.Equal(45, await resultTask.WithCancellation(cts.Token));
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.MessagePack, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, true)]
+	[Arguments(JsonRpcEncoding.Json, false)]
+	[Arguments(JsonRpcEncoding.Json, true)]
+	public async Task Server_UsesInterfaceDefaultsForOmittedArguments(JsonRpcEncoding encoding, bool useNamedArguments)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IOptionalParameterContract>(new OptionalParameterTarget());
+		serverRpc.Start();
+		clientRpc.Start();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+
+		JsonRpcValue arguments;
+		using (JsonRpcArgumentsBuilder builder = clientRpc.CreateArguments(named: useNamedArguments, count: 1, cts.Token))
+		{
+			builder.Add("left", 3, ShapeProvider.Default.Int32);
+			arguments = builder.Build();
+		}
+
+		Assert.Equal(45, await clientRpc.RequestAsync("add", arguments, ShapeProvider.Default.Int32, cts.Token));
+
+		using (JsonRpcArgumentsBuilder builder = clientRpc.CreateArguments(named: useNamedArguments, count: 0, cts.Token))
+		{
+			arguments = builder.Build();
+		}
+
+		Assert.Equal(42, await clientRpc.RequestAsync("getValue", arguments, ShapeProvider.Default.Int32, cts.Token));
+
+		using (JsonRpcArgumentsBuilder builder = clientRpc.CreateArguments(named: useNamedArguments, count: 0, cts.Token))
+		{
+			arguments = builder.Build();
+		}
+
+		Assert.Equal("interface default", await clientRpc.RequestAsync("echo", arguments, ShapeProvider.Default.String, cts.Token));
+		Assert.Equal(42, await clientRpc.RequestAsync("getValue", default(JsonRpcValue), ShapeProvider.Default.Int32, cts.Token));
+	}
+
+	[Test]
 	public async Task GeneratedProxy_MarshalsDisposableArguments()
 	{
 		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
