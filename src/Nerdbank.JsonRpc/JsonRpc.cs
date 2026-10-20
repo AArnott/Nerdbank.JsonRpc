@@ -267,7 +267,12 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	AsyncEnumerableManager IArgumentsBuilderContext.AsyncEnumerables => this.asyncEnumerables;
 
 	/// <summary>Gets the connection's lifecycle state, retaining the original shutdown mode after disposal.</summary>
-	public JsonRpcState State => this.terminated ? this.terminalState : this.readerTask is not null ? JsonRpcState.Running : JsonRpcState.NotStarted;
+	public JsonRpcState ConnectionState => this.terminated ? this.terminalState : this.readerTask is not null ? JsonRpcState.Running : JsonRpcState.NotStarted;
+
+	/// <summary>Gets the connection's lifecycle state, retaining the original shutdown mode after disposal.</summary>
+	/// <remarks>Use <see cref="ConnectionState"/> instead.</remarks>
+	[Obsolete("Use ConnectionState instead.")]
+	public JsonRpcState State => this.ConnectionState;
 
 	/// <summary>Gets a task that completes when the connection has shut down.</summary>
 	/// <remarks>Deliberate disposal and EOF between messages without pending outbound requests succeed. Other connection failures fault this task with the original cause. EOF with pending requests faults it with <see cref="EndOfStreamException"/>.</remarks>
@@ -662,7 +667,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	}
 
 	/// <summary>Deliberately disposes this connection and rejects subsequent calls with ObjectDisposedException.</summary>
-	/// <remarks>Preserves any prior connection-loss cause in <see cref="TerminationException"/> and does not overwrite the original <see cref="State"/> or <see cref="Completion"/> outcome. Await Completion to observe asynchronous teardown.</remarks>
+	/// <remarks>Preserves any prior connection-loss cause in <see cref="TerminationException"/> and does not overwrite the original <see cref="ConnectionState"/> or <see cref="Completion"/> outcome. Await Completion to observe asynchronous teardown.</remarks>
 	public void Dispose()
 	{
 		this.explicitlyDisposed = true;
@@ -1725,7 +1730,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			cancellationToken.ThrowIfCancellationRequested();
 			Requires.Argument(request.Id.HasValue, nameof(request), "Request must have an ID for tracking the response.");
 			this.ThrowIfClosed();
-			Verify.Operation(this.State == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.State}.");
+			Verify.Operation(this.ConnectionState == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.ConnectionState}.");
 
 			responseSource = this.RegisterOutboundRequest(request);
 			registered = true;
