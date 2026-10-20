@@ -1835,15 +1835,14 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			Verify.Operation(this.State == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.State}.");
 
 			responseSource = this.RegisterOutboundRequest(request);
-			if (timeoutSource is not null)
-			{
-				responseTask = responseSource.Task.AsTask();
-			}
-
 			registered = true;
 			this.ApplyJoinableTaskToken(request);
 			await this.PostMessageAsync(request, effectiveCancellationToken).ConfigureAwait(false);
 			posted = true;
+			if (timeoutSource is not null)
+			{
+				responseTask = responseSource.Task.AsTask();
+			}
 
 			using (cancellationToken.Register(this.cancelOutboundRequestDelegate, request, useSynchronizationContext: false))
 			{

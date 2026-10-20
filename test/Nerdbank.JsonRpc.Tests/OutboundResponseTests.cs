@@ -216,12 +216,15 @@ public class OutboundResponseTests : TestBase
 
 	/// <summary>Verifies that a response arriving during a suspended write is retained until that write completes.</summary>
 	/// <param name="failWrite">Whether the suspended write fails instead of completing.</param>
+	/// <param name="timeoutEnabled">Whether outbound requests have a finite timeout.</param>
 	[Test]
-	[Arguments(false)]
-	[Arguments(true)]
-	public async Task ResponseArrivingBeforeWriteEndsRemainsOwnedByItsRequest(bool failWrite)
+	[Arguments(false, false)]
+	[Arguments(true, false)]
+	[Arguments(false, true)]
+	[Arguments(true, true)]
+	public async Task ResponseArrivingBeforeWriteEndsRemainsOwnedByItsRequest(bool failWrite, bool timeoutEnabled)
 	{
-		using Fixture fixture = new(JsonRpcEncoding.MessagePack, gateFirstWrite: true);
+		using Fixture fixture = new(JsonRpcEncoding.MessagePack, gateFirstWrite: true, options: timeoutEnabled ? new JsonRpcOptions { OutboundRequestTimeout = TimeSpan.FromSeconds(30) } : null);
 		ValueTask<int> first = fixture.RequestAsync(this.TimeoutToken);
 		JsonRpcRequest firstRequest = await fixture.ReadRequestAsync(this.TimeoutToken);
 
@@ -260,12 +263,15 @@ public class OutboundResponseTests : TestBase
 
 	/// <summary>Verifies that submission failure unregisters a request before its source is reused.</summary>
 	/// <param name="cancelWrite">Whether the write is canceled instead of faulted.</param>
+	/// <param name="timeoutEnabled">Whether outbound requests have a finite timeout.</param>
 	[Test]
-	[Arguments(false)]
-	[Arguments(true)]
-	public async Task FailedWriteDoesNotPoisonTheNextRequest(bool cancelWrite)
+	[Arguments(false, false)]
+	[Arguments(true, false)]
+	[Arguments(false, true)]
+	[Arguments(true, true)]
+	public async Task FailedWriteDoesNotPoisonTheNextRequest(bool cancelWrite, bool timeoutEnabled)
 	{
-		using Fixture fixture = new(JsonRpcEncoding.MessagePack, gateFirstWrite: true);
+		using Fixture fixture = new(JsonRpcEncoding.MessagePack, gateFirstWrite: true, options: timeoutEnabled ? new JsonRpcOptions { OutboundRequestTimeout = TimeSpan.FromSeconds(30) } : null);
 		using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
 		ValueTask<int> failed = fixture.RequestAsync(cancellation.Token);
 		await fixture.ReadRequestAsync(this.TimeoutToken);
@@ -586,7 +592,8 @@ public class OutboundResponseTests : TestBase
 		/// <summary>Initializes a new instance of the <see cref="Fixture"/> class.</summary>
 		/// <param name="encoding">The payload encoding.</param>
 		/// <param name="gateFirstWrite">Whether the first write waits for explicit completion.</param>
-		internal Fixture(JsonRpcEncoding encoding, bool gateFirstWrite = false)
+		/// <param name="options">The connection options.</param>
+		internal Fixture(JsonRpcEncoding encoding, bool gateFirstWrite = false, JsonRpcOptions? options = null)
 		{
 			this.encoding = encoding;
 			(MockChannel<JsonRpcMessage> local, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
@@ -599,7 +606,7 @@ public class OutboundResponseTests : TestBase
 			JsonRpcSerializer serializer = encoding == JsonRpcEncoding.Json
 				? new JsonSerializerPlugin(new Nerdbank.Json.JsonSerializer())
 				: new MessagePackSerializerPlugin(JsonRpcMessagePackChannel.DefaultSerializer);
-			this.Rpc = new(new MockJsonRpcPipeChannel(local, serializer, writeDirectly: true));
+			this.Rpc = new(new MockJsonRpcPipeChannel(local, serializer, writeDirectly: true), options);
 			this.Rpc.Start();
 		}
 

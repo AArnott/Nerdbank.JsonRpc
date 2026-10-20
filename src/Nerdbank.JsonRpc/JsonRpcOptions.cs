@@ -22,16 +22,17 @@ public sealed record JsonRpcOptions
 	/// <remarks>
 	/// When the timeout expires, the request is canceled locally and a cancellation notification is sent to the peer.
 	/// The peer may still be processing the request.
+	/// The maximum finite timeout is <see cref="int.MaxValue"/> milliseconds, for compatibility with all supported target frameworks.
 	/// </remarks>
-	/// <exception cref="ArgumentOutOfRangeException">Thrown when set to zero or a negative value other than <see cref="Timeout.InfiniteTimeSpan"/>.</exception>
+	/// <exception cref="ArgumentOutOfRangeException">Thrown when set to zero, a negative value other than <see cref="Timeout.InfiniteTimeSpan"/>, or more than <see cref="int.MaxValue"/> milliseconds.</exception>
 	public TimeSpan OutboundRequestTimeout
 	{
 		get => field;
 		init
 		{
-			if (value != Timeout.InfiniteTimeSpan && value <= TimeSpan.Zero)
+			if (value != Timeout.InfiniteTimeSpan && (value <= TimeSpan.Zero || value > TimeSpan.FromMilliseconds(int.MaxValue)))
 			{
-				throw new ArgumentOutOfRangeException(nameof(value), "The outbound request timeout must be positive or Timeout.InfiniteTimeSpan.");
+				throw new ArgumentOutOfRangeException(nameof(value), "The outbound request timeout must be positive and no greater than int.MaxValue milliseconds, or Timeout.InfiniteTimeSpan.");
 			}
 
 			field = value;

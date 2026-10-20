@@ -61,6 +61,15 @@ public partial class JsonRpcClientTests : TestBase
 	}
 
 	[Test]
+	public void OutboundRequestTimeoutMustNotExceedTimerLimit()
+	{
+		TimeSpan maximumTimeout = TimeSpan.FromMilliseconds(int.MaxValue);
+		Assert.Equal(maximumTimeout, new JsonRpcOptions { OutboundRequestTimeout = maximumTimeout }.OutboundRequestTimeout);
+		Assert.Throws<ArgumentOutOfRangeException>(() => { _ = new JsonRpcOptions { OutboundRequestTimeout = maximumTimeout + TimeSpan.FromTicks(1) }; });
+		Assert.Throws<ArgumentOutOfRangeException>(() => { _ = new JsonRpcOptions { OutboundRequestTimeout = TimeSpan.MaxValue }; });
+	}
+
+	[Test]
 	public void OutboundRequestTimeoutDefaultsToInfinite()
 	{
 		Assert.Equal(Timeout.InfiniteTimeSpan, JsonRpcOptions.Default.OutboundRequestTimeout);
@@ -325,6 +334,29 @@ public partial class JsonRpcClientTests : TestBase
 		await Assert.ThrowsAsync<TimeoutException>(() => requestTask.WithTimeout(ExpectedTimeout));
 		Assert.False(channel.Reader.TryRead(out _));
 
+		await channel.Writer.WriteAsync(new JsonRpcResult { Id = request.Id!.Value, Result = NilMsgPack }, this.TimeoutToken);
+		await requestTask.WithCancellation(this.TimeoutToken);
+		Assert.False(jsonRpc.Completion.IsCompleted);
+	}
+
+	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task OutboundRequestTimeoutAcceptsMaximumTimerDelay(bool batched)
+	{
+		(Channel<JsonRpcMessage> channel, Channel<JsonRpcMessage> jsonRpcChannel) = MockChannel<JsonRpcMessage>.CreatePair();
+		using JsonRpc jsonRpc = new(new MockJsonRpcPipeChannel(jsonRpcChannel), new JsonRpcOptions { OutboundRequestTimeout = TimeSpan.FromMilliseconds(int.MaxValue) });
+		jsonRpc.Start();
+		using JsonRpcBatch batch = jsonRpc.CreateBatch();
+		IJsonRpcClient client = batched ? batch : jsonRpc;
+		Task requestTask = client.RequestAsync("Pending", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
+		if (batched)
+		{
+			await batch.SendAsync(this.TimeoutToken);
+		}
+
+		JsonRpcMessage message = await channel.Reader.ReadAsync(this.TimeoutToken);
+		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(batched ? Assert.IsType<JsonRpcMessageBatch>(message).Messages.Single() : message);
 		await channel.Writer.WriteAsync(new JsonRpcResult { Id = request.Id!.Value, Result = NilMsgPack }, this.TimeoutToken);
 		await requestTask.WithCancellation(this.TimeoutToken);
 		Assert.False(jsonRpc.Completion.IsCompleted);
