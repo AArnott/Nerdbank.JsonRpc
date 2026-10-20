@@ -16,7 +16,7 @@ namespace Nerdbank.JsonRpc;
 
 /// <summary>
 /// Encodes JSON-RPC messages as MessagePack over a duplex pipe, framed as described by <see cref="JsonRpcMessagePackFraming"/>.
-/// Inbound frames are limited by <see cref="JsonRpc.MaximumMessageSize"/>.
+/// Inbound frames are limited by <see cref="JsonRpcOptions.MaximumMessageSize"/>.
 /// </summary>
 public class JsonRpcMessagePackChannel : JsonRpcPipeChannel
 {

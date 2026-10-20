@@ -31,7 +31,7 @@ Objects passed by reference are callable by the peer according to their protocol
 
 Nerdbank.JsonRpc bounds the cost of malformed or hostile input:
 
-- Received messages larger than <xref:Nerdbank.JsonRpc.JsonRpc.MaximumMessageSize?displayProperty=nameWithType> (8 MiB by default) are rejected. Lower this when messages are known to be small and the peer is not fully trusted.
+- Received messages larger than <xref:Nerdbank.JsonRpc.JsonRpcOptions.MaximumMessageSize?displayProperty=nameWithType> (8 MiB by default) are rejected. Lower this when messages are known to be small and the peer is not fully trusted.
 - MessagePack batches and parameter collections are limited to 65,536 entries.
 - The channel holds only a bounded number of received messages that are waiting to be processed (100 by default).
 - Malformed framing or envelopes fault the connection rather than being partially processed. See [Protocol behavior](protocol-behavior.md#failures).

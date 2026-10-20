@@ -35,9 +35,6 @@ public partial class ConnectionLifecycleTests : TestBase
 		await rpc.Completion.WithCancellation(this.TimeoutToken);
 		Assert.True(rpc.IsDisposed);
 		Assert.Equal(JsonRpcState.Disconnected, rpc.ConnectionState);
-#pragma warning disable CS0618 // Verify the compatibility property.
-		Assert.Equal(rpc.ConnectionState, rpc.State);
-#pragma warning restore CS0618
 		EndOfStreamException cause = Assert.IsType<EndOfStreamException>(rpc.TerminationException);
 		await Assert.ThrowsAsync<EndOfStreamException>(async () => await rpc.RequestAsync("late", default, this.TimeoutToken));
 		await Assert.ThrowsAsync<EndOfStreamException>(async () => await rpc.NotifyAsync("late", default, this.TimeoutToken));
