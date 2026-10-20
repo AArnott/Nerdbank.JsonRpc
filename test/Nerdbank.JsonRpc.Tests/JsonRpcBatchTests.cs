@@ -49,6 +49,27 @@ public partial class JsonRpcBatchTests : TestBase
 	}
 
 	[Test]
+	public async Task ClientBatch_OutboundRequestTimeoutCancelsRequest()
+	{
+		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair(new JsonRpcOptions { OutboundRequestTimeout = ExpectedTimeout });
+		using (jsonRpc)
+		using (JsonRpcBatch batch = jsonRpc.CreateBatch())
+		{
+			Task requestTask = batch.RequestAsync("Ping", EmptyParamsMsgPack, this.TimeoutToken).AsTask();
+			await batch.SendAsync(this.TimeoutToken);
+			JsonRpcMessageBatch requestBatch = Assert.IsType<JsonRpcMessageBatch>(await channel.Reader.ReadAsync(this.TimeoutToken));
+			JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(requestBatch.Messages.Single());
+
+			JsonRpcRequest cancel = Assert.IsType<JsonRpcRequest>(await channel.Reader.ReadAsync(this.TimeoutToken));
+			Assert.Equal("$/cancelRequest", cancel.Method);
+			TimeoutException exception = await Assert.ThrowsAsync<TimeoutException>(() => requestTask.WithCancellation(this.TimeoutToken));
+			Assert.Contains(nameof(JsonRpcOptions.OutboundRequestTimeout), exception.Message);
+
+			await channel.Writer.WriteAsync(new JsonRpcResult { Id = request.Id!.Value, Result = NilMsgPack }, this.TimeoutToken);
+		}
+	}
+
+	[Test]
 	public async Task ClientRejectsNilParamsForDirectAndBatchedRequests()
 	{
 		(JsonRpc jsonRpc, Channel<JsonRpcMessage> channel) = CreateStartedRpcPair();
@@ -357,10 +378,10 @@ public partial class JsonRpcBatchTests : TestBase
 		Assert.Equal(2, await secondTask.WithCancellation(this.TimeoutToken));
 	}
 
-	private static (JsonRpc Rpc, Channel<JsonRpcMessage> Channel) CreateStartedRpcPair()
+	private static (JsonRpc Rpc, Channel<JsonRpcMessage> Channel) CreateStartedRpcPair(JsonRpcOptions? options = null)
 	{
 		(Channel<JsonRpcMessage> channel, Channel<JsonRpcMessage> jsonRpcChannel) = MockChannel<JsonRpcMessage>.CreatePair();
-		JsonRpc jsonRpc = new(new MockJsonRpcPipeChannel(jsonRpcChannel));
+		JsonRpc jsonRpc = new(new MockJsonRpcPipeChannel(jsonRpcChannel), options);
 		jsonRpc.Start();
 		return (jsonRpc, channel);
 	}
