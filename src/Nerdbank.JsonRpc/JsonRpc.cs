@@ -939,6 +939,66 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+	/// <summary>Creates a cancellation source for the configured outbound request timeout.</summary>
+	/// <param name="cancellationToken">The caller's cancellation token.</param>
+	/// <returns>A linked, timed cancellation source, or <see langword="null"/> if no timeout is configured.</returns>
+	internal CancellationTokenSource? CreateOutboundRequestTimeoutSource(CancellationToken cancellationToken)
+	{
+		TimeSpan timeout = this.Options.OutboundRequestTimeout;
+		if (timeout == Timeout.InfiniteTimeSpan)
+		{
+			return null;
+		}
+
+		CancellationTokenSource timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		timeoutSource.CancelAfter(timeout);
+		return timeoutSource;
+	}
+
+	/// <summary>Awaits an outbound response, translating the configured timeout to a <see cref="TimeoutException"/>.</summary>
+	/// <param name="responseTask">The task that completes when the response arrives.</param>
+	/// <param name="timeoutToken">The timeout token.</param>
+	/// <param name="cancellationToken">The caller's cancellation token.</param>
+	/// <returns>The response.</returns>
+#if NET
+	[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+	internal async ValueTask<JsonRpcResponse> AwaitOutboundResponseAsync(Task<JsonRpcResponse> responseTask, CancellationToken timeoutToken, CancellationToken cancellationToken)
+	{
+#pragma warning disable VSTHRD003 // Awaiting a Task that completes when a remote JSON-RPC response arrives.
+#if NET
+		await responseTask.WaitAsync(timeoutToken).NoThrowAwaitable(false);
+#else
+		await responseTask.WithCancellation(timeoutToken).NoThrowAwaitable(false);
+#endif
+		if (!cancellationToken.IsCancellationRequested && timeoutToken.IsCancellationRequested)
+		{
+			throw CreateOutboundRequestTimeoutException();
+		}
+
+		try
+		{
+			if (!responseTask.IsCompleted)
+			{
+				// Caller cancellation ends the wrapper wait, but still requires the peer's response.
+				await responseTask.NoThrowAwaitable(false);
+			}
+
+#pragma warning disable VSTHRD002, VSTHRD103 // The response task is complete; retrieve its result or propagate its exception without blocking.
+			return responseTask.GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002, VSTHRD103
+		}
+		catch (OperationCanceledException ex) when (timeoutToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+		{
+			throw CreateOutboundRequestTimeoutException(ex);
+		}
+#pragma warning restore VSTHRD003
+	}
+
+	/// <summary>Drains and releases a response that arrives after its outbound request timed out.</summary>
+	/// <param name="responseTask">The response task to observe.</param>
+	internal void ObserveTimedOutResponse(Task<JsonRpcResponse> responseTask) => this.DrainTimedOutResponseAsync(responseTask, responseSource: null).Forget();
+
 	/// <summary>Consumes a response without materializing its result and translates remote errors.</summary>
 	/// <param name="request">The originating request.</param>
 	/// <param name="responseTask">The single-consumption response awaitable.</param>
@@ -1169,6 +1229,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			: remoteError;
 	}
 
+	private static TimeoutException CreateOutboundRequestTimeoutException(Exception? innerException = null)
+		=> new($"The outbound JSON-RPC request timed out according to {nameof(JsonRpcOptions.OutboundRequestTimeout)}. The peer may still be processing the request.", innerException);
+
 	private static void ReleaseReceivedArguments(JsonRpcRequest request)
 	{
 		request.SplitArguments.Return();
@@ -1293,6 +1356,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	private static InvalidOperationException CreateProxyMismatchException(object? proxy, Type interfaceType)
 		=> new($"The generated proxy factory returned {(proxy is null ? "null" : $"an instance of '{proxy.GetType().FullName}'")} which does not implement requested interface '{interfaceType.FullName}'.");
+
+	private void ObserveTimedOutResponseAndRecycle(Task<JsonRpcResponse> responseTask, ResponseCompletionSource responseSource)
+		=> this.DrainTimedOutResponseAsync(responseTask, responseSource).Forget();
 
 	/// <summary>Retains the connection cause rather than exposing a channel-closed wrapper during teardown.</summary>
 	/// <param name="write">The pending channel write.</param>
@@ -1710,6 +1776,43 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
+	private async Task DrainTimedOutResponseAsync(Task<JsonRpcResponse> responseTask, ResponseCompletionSource? responseSource)
+	{
+		try
+		{
+#pragma warning disable VSTHRD003 // Awaiting a Task that completes when a remote JSON-RPC response arrives.
+			JsonRpcResponse response = await responseTask.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+			this.ReleaseResponseResources(response);
+		}
+		catch (Exception ex)
+		{
+			this.Logger.LogDebug(ex, "A timed-out request ended without a response to drain.");
+		}
+		finally
+		{
+			if (responseSource is not null)
+			{
+				lock (this.connectionSync)
+				{
+					// The response producer also holds connectionSync, so it cannot access this source after it is reset.
+					this.RecycleResponseSource(responseSource);
+				}
+			}
+		}
+	}
+
+	private void RecycleResponseSource(ResponseCompletionSource responseSource)
+	{
+		responseSource.Reset();
+		if (!this.terminated && this.recycledResponseSourceCount < MaximumRecycledResponseSources)
+		{
+			responseSource.Next = this.recycledResponseSources;
+			this.recycledResponseSources = responseSource;
+			this.recycledResponseSourceCount++;
+		}
+	}
+
 	// Pooled because this is only ever awaited once, by the typed response helpers.
 #if NET
 	[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -1717,25 +1820,36 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private async ValueTask<JsonRpcResponse> RequestAsync(JsonRpcRequest request, CancellationToken cancellationToken)
 	{
 		using Activity? activity = JsonRpcTracing.StartClientActivity(request.Method);
+		using CancellationTokenSource? timeoutSource = this.CreateOutboundRequestTimeoutSource(cancellationToken);
+		CancellationToken effectiveCancellationToken = timeoutSource?.Token ?? cancellationToken;
 		ResponseCompletionSource? responseSource = null;
+		Task<JsonRpcResponse>? responseTask = null;
 		bool registered = false;
 		bool posted = false;
+		bool preserveResponseSource = false;
 		try
 		{
-			cancellationToken.ThrowIfCancellationRequested();
+			effectiveCancellationToken.ThrowIfCancellationRequested();
 			Requires.Argument(request.Id.HasValue, nameof(request), "Request must have an ID for tracking the response.");
 			this.ThrowIfClosed();
 			Verify.Operation(this.State == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.State}.");
 
 			responseSource = this.RegisterOutboundRequest(request);
+			if (timeoutSource is not null)
+			{
+				responseTask = responseSource.Task.AsTask();
+			}
+
 			registered = true;
 			this.ApplyJoinableTaskToken(request);
-			await this.PostMessageAsync(request, cancellationToken).ConfigureAwait(false);
+			await this.PostMessageAsync(request, effectiveCancellationToken).ConfigureAwait(false);
 			posted = true;
 
-			using (cancellationToken.Register(this.cancelOutboundRequestDelegate, request))
+			using (cancellationToken.Register(this.cancelOutboundRequestDelegate, request, useSynchronizationContext: false))
 			{
-				JsonRpcResponse response = await responseSource.Task.ConfigureAwait(false);
+				JsonRpcResponse response = timeoutSource is null
+					? await responseSource.Task.ConfigureAwait(false)
+					: await this.AwaitOutboundResponseAsync(responseTask!, timeoutSource.Token, cancellationToken).ConfigureAwait(false);
 				if (response is JsonRpcError)
 				{
 					activity?.SetStatus(ActivityStatusCode.Error);
@@ -1759,6 +1873,27 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			this.marshaledObjects.ReleaseLocalObjects(request.Arguments);
 			this.outOfBandStreams.ReleaseChannels(request.Arguments);
 			this.asyncEnumerables.ReleaseGenerators(request.Arguments);
+			if (timeoutSource?.IsCancellationRequested is true && !cancellationToken.IsCancellationRequested)
+			{
+				throw CreateOutboundRequestTimeoutException();
+			}
+
+			throw;
+		}
+		catch (TimeoutException) when (timeoutSource?.IsCancellationRequested is true && !cancellationToken.IsCancellationRequested)
+		{
+			activity?.SetStatus(ActivityStatusCode.Error);
+			if (posted)
+			{
+				this.CancelOutboundRequest(request);
+			}
+
+			preserveResponseSource = responseSource is not null;
+			if (preserveResponseSource)
+			{
+				this.ObserveTimedOutResponseAndRecycle(responseTask!, responseSource!);
+			}
+
 			throw;
 		}
 		catch
@@ -1772,18 +1907,15 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			{
 				lock (this.connectionSync)
 				{
-					if (registered)
+					if (registered && !preserveResponseSource)
 					{
 						this.pendingOutboundRequests.Remove(request.Id!.Value);
 					}
 
-					// Response producers also hold connectionSync, so none can access this source after it is reset.
-					responseSource.Reset();
-					if (!this.terminated && this.recycledResponseSourceCount < MaximumRecycledResponseSources)
+					if (!preserveResponseSource)
 					{
-						responseSource.Next = this.recycledResponseSources;
-						this.recycledResponseSources = responseSource;
-						this.recycledResponseSourceCount++;
+						// Response producers also hold connectionSync, so none can access this source after it is reset.
+						this.RecycleResponseSource(responseSource);
 					}
 				}
 			}

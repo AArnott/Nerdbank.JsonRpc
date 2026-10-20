@@ -481,11 +481,12 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		}
 
 		TaskCompletionSource<JsonRpcResponse> responseTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-		Entry entry = new(this, request, responseTcs, cancellationToken);
+		CancellationTokenSource? timeoutSource = this.owner.CreateOutboundRequestTimeoutSource(cancellationToken);
+		Entry entry = new(this, request, responseTcs, timeoutSource?.Token ?? cancellationToken);
 		try
 		{
 			this.AddEntry(entry);
-			if (cancellationToken.IsCancellationRequested)
+			if ((timeoutSource?.Token ?? cancellationToken).IsCancellationRequested)
 			{
 				entry.ReleaseAbandonedArguments();
 			}
@@ -494,36 +495,58 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		{
 			entry.ReleaseAbandonedArguments();
 			entry.Dispose();
+			timeoutSource?.Dispose();
 			throw;
 		}
 
-		return this.AwaitBatchResponseAsync(responseTcs, entry, request);
+		return this.AwaitBatchResponseAsync(responseTcs, entry, request, timeoutSource, cancellationToken);
 	}
 
-	private async ValueTask<JsonRpcResponse> AwaitBatchResponseAsync(TaskCompletionSource<JsonRpcResponse> responseTcs, Entry entry, JsonRpcRequest request)
+	private async ValueTask<JsonRpcResponse> AwaitBatchResponseAsync(
+		TaskCompletionSource<JsonRpcResponse> responseTcs,
+		Entry entry,
+		JsonRpcRequest request,
+		CancellationTokenSource? timeoutSource,
+		CancellationToken cancellationToken)
 	{
-		using Activity? activity = JsonRpcTracing.StartClientActivity(request.Method);
-		JsonRpcTracing.ApplyTraceContext(request);
-		try
+		using (timeoutSource)
 		{
+			using Activity? activity = JsonRpcTracing.StartClientActivity(request.Method);
+			JsonRpcTracing.ApplyTraceContext(request);
+			try
+			{
 #pragma warning disable VSTHRD003 // Awaiting a TaskCompletionSource completed by inbound JSON-RPC responses.
-			JsonRpcResponse response = await responseTcs.Task.ConfigureAwait(false);
+				JsonRpcResponse response = timeoutSource is null
+					? await responseTcs.Task.ConfigureAwait(false)
+					: await this.owner.AwaitOutboundResponseAsync(responseTcs.Task, timeoutSource.Token, cancellationToken).ConfigureAwait(false);
 #pragma warning restore VSTHRD003
-			if (response is JsonRpcError)
+				if (response is JsonRpcError)
+				{
+					activity?.SetStatus(ActivityStatusCode.Error);
+				}
+
+				return response;
+			}
+			catch (TimeoutException) when (timeoutSource?.IsCancellationRequested is true && !cancellationToken.IsCancellationRequested)
 			{
 				activity?.SetStatus(ActivityStatusCode.Error);
-			}
+				this.OnEntryCanceled(entry);
+				if (responseTcs.Task.Status != TaskStatus.Canceled)
+				{
+					this.owner.ObserveTimedOutResponse(responseTcs.Task);
+				}
 
-			return response;
-		}
-		catch
-		{
-			activity?.SetStatus(ActivityStatusCode.Error);
-			throw;
-		}
-		finally
-		{
-			entry.Dispose();
+				throw;
+			}
+			catch
+			{
+				activity?.SetStatus(ActivityStatusCode.Error);
+				throw;
+			}
+			finally
+			{
+				entry.Dispose();
+			}
 		}
 	}
 
