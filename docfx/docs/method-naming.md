@@ -20,7 +20,7 @@ StreamJsonRpc's default behavior is to send and expect CLR-style method names (f
 
 [RPC-marshalable objects](rpc-marshalable-interfaces.md) are registered as targets and attached as proxies implicitly. By default their methods use the same name transform as ordinary RPC contracts: the trailing `Async` suffix is removed and the name is camel-cased. Their naming options are independent of options supplied to an individual `AddRpcTarget` or `Attach` call.
 
-StreamJsonRpc instead uses verbatim CLR names for RPC-marshalable interfaces. For interoperability with its default configuration, set both <xref:Nerdbank.JsonRpc.JsonRpc.MarshaledTargetOptions> and <xref:Nerdbank.JsonRpc.JsonRpc.MarshaledProxyOptions> before starting the connection:
+StreamJsonRpc instead uses verbatim CLR names for RPC-marshalable interfaces. For interoperability with its default configuration, set both <xref:Nerdbank.JsonRpc.JsonRpcOptions.MarshaledTarget> and <xref:Nerdbank.JsonRpc.JsonRpcOptions.MarshaledProxy> in the options passed to the connection constructor:
 
 [!code-csharp[](../../samples/cs/method-naming.cs#marshaled-interop-naming)]
 

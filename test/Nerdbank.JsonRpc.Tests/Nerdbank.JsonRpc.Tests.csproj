@@ -5,7 +5,7 @@
     <TargetFrameworks Condition="'$(OS)' == 'Windows_NT'">$(TargetFrameworks);net472</TargetFrameworks>
     <OutputType>Exe</OutputType>
     <IsTestProject>true</IsTestProject>
-    <!-- NativeAOT execution requires the generic virtual dispatch fix from dotnet/runtime#134821. -->
+    <!-- Run NativeAOT tests on .NET 10 and retain IL coverage on the other frameworks. -->
     <PublishNativeAOTTests Condition="'$(TargetFramework)' != '' and '$(TargetFramework)' != 'net10.0'">false</PublishNativeAOTTests>
     <RootNamespace />
   </PropertyGroup>

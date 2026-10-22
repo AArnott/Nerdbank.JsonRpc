@@ -48,9 +48,8 @@ There may be tests that are known to be unstable or have special requirements. T
 To validate the shipping library with the NativeAOT compiler, run `dotnet publish test -c Release`.
 Then run `./tools/dotnet-test-cloud.ps1 -Configuration Release -IncludeNativeAOT`.
 The `test/AotCompatibilityTest` project roots the shipping assembly and is published by the traversal.
-The runtime tests are also published and executed as NativeAOT on net10.0. Native execution requires
-a toolchain containing [the generic virtual dispatch fix](https://github.com/dotnet/runtime/pull/134821).
-The released .NET 10.0.13 toolchain predates that fix and still fails during native test execution.
+The runtime tests are also published and executed as NativeAOT on net10.0. With the current dependencies,
+the runtime suite passes on Windows using .NET SDK 10.0.402 and the .NET 10.0.13 NativeAOT toolchain.
 The StreamJsonRpc interoperability tests run in their own managed-only project because StreamJsonRpc
 requires dynamic code. The Roslyn-based generator tests also remain managed-only.
 Managed builds are RID-neutral by default and retain dynamic code, startup hooks, and event tracing for code coverage.
@@ -68,6 +67,14 @@ dotnet run --project .\test\Benchmarks\Benchmarks.csproj --no-build -c Release -
 The transport workload covers JSON and MessagePack over in-memory pipes, named pipes, and shared-memory IPC. `Ping` uses a Task-returning proxy contract; `PingValueTask` uses a ValueTask-returning contract; `Add` covers an adjacent small-argument request. Setup validates every result outside the measured operations. `RpcValueTaskPingBenchmarks` also compares ValueTask contracts with StreamJsonRpc.
 
 The `RpcTransportBenchmarks.Public*` workloads await 32 operations in a Task-returning loop and report per-operation values using `OperationsPerInvoke`. This amortizes the benchmark runner's own awaitable consumption and exposes the allocation difference between directly awaiting a pooled ValueTask and a Task-returning proxy's adapter. Run them with `--invocationCount 1024` for 32768 RPC calls per iteration. `RpcNotificationSubmissionBenchmarks` isolates synchronous and deliberately suspended outbound queue acceptance through the encoded API, serialized API, and void proxy; it does not measure wire serialization or remote execution.
+
+`RpcRequestTimeoutBenchmarks` compares direct requests, generated ValueTask proxies, and four-request batches with the outbound timeout disabled or armed for one minute. Each scenario runs with and without a cancellable caller token, over JSON and MessagePack in-memory pipes. Results are per request, including for batches; each invocation executes 32 requests. For example:
+
+```powershell
+dotnet run --project .\test\Benchmarks\Benchmarks.csproj --no-build -c Release -- --filter "*RpcRequestTimeoutBenchmarks*" --affinity 2 --warmupCount 20 --iterationCount 20 --invocationCount 2048 --outliers DontRemove --allStats
+```
+
+This pins execution to one logical processor and retains outliers. Inspect the warmup and measurement distributions: insufficient warmup can include tiered-compilation transitions in the reported results, even with fixed affinity.
 
 Compare baseline and candidate with the same runtime, parameters, operation counts, and CPU affinity. For allocation optimizations, use sampled allocation stacks for attribution and `Allocated` bytes per operation for the quantitative result. Repeat comparisons when scheduling or multimodal distributions obscure latency changes. Keep generated reports and traces outside source control; record the measured result and important tradeoffs in the change description.
 

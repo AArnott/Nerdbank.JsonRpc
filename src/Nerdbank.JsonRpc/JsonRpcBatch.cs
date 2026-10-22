@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Microsoft;
 
 namespace Nerdbank.JsonRpc;
@@ -298,7 +299,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			}
 
 			this.owner.ThrowIfClosed();
-			Verify.Operation(this.owner.State == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.owner.State}.");
+			Verify.Operation(this.owner.ConnectionState == JsonRpcState.Running, $"This instance is not listening for messages. Current state is {this.owner.ConnectionState}.");
 			foreach (Entry entry in snapshot)
 			{
 				if (!entry.TryMarkSent())
@@ -481,11 +482,12 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		}
 
 		TaskCompletionSource<JsonRpcResponse> responseTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-		Entry entry = new(this, request, responseTcs, cancellationToken);
+		CancellationTokenSource? timeoutSource = this.owner.CreateOutboundRequestTimeoutSource(cancellationToken);
+		Entry entry = new(this, request, responseTcs, timeoutSource?.Token ?? cancellationToken);
 		try
 		{
 			this.AddEntry(entry);
-			if (cancellationToken.IsCancellationRequested)
+			if ((timeoutSource?.Token ?? cancellationToken).IsCancellationRequested)
 			{
 				entry.ReleaseAbandonedArguments();
 			}
@@ -494,10 +496,13 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		{
 			entry.ReleaseAbandonedArguments();
 			entry.Dispose();
+			timeoutSource?.Dispose();
 			throw;
 		}
 
-		return this.AwaitBatchResponseAsync(responseTcs, entry, request);
+		return timeoutSource is null
+			? this.AwaitBatchResponseAsync(responseTcs, entry, request)
+			: this.AwaitBatchResponseWithTimeoutAsync(responseTcs, entry, request, timeoutSource, cancellationToken);
 	}
 
 	private async ValueTask<JsonRpcResponse> AwaitBatchResponseAsync(TaskCompletionSource<JsonRpcResponse> responseTcs, Entry entry, JsonRpcRequest request)
@@ -524,6 +529,55 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		finally
 		{
 			entry.Dispose();
+		}
+	}
+
+#if NET
+	[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+	private async ValueTask<JsonRpcResponse> AwaitBatchResponseWithTimeoutAsync(
+		TaskCompletionSource<JsonRpcResponse> responseTcs,
+		Entry entry,
+		JsonRpcRequest request,
+		CancellationTokenSource timeoutSource,
+		CancellationToken cancellationToken)
+	{
+		using (timeoutSource)
+		{
+			using Activity? activity = JsonRpcTracing.StartClientActivity(request.Method);
+			JsonRpcTracing.ApplyTraceContext(request);
+			try
+			{
+#pragma warning disable VSTHRD003 // Awaiting a TaskCompletionSource completed by inbound JSON-RPC responses.
+				JsonRpcResponse response = await this.owner.AwaitOutboundResponseAsync(responseTcs.Task, timeoutSource.Token, cancellationToken).ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+				if (response is JsonRpcError)
+				{
+					activity?.SetStatus(ActivityStatusCode.Error);
+				}
+
+				return response;
+			}
+			catch (TimeoutException) when (timeoutSource.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+			{
+				activity?.SetStatus(ActivityStatusCode.Error);
+				this.OnEntryCanceled(entry);
+				if (responseTcs.Task.Status != TaskStatus.Canceled)
+				{
+					this.owner.ObserveTimedOutResponse(responseTcs.Task);
+				}
+
+				throw;
+			}
+			catch
+			{
+				activity?.SetStatus(ActivityStatusCode.Error);
+				throw;
+			}
+			finally
+			{
+				entry.Dispose();
+			}
 		}
 	}
 

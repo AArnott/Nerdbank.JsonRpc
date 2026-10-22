@@ -2,7 +2,6 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.IO.Pipelines;
 using System.IO.Pipes;
 using System.Net;
@@ -35,7 +34,7 @@ public partial class ConnectionLifecycleTests : TestBase
 		await peer.Output.CompleteAsync();
 		await rpc.Completion.WithCancellation(this.TimeoutToken);
 		Assert.True(rpc.IsDisposed);
-		Assert.Equal(JsonRpcState.Disconnected, rpc.State);
+		Assert.Equal(JsonRpcState.Disconnected, rpc.ConnectionState);
 		EndOfStreamException cause = Assert.IsType<EndOfStreamException>(rpc.TerminationException);
 		await Assert.ThrowsAsync<EndOfStreamException>(async () => await rpc.RequestAsync("late", default, this.TimeoutToken));
 		await Assert.ThrowsAsync<EndOfStreamException>(async () => await rpc.NotifyAsync("late", default, this.TimeoutToken));
@@ -43,7 +42,7 @@ public partial class ConnectionLifecycleTests : TestBase
 		await Assert.ThrowsAsync<ObjectDisposedException>(async () => await rpc.RequestAsync("late", default, this.TimeoutToken));
 		await Assert.ThrowsAsync<ObjectDisposedException>(async () => await rpc.NotifyAsync("late", default, this.TimeoutToken));
 		Assert.Same(cause, rpc.TerminationException);
-		Assert.Equal(JsonRpcState.Disconnected, rpc.State);
+		Assert.Equal(JsonRpcState.Disconnected, rpc.ConnectionState);
 		Assert.Equal(TaskStatus.RanToCompletion, rpc.Completion.Status);
 		await peer.Input.CompleteAsync();
 	}
@@ -74,7 +73,7 @@ public partial class ConnectionLifecycleTests : TestBase
 		}
 
 		Assert.Null(rpc.TerminationException);
-		Assert.Equal(JsonRpcState.Disposed, rpc.State);
+		Assert.Equal(JsonRpcState.Disposed, rpc.ConnectionState);
 		Assert.True(rpc.IsDisposed);
 		await Assert.ThrowsAsync<ObjectDisposedException>(async () => await rpc.RequestAsync("late", default, this.TimeoutToken));
 		await Assert.ThrowsAsync<ObjectDisposedException>(async () => await rpc.NotifyAsync("late", default, this.TimeoutToken));
@@ -111,7 +110,7 @@ public partial class ConnectionLifecycleTests : TestBase
 		Assert.Same(firstError, completionError);
 		Assert.Same(firstError, rpc.TerminationException);
 		Assert.Contains("2 pending outbound requests", completionError.Message);
-		Assert.Equal(JsonRpcState.Disconnected, rpc.State);
+		Assert.Equal(JsonRpcState.Disconnected, rpc.ConnectionState);
 		rpc.Dispose();
 		Assert.Same(completionError, rpc.TerminationException);
 		Assert.True(rpc.Completion.IsFaulted);
@@ -143,7 +142,7 @@ public partial class ConnectionLifecycleTests : TestBase
 		Assert.Same(error, await Assert.ThrowsAsync<ProtocolViolationException>(() => rpc.Completion.WithCancellation(this.TimeoutToken)));
 		Assert.Same(error, rpc.TerminationException);
 		Assert.True(rpc.IsDisposed);
-		Assert.Equal(JsonRpcState.Faulted, rpc.State);
+		Assert.Equal(JsonRpcState.Faulted, rpc.ConnectionState);
 		await Assert.ThrowsAsync<ProtocolViolationException>(async () => await rpc.NotifyAsync("late", default, this.TimeoutToken));
 		Assert.False(await peerChannel.Reader.WaitToReadAsync(this.TimeoutToken));
 		rpc.Dispose();
@@ -173,7 +172,7 @@ public partial class ConnectionLifecycleTests : TestBase
 		await peerRpc.Completion.WithCancellation(this.TimeoutToken);
 		Assert.Contains(logger.Messages, m => m.Contains("Peer-reported JSON-RPC protocol violation"));
 		Assert.Equal(LogLevel.Critical, await logger.ProtocolDiagnostic.Task.WithCancellation(this.TimeoutToken));
-		Assert.Equal(JsonRpcState.Disconnected, peerRpc.State);
+		Assert.Equal(JsonRpcState.Disconnected, peerRpc.ConnectionState);
 		Assert.DoesNotContain(logger.Messages, m => m.Contains("Could not flush the final"));
 	}
 
@@ -211,32 +210,56 @@ public partial class ConnectionLifecycleTests : TestBase
 
 	/// <summary>Verifies blocked final or already-started writes cannot prevent bounded protocol teardown.</summary>
 	/// <param name="pendingRequest">Whether an ordinary request is already blocked on output.</param>
+	/// <param name="ignoreCancellation">Whether the blocked flush ignores transport cancellation.</param>
 	[Test]
-	[Arguments(false)]
-	[Arguments(true)]
-	public async Task BlockedDiagnosticIsBoundedAndDoesNotReplaceProtocolCause(bool pendingRequest)
+	[Arguments(false, false)]
+	[Arguments(true, false)]
+	[Arguments(false, true)]
+	[Arguments(true, true)]
+	public async Task BlockedDiagnosticIsBoundedAndDoesNotReplaceProtocolCause(bool pendingRequest, bool ignoreCancellation)
 	{
 		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
-		BlockingWriter writer = new(local.Output);
+		BlockingWriter writer = new(local.Output, ignoreCancellation);
 		await using JsonRpcJsonChannel channel = new(new DuplexPipe(local.Input, writer), new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited);
 		RecordingLogger logger = new();
 		using JsonRpc rpc = new(channel) { Logger = logger };
 		rpc.Start();
-		Task? pending = pendingRequest ? rpc.RequestAsync("pending", default, this.TimeoutToken).AsTask() : null;
-		Stopwatch stopwatch = Stopwatch.StartNew();
-		await peer.Output.WriteAsync(MalformedFrame(0), this.TimeoutToken);
-		await writer.Started.Task.WithCancellation(this.TimeoutToken);
-		ProtocolViolationException error = await Assert.ThrowsAsync<ProtocolViolationException>(() => rpc.Completion.WithCancellation(this.TimeoutToken));
-		Assert.InRange(stopwatch.Elapsed, TimeSpan.FromMilliseconds(800), TimeSpan.FromSeconds(3));
-		Assert.Same(error, rpc.TerminationException);
-		if (pending is not null)
+		try
 		{
-			Assert.Same(error, await Assert.ThrowsAsync<ProtocolViolationException>(() => pending.WithCancellation(this.TimeoutToken)));
-		}
+			Task? pending = pendingRequest ? rpc.RequestAsync("pending", default, this.TimeoutToken).AsTask() : null;
+			if (pendingRequest)
+			{
+				await writer.Started.Task.WithCancellation(this.TimeoutToken);
+			}
 
-		Assert.Contains(logger.Messages, m => m.Contains("Could not flush the final protocol-violation notification"));
-		await peer.Input.CompleteAsync();
-		await peer.Output.CompleteAsync();
+			await peer.Output.WriteAsync(MalformedFrame(0), this.TimeoutToken);
+			await writer.Started.Task.WithCancellation(this.TimeoutToken);
+			ProtocolViolationException error = await Assert.ThrowsAsync<ProtocolViolationException>(() => rpc.Completion.WithCancellation(this.TimeoutToken));
+			Assert.Same(error, rpc.TerminationException);
+			Assert.True(writer.FlushCancellationToken.IsCancellationRequested);
+			Assert.False(writer.Release.Task.IsCompleted);
+			if (ignoreCancellation)
+			{
+				// Completion must not depend on the blocked flush returning, even after cancellation.
+				Assert.False(writer.Completed.Task.IsCompleted);
+				Assert.Contains(logger.Messages, m => m.Contains("JSON-RPC transport cleanup failed; retaining the original shutdown cause."));
+			}
+
+			if (pending is not null)
+			{
+				Assert.Same(error, await Assert.ThrowsAsync<ProtocolViolationException>(() => pending.WithCancellation(this.TimeoutToken)));
+			}
+
+			Assert.Contains(logger.Messages, m => m.Contains("Could not flush the final protocol-violation notification"));
+		}
+		finally
+		{
+			rpc.Dispose();
+			writer.Release.TrySetResult(true);
+			await writer.Completed.Task.WithCancellation(this.TimeoutToken);
+			await peer.Input.CompleteAsync();
+			await peer.Output.CompleteAsync();
+		}
 	}
 
 	/// <summary>Verifies truncation is never classified as successful idle EOF.</summary>
@@ -266,7 +289,7 @@ public partial class ConnectionLifecycleTests : TestBase
 			? await Assert.ThrowsAsync<ProtocolViolationException>(() => rpc.Completion.WithCancellation(this.TimeoutToken))
 			: await Assert.ThrowsAsync<EndOfStreamException>(() => rpc.Completion.WithCancellation(this.TimeoutToken));
 		Assert.Same(cause, rpc.TerminationException);
-		Assert.Equal(JsonRpcState.Faulted, rpc.State);
+		Assert.Equal(JsonRpcState.Faulted, rpc.ConnectionState);
 		await peer.Input.CompleteAsync();
 	}
 
@@ -327,7 +350,7 @@ public partial class ConnectionLifecycleTests : TestBase
 		rpc.Dispose();
 		await Assert.ThrowsAsync<ObjectDisposedException>(async () => await rpc.NotifyAsync("late", default, this.TimeoutToken));
 		Assert.Same(original, await Assert.ThrowsAsync<ProtocolViolationException>(() => rpc.Completion.WithCancellation(this.TimeoutToken)));
-		Assert.Equal(JsonRpcState.Faulted, rpc.State);
+		Assert.Equal(JsonRpcState.Faulted, rpc.ConnectionState);
 		await peer.Input.CompleteAsync();
 		await peer.Output.CompleteAsync();
 	}
@@ -485,7 +508,7 @@ public partial class ConnectionLifecycleTests : TestBase
 			await Assert.ThrowsAsync<EndOfStreamException>(() => rpc.Completion.WithCancellation(this.TimeoutToken));
 		}
 
-		Assert.Equal(JsonRpcState.Disconnected, rpc.State);
+		Assert.Equal(JsonRpcState.Disconnected, rpc.ConnectionState);
 	}
 
 	/// <summary>Verifies no later batch entry is dispatched after an earlier entry rejects the protocol.</summary>
@@ -594,7 +617,7 @@ public partial class ConnectionLifecycleTests : TestBase
 			Assert.Equal(connectionError.Message, cancellation.Message);
 		}
 
-		Assert.Equal(JsonRpcState.Faulted, rpc.State);
+		Assert.Equal(JsonRpcState.Faulted, rpc.ConnectionState);
 		await peer.Output.CompleteAsync();
 		await peer.Input.CompleteAsync();
 	}
@@ -648,7 +671,7 @@ public partial class ConnectionLifecycleTests : TestBase
 		};
 		await peerChannel.Writer.WriteAsync(response, this.TimeoutToken);
 		await call.WithCancellation(this.TimeoutToken);
-		Assert.Equal(JsonRpcState.Running, rpc.State);
+		Assert.Equal(JsonRpcState.Running, rpc.ConnectionState);
 	}
 
 	/// <summary>Exposes subscriptions with independently observable cleanup, including one failure.</summary>
@@ -783,10 +806,16 @@ public partial class ConnectionLifecycleTests : TestBase
 		public override ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default) => new(new FlushResult(isCanceled: !completed, isCompleted: completed));
 	}
 
-	private sealed class BlockingWriter(PipeWriter inner) : PipeWriter
+	private sealed class BlockingWriter(PipeWriter inner, bool ignoreCancellation = false) : PipeWriter
 	{
 		/// <summary>Gets the signal that output is blocked in a flush.</summary>
 		internal TaskCompletionSource<bool> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal CancellationToken FlushCancellationToken { get; private set; }
+
+		internal TaskCompletionSource<bool> Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal TaskCompletionSource<bool> Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
 		public override void Advance(int bytes) => inner.Advance(bytes);
 
@@ -796,13 +825,18 @@ public partial class ConnectionLifecycleTests : TestBase
 
 		public override void CancelPendingFlush() => inner.CancelPendingFlush();
 
-		public override void Complete(Exception? exception = null) => inner.Complete(exception);
+		public override void Complete(Exception? exception = null)
+		{
+			inner.Complete(exception);
+			this.Completed.TrySetResult(true);
+		}
 
 		public override async ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default)
 		{
+			this.FlushCancellationToken = cancellationToken;
 			this.Started.TrySetResult(true);
-			await Task.Delay(Timeout.Infinite, cancellationToken);
-			throw new InvalidOperationException("Unreachable");
+			await this.Release.Task.WithCancellation(ignoreCancellation ? CancellationToken.None : cancellationToken);
+			return new FlushResult(isCanceled: false, isCompleted: false);
 		}
 	}
 }

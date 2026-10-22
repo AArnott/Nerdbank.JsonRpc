@@ -30,6 +30,19 @@ For same-machine IPC between mutually trusted processes running as the same user
 
 The transport is supported on .NET 8+ (Windows and Unix) and .NET Framework 4.7.2 (Windows); the `netstandard2.0` asset throws <xref:System.PlatformNotSupportedException>. Since either peer can modify shared memory, this is not a security boundary for untrusted peers or different privilege levels. See the [Nerdbank.Streams security guidance](https://dotnet.github.io/Nerdbank.Streams/docs/security.html), and benchmark against named pipes for your workload.
 
+## Configure connection policy and runtime infrastructure
+
+<xref:Nerdbank.JsonRpc.JsonRpcOptions> describes **how a connection should behave**: policies, limits, and conventions such as request timeouts, maximum message size, exception handling, and marshaled-object naming.
+Pass these immutable options to the <xref:Nerdbank.JsonRpc.JsonRpc> constructor; the same options instance can be reused across independent connections without sharing their runtime state.
+Use a record `with` expression to derive a different policy without changing the original options.
+
+<xref:Nerdbank.JsonRpc.JsonRpc> supplies **the live objects that make the connection work** and exposes **its current state**.
+Set runtime infrastructure such as its logger, synchronization context, joinable-task integration, and multiplexing stream in the connection's object initializer.
+These objects may deliberately be shared, but their identity wires the connection into a particular runtime environment.
+Inspect connection state through <xref:Nerdbank.JsonRpc.JsonRpc.ConnectionState?displayProperty=nameWithType>, <xref:Nerdbank.JsonRpc.JsonRpc.Completion?displayProperty=nameWithType>, and <xref:Nerdbank.JsonRpc.JsonRpc.TerminationException?displayProperty=nameWithType>.
+
+Options passed to individual <xref:Nerdbank.JsonRpc.JsonRpc.Attach*> or <xref:Nerdbank.JsonRpc.JsonRpc.AddRpcTarget*> calls still control only that proxy or target, not implicitly marshaled objects.
+
 ## Expose local methods to the remote party
 
 Implement the contract as an ordinary .NET type:

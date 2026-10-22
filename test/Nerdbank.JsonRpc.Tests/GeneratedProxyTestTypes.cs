@@ -39,6 +39,17 @@ internal partial interface ICompositeCalculator : ICalculator
 {
 }
 
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IOptionalParameterContract
+{
+	ValueTask<int> AddAsync(int left, int right = 42, CancellationToken cancellationToken = default);
+
+	ValueTask<int> GetValueAsync(int value = 42, CancellationToken cancellationToken = default);
+
+	Task<string?> EchoAsync(string? value = "interface default", CancellationToken cancellationToken = default);
+}
+
 internal interface INotGeneratedProxy
 {
 }

@@ -7,7 +7,7 @@ using PolyType;
 namespace Benchmarks;
 
 // Benchmark payload shapes keep their property defaults off the wire contract so encoded sizes stay comparable across serializers.
-#pragma warning disable NBMsgPack110
+#pragma warning disable NBMsgPack110, NBJson110
 
 /// <summary>A directory within a deterministic workspace graph, containing files and nested subdirectories.</summary>
 [MessagePackObject(keyAsPropertyName: true)]
@@ -26,4 +26,4 @@ public partial class WorkspaceDirectory
 	/// <summary>Gets or sets arbitrary string metadata associated with the directory.</summary>
 	public Dictionary<string, string> Metadata { get; set; } = new();
 }
-#pragma warning restore NBMsgPack110
+#pragma warning restore NBMsgPack110, NBJson110

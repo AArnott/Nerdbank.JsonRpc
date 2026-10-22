@@ -20,12 +20,12 @@
     <PackageVersion Include="MessagePack" Version="3.1.12" />
     <PackageVersion Include="Microsoft.VisualStudio.DiagnosticsHub.BenchmarkDotNetDiagnosers" Version="18.7.37220.1" />
     <PackageVersion Include="Microsoft.VisualStudio.Threading" Version="18.12.1" />
-    <PackageVersion Include="Nerdbank.Json" Version="0.1.1092-alpha" />
+    <PackageVersion Include="Nerdbank.Json" Version="0.2.1-alpha" />
     <PackageVersion Include="Nerdbank.MessagePack" Version="1.5.22-alpha" />
     <PackageVersion Include="Nerdbank.Streams" Version="2.15.4-alpha" />
     <PackageVersion Include="System.Threading.Channels" Version="10.0.12" />
     <PackageVersion Include="System.Threading.Tasks.Dataflow" Version="8.0.1" />
-    <PackageVersion Include="StreamJsonRpc" Version="2.25.29" />
+    <PackageVersion Include="StreamJsonRpc" Version="2.26.150" />
   </ItemGroup>
   <ItemGroup Label="Library.Template">
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.12.0" />

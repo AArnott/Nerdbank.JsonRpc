@@ -413,35 +413,72 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 	{
 		(IDuplexPipe defaultLocal, _) = FullDuplexStream.CreatePipePair();
 		using JsonRpc defaultRpc = new(CreateChannel(defaultLocal, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader));
-		Assert.Equal(8 * 1024 * 1024, defaultRpc.MaximumMessageSize);
+		Assert.Equal(8 * 1024 * 1024, defaultRpc.Options.MaximumMessageSize);
 
-		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
-		JsonRpcPipeChannel channel = encoding == JsonRpcEncoding.Json
-			? new JsonRpcJsonChannel(local, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
-			: CreateChannel(local, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader);
-		if (encoding == JsonRpcEncoding.Json)
+		JsonRpcOptions options = new() { MaximumMessageSize = 32 };
+		for (int i = 0; i < 2; i++)
 		{
-			peer.Output.Write("{\"jsonrpc\":\"2.0\",\"method\":\"method-too-long\",\"id\":1}\n"u8);
-		}
-		else
-		{
-			peer.Output.Write(Frame(EncodeRequest("method-too-long", 1), JsonRpcMessagePackFraming.BigEndianInt32LengthHeader));
-		}
+			(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+			JsonRpcPipeChannel channel = encoding == JsonRpcEncoding.Json
+				? new JsonRpcJsonChannel(local, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
+				: CreateChannel(local, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader);
+			if (encoding == JsonRpcEncoding.Json)
+			{
+				peer.Output.Write("{\"jsonrpc\":\"2.0\",\"method\":\"method-too-long\",\"id\":1}\n"u8);
+			}
+			else
+			{
+				peer.Output.Write(Frame(EncodeRequest("method-too-long", 1), JsonRpcMessagePackFraming.BigEndianInt32LengthHeader));
+			}
 
-		await peer.Output.FlushAsync(this.TimeoutToken);
-		using JsonRpc rpc = new(channel) { MaximumMessageSize = 32 };
-		rpc.Start();
-		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
+			await peer.Output.FlushAsync(this.TimeoutToken);
+			using JsonRpc rpc = new(channel, options);
+			rpc.Start();
+			await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => channel.Reader.Completion.WithCancellation(this.TimeoutToken));
+		}
 	}
 
 	[Test]
-	public void JsonRpcMaximumMessageSizeMustBePositive()
+	[Arguments(JsonRpcEncoding.Json, true)]
+	[Arguments(JsonRpcEncoding.Json, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, true)]
+	[Arguments(JsonRpcEncoding.MessagePack, false)]
+	public async Task JsonRpcMaximumMessageSizeEnforcesExactLimit(JsonRpcEncoding encoding, bool atLimit)
 	{
-		(IDuplexPipe local, _) = FullDuplexStream.CreatePipePair();
-		JsonRpcPipeChannel channel = CreateChannel(local, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader);
-		channel.Start();
-		Assert.Throws<ArgumentOutOfRangeException>(() => new JsonRpc(channel) { MaximumMessageSize = 0 });
-		Assert.Throws<ArgumentOutOfRangeException>(() => new JsonRpc(channel) { MaximumMessageSize = -1 });
+		(IDuplexPipe local, IDuplexPipe peer) = FullDuplexStream.CreatePipePair();
+		string text = new('x', 1024);
+		byte[] payload = encoding == JsonRpcEncoding.Json
+			? System.Text.Encoding.UTF8.GetBytes($$"""{"jsonrpc":"2.0","method":"missing","id":1,"params":["{{text}}"]}""")
+			: EncodeRawRequest("missing", (ref Nerdbank.MessagePack.MessagePackWriter writer) =>
+			{
+				writer.WriteArrayHeader(1);
+				writer.Write(text);
+			});
+		JsonRpcOptions options = new() { MaximumMessageSize = payload.Length - (atLimit ? 0 : 1) };
+		JsonRpcPipeChannel channel = encoding == JsonRpcEncoding.Json
+			? new JsonRpcJsonChannel(local, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
+			: CreateChannel(local, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader);
+		await using JsonRpcPipeChannel remote = encoding == JsonRpcEncoding.Json
+			? new JsonRpcJsonChannel(peer, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
+			: CreateChannel(peer, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader);
+		using JsonRpc rpc = new(channel, options);
+		rpc.Start();
+		remote.Start();
+		peer.Output.Write(encoding == JsonRpcEncoding.Json
+			? payload.Concat(new byte[] { (byte)'\n' }).ToArray()
+			: Frame(payload, JsonRpcMessagePackFraming.BigEndianInt32LengthHeader));
+		await peer.Output.FlushAsync(this.TimeoutToken);
+
+		if (atLimit)
+		{
+			JsonRpcError response = Assert.IsType<JsonRpcError>(await remote.Reader.ReadAsync(this.TimeoutToken));
+			Assert.Equal(JsonRpcErrorCode.MethodNotFound, response.Error.Code);
+			Assert.False(rpc.IsDisposed);
+		}
+		else
+		{
+			await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => rpc.Completion.WithCancellation(this.TimeoutToken));
+		}
 	}
 
 	[Test]
@@ -452,7 +489,15 @@ public partial class JsonRpcMessagePackChannelTests() : JsonRpcPipeChannelTestBa
 		channel.Start();
 		byte[] oversized = EncodeRequest(new string('m', (8 * 1024 * 1024) + 1), 1);
 		peer.Output.Write(oversized);
-		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(async () => await peer.Output.FlushAsync(this.TimeoutToken));
+		try
+		{
+			await peer.Output.FlushAsync(this.TimeoutToken);
+		}
+		catch (System.Net.ProtocolViolationException)
+		{
+		}
+
+		await Assert.ThrowsAsync<System.Net.ProtocolViolationException>(() => channel.Reader.Completion);
 	}
 
 	private static JsonRpcMessagePackChannel CreateChannel(IDuplexPipe pipe, JsonRpcMessagePackFraming framing)
