@@ -187,14 +187,13 @@ public partial class MarshaledObjectManagerTests : TestBase
 		DisposableTarget target = new();
 		serverRpc.Start();
 		clientRpc.Start();
-		JsonRpcValue marshaledArguments = MarshalDisposable(serverRpc, target.ReturnedDisposable, out long handle);
+		long handle = MarshalDisposable(serverRpc, target.ReturnedDisposable);
 		JsonRpcValue namedReleaseArguments = JsonRpcValue.FromJson(Encoding.UTF8.GetBytes($$"""{"handle":{{handle}},"ownedBySender":false}"""));
 
 		await clientRpc.NotifyAsync("$/releaseMarshaledObject", namedReleaseArguments, this.TimeoutToken);
 
 		await target.ReturnedDisposable.Disposed.WithCancellation(this.TimeoutToken);
 		Assert.True(target.ReturnedDisposable.IsDisposed);
-		GC.KeepAlive(marshaledArguments);
 	}
 
 	[Test]
@@ -206,7 +205,7 @@ public partial class MarshaledObjectManagerTests : TestBase
 		DisposableTarget target = new();
 		serverRpc.Start();
 		clientRpc.Start();
-		JsonRpcValue marshaledArguments = MarshalDisposable(serverRpc, target.ReturnedDisposable, out long handle);
+		long handle = MarshalDisposable(serverRpc, target.ReturnedDisposable);
 		JsonRpcValue senderOwnedReleaseArguments = JsonRpcValue.FromJson(Encoding.UTF8.GetBytes($$"""{"handle":{{handle}},"ownedBySender":true}"""));
 
 		await clientRpc.NotifyAsync("$/releaseMarshaledObject", senderOwnedReleaseArguments, this.TimeoutToken);
@@ -219,7 +218,6 @@ public partial class MarshaledObjectManagerTests : TestBase
 
 		await target.ReturnedDisposable.Disposed.WithCancellation(this.TimeoutToken);
 		Assert.True(target.ReturnedDisposable.IsDisposed);
-		GC.KeepAlive(marshaledArguments);
 	}
 
 	[Test]
@@ -262,14 +260,13 @@ public partial class MarshaledObjectManagerTests : TestBase
 		await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pendingRequest.WithCancellation(this.TimeoutToken));
 	}
 
-	private static JsonRpcValue MarshalDisposable(JsonRpc rpc, IDisposable disposable, out long handle)
+	private static long MarshalDisposable(JsonRpc rpc, IDisposable disposable)
 	{
 		using JsonRpcArgumentsBuilder builder = rpc.CreateArguments(named: false, count: 1);
 		builder.Add(null, disposable, TypeShapeResolver.ResolveDynamicOrThrow<IDisposable, Witness>());
 		JsonRpcValue arguments = builder.Build();
 		using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse(arguments.Bytes);
-		handle = document.RootElement[0].GetProperty("handle").GetInt64();
-		return arguments;
+		return document.RootElement[0].GetProperty("handle").GetInt64();
 	}
 
 	[GenerateShapeFor<IDisposable>]
