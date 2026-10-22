@@ -371,15 +371,15 @@ public partial class RemoteExceptionTests : TestBase
 	{
 		if (encoding == JsonRpcEncoding.Json)
 		{
-			string firstException = nestedPayloadDepth > 0 ? new string('[', nestedPayloadDepth) + "0" + new string(']', nestedPayloadDepth) : System.Text.Json.JsonSerializer.Serialize(firstPayload);
-			string exceptionTypeName = System.Text.Json.JsonSerializer.Serialize(typeof(TextPayloadException).FullName);
+			string firstException = nestedPayloadDepth > 0 ? new string('[', nestedPayloadDepth) + "0" + new string(']', nestedPayloadDepth) : SerializeJsonString(firstPayload);
+			string exceptionTypeName = SerializeJsonString(typeof(TextPayloadException).FullName);
 			string children = "{\"type\":" + exceptionTypeName + ",\"message\":\"child\",\"exception\":" + firstException + "}";
 			if (secondPayload is not null)
 			{
-				children += ", {\"type\":" + exceptionTypeName + ",\"message\":\"child\",\"exception\":" + System.Text.Json.JsonSerializer.Serialize(secondPayload) + "}";
+				children += ", {\"type\":" + exceptionTypeName + ",\"message\":\"child\",\"exception\":" + SerializeJsonString(secondPayload) + "}";
 			}
 
-			return JsonRpcValue.FromJson(System.Text.Encoding.UTF8.GetBytes("{\"type\":" + System.Text.Json.JsonSerializer.Serialize(typeof(AggregateException).FullName) + ",\"message\":\"root\",\"children\":[" + children + "]}"));
+			return JsonRpcValue.FromJson(System.Text.Encoding.UTF8.GetBytes("{\"type\":" + SerializeJsonString(typeof(AggregateException).FullName) + ",\"message\":\"root\",\"children\":[" + children + "]}"));
 		}
 
 		using Sequence<byte> buffer = new();
@@ -412,6 +412,9 @@ public partial class RemoteExceptionTests : TestBase
 		writer.Flush();
 		return JsonRpcValue.FromMessagePack((RawMessagePack)buffer.AsReadOnlySequence);
 	}
+
+	private static string SerializeJsonString(string? value)
+		=> value is null ? "null" : "\"" + System.Text.Json.JsonEncodedText.Encode(value).ToString() + "\"";
 
 	private static void WriteMessagePackTypedException(ref MessagePackWriter writer, string payload, int nestedPayloadDepth)
 	{

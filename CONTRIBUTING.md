@@ -48,8 +48,10 @@ There may be tests that are known to be unstable or have special requirements. T
 To validate the shipping library with the NativeAOT compiler, run `dotnet publish test -c Release`.
 Then run `./tools/dotnet-test-cloud.ps1 -Configuration Release -IncludeNativeAOT`.
 The `test/AotCompatibilityTest` project roots the shipping assembly and is published by the traversal.
-Both TUnit test projects remain managed-only with `<PublishNativeAOTTests>false</PublishNativeAOTTests>`:
-the runtime tests use StreamJsonRpc interop and reflection-based assertions, while the generator tests use Roslyn.
+The runtime tests are also published and executed as NativeAOT on net10.0. With the current dependencies,
+the runtime suite passes on Windows using .NET SDK 10.0.402 and the .NET 10.0.13 NativeAOT toolchain.
+The StreamJsonRpc interoperability tests run in their own managed-only project because StreamJsonRpc
+requires dynamic code. The Roslyn-based generator tests also remain managed-only.
 Managed builds are RID-neutral by default and retain dynamic code, startup hooks, and event tracing for code coverage.
 Keep test projects in the solution as well as the traversal so managed testing continues to cover them.
 

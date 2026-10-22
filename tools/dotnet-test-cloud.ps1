@@ -116,7 +116,11 @@ if ($isMTP) {
         $frameworks = @($frameworkInfo.TargetFrameworks, $frameworkInfo.TargetFramework) | Where-Object { $_ } | ForEach-Object { $_ -split ';' } | Select-Object -Unique
         foreach ($framework in $frameworks) {
             if ($framework -eq 'net472' -and -not $IsWindows) { continue }
-            & $dotnet run --project $project.FullName --no-build -c $Configuration --framework $framework -- '--treenode-filter=/**[Category!=FailsInCloudTest]' @mtpArgs @dumpSwitches @extraArgs
+            $ilRunArgs = @($mtpArgs) + @('--report-trx-filename', "$($project.BaseName)_${framework}_IL_{arch}.trx")
+            if (-not $NoCoverage) {
+                $ilRunArgs += @('--coverage-output', "$($project.BaseName)_${framework}_IL.cobertura.xml")
+            }
+            & $dotnet run --project $project.FullName --no-build -c $Configuration --framework $framework -- '--treenode-filter=/**[Category!=FailsInCloudTest]' @ilRunArgs @dumpSwitches @extraArgs
             if ($LASTEXITCODE -ne 0) { $failedTests += 1 }
         }
     }

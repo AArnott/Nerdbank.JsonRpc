@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <TargetFrameworks Condition="'$(OS)' == 'Windows_NT'">$(TargetFrameworks);net472</TargetFrameworks>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <!-- StreamJsonRpc uses dynamic code, so interoperability tests run only as IL. -->
+    <PublishNativeAOTTests>false</PublishNativeAOTTests>
+    <RootNamespace />
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Nerdbank.JsonRpc.Tests\TestBase.cs" Link="TestBase.cs" />
+    <Compile Include="..\Nerdbank.JsonRpc.Tests\TestLoggerProvider.cs" Link="TestLoggerProvider.cs" />
+    <Compile Include="..\Nerdbank.JsonRpc.Tests\Usings.cs" Link="Usings.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Nerdbank.JsonRpc\Nerdbank.JsonRpc.csproj" />
+    <ProjectReference Include="..\..\src\Nerdbank.JsonRpc.SourceGeneration\Nerdbank.JsonRpc.SourceGeneration.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="Nerdbank.Streams" />
+    <PackageReference Include="StreamJsonRpc" />
+    <PackageReference Include="TUnit.Engine" />
+    <PackageReference Include="xunit.v3.assert.aot" Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)','net9.0'))" />
+    <PackageReference Include="xunit.v3.assert" Condition="!$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)','net9.0'))" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net472'">
+    <!-- StreamJsonRpc's netstandard2.0 build references Dataflow 8.0.0.0 while the package's net462 build is 8.0.0.1.
+         A direct reference makes the SDK generate the binding redirect this transitive-only conflict otherwise lacks. -->
+    <PackageReference Include="System.Threading.Tasks.Dataflow" />
+  </ItemGroup>
+
+</Project>
