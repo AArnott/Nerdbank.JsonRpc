@@ -26,7 +26,7 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 
 	/// <inheritdoc/>
 	internal override JsonNode GetJsonSchema(ITypeShape shape)
-		=> JsonNode.Parse(this.Serializer.GetJsonSchema(shape, OpenRpcSchemaOptions)) ?? throw new JsonException("The serializer produced an empty JSON Schema document.");
+		=> this.Serializer.GetJsonSchema(shape, OpenRpcSchemaOptions);
 
 	/// <inheritdoc/>
 	internal override JsonRpcValue SerializeJsonObject(JsonObject document)
@@ -74,7 +74,7 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	internal override JsonRpcSerializer WithMarshaledObjectManager(MarshaledObjectManager manager, ProgressManager progress, OutOfBandStreamManager outOfBandStreams, AsyncEnumerableManager asyncEnumerables)
 		=> new JsonSerializerPlugin(this.Serializer with
 		{
-			Converters = new Nerdbank.Json.ConverterCollection([new MarshaledDisposableJsonConverter(manager), .. this.Serializer.Converters]),
+			Converters = Nerdbank.Json.ConverterCollection.Create([new MarshaledDisposableJsonConverter(manager), .. this.Serializer.Converters]),
 			ConverterFactories = [new AsyncEnumerableJsonConverterFactory(asyncEnumerables), new OutOfBandStreamJsonConverterFactory(outOfBandStreams), new MarshaledInterfaceJsonConverterFactory(manager, progress), .. this.Serializer.ConverterFactories],
 		});
 
@@ -91,7 +91,7 @@ public sealed class JsonSerializerPlugin : JsonRpcSerializer
 	internal override void WriteArgumentName(IBufferWriter<byte> buffer, string name)
 	{
 		Nerdbank.Json.JsonWriter writer = new(buffer);
-		writer.WriteStringValue(name);
+		writer.Write(name);
 		writer.Flush();
 	}
 

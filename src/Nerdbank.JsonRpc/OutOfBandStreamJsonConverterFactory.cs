@@ -10,7 +10,7 @@ namespace Nerdbank.JsonRpc;
 
 internal sealed class OutOfBandStreamJsonConverterFactory(OutOfBandStreamManager manager) : Nerdbank.Json.IJsonConverterFactory
 {
-	public Nerdbank.Json.JsonConverter? CreateConverter(Type type, PolyType.ITypeShape? shape, in Nerdbank.Json.JsonConverterFactoryContext context)
+	public Nerdbank.Json.JsonConverter? CreateConverter(Type type, PolyType.ITypeShape? shape, in Nerdbank.Json.ConverterContext context)
 		=> type == typeof(Stream) ? new StreamConverter(manager) : type == typeof(IDuplexPipe) ? new DuplexPipeConverter(manager) : type == typeof(PipeReader) ? new PipeReaderConverter(manager) : type == typeof(PipeWriter) ? new PipeWriterConverter(manager) : null;
 
 	private abstract class Converter<T>(OutOfBandStreamManager manager) : Nerdbank.Json.JsonConverter<T>
@@ -21,16 +21,16 @@ internal sealed class OutOfBandStreamJsonConverterFactory(OutOfBandStreamManager
 			return raw == "null" ? default : this.FromPipe(manager.Unmarshal(JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(raw)), RpcCallState.Current));
 		}
 
-		public override void Write(ref Nerdbank.Json.JsonWriter writer, T? value, Nerdbank.Json.SerializationContext context)
+		public override void Write(ref Nerdbank.Json.JsonWriter writer, in T? value, Nerdbank.Json.SerializationContext context)
 		{
 			if (value is null)
 			{
-				writer.WriteNullValue();
+				writer.WriteNull();
 				return;
 			}
 
 			JsonRpcValue token = manager.Marshal(this.ToPipe(value), JsonRpcEncoding.Json, RpcCallState.Current);
-			writer.WriteRawValue(Encoding.UTF8.GetString(token.OwnedBytes.Span));
+			writer.WriteRaw(token.OwnedBytes.Span);
 		}
 
 		protected abstract IDuplexPipe ToPipe(T value);
