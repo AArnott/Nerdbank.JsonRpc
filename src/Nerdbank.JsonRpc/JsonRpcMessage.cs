@@ -20,10 +20,10 @@ public abstract partial class JsonRpcMessage
 	public bool HasId => !this.id.IsAbsent;
 
 	// The default value is deliberately not declared to the serializer: the JSON-RPC envelope must always carry this property.
-#pragma warning disable NBMsgPack110
+#pragma warning disable NBMsgPack110, NBJson110
 	[PropertyShape(IsRequired = true, Name = "jsonrpc")]
 	public string Version { get; init; } = "2.0";
-#pragma warning restore NBMsgPack110
+#pragma warning restore NBMsgPack110, NBJson110
 
 	/// <summary>Gets or sets the extension properties carried at the top level of this message's envelope, if any.</summary>
 	[PropertyShape(Ignore = true)]

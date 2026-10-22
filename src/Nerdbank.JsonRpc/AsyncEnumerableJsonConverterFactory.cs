@@ -10,7 +10,7 @@ namespace Nerdbank.JsonRpc;
 internal sealed class AsyncEnumerableJsonConverterFactory(AsyncEnumerableManager manager) : Nerdbank.Json.IJsonConverterFactory
 {
 	/// <inheritdoc/>
-	public Nerdbank.Json.JsonConverter? CreateConverter(Type type, PolyType.ITypeShape? shape, in Nerdbank.Json.JsonConverterFactoryContext context)
+	public Nerdbank.Json.JsonConverter? CreateConverter(Type type, PolyType.ITypeShape? shape, in Nerdbank.Json.ConverterContext context)
 		=> AsyncEnumerableMarshaler.IsAsyncEnumerable(type) && shape is not null ? (Nerdbank.Json.JsonConverter?)shape.Invoke(new Factory(manager)) : null;
 
 	/// <summary>Creates a converter in a generic context for the sequence type.</summary>
@@ -35,16 +35,16 @@ internal sealed class AsyncEnumerableJsonConverterFactory(AsyncEnumerableManager
 		}
 
 		/// <inheritdoc/>
-		public override void Write(ref Nerdbank.Json.JsonWriter writer, T? value, Nerdbank.Json.SerializationContext context)
+		public override void Write(ref Nerdbank.Json.JsonWriter writer, in T? value, Nerdbank.Json.SerializationContext context)
 		{
 			if (value is null)
 			{
-				writer.WriteNullValue();
+				writer.WriteNull();
 				return;
 			}
 
 			JsonRpcValue encoded = AsyncEnumerableMarshaler.Marshal(manager, value, shape, JsonRpcEncoding.Json, RpcCallState.Current);
-			writer.WriteRawValue(Encoding.UTF8.GetString(encoded.OwnedBytes.Span));
+			writer.WriteRaw(encoded.OwnedBytes.Span);
 		}
 	}
 }

@@ -13,15 +13,15 @@ internal sealed class MarshaledDisposableJsonConverter(MarshaledObjectManager ma
 		return rawValue == "null" ? null : manager.Unmarshal(JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(rawValue)), RpcCallState.Current);
 	}
 
-	public override void Write(ref Nerdbank.Json.JsonWriter writer, IDisposable? value, Nerdbank.Json.SerializationContext context)
+	public override void Write(ref Nerdbank.Json.JsonWriter writer, in IDisposable? value, Nerdbank.Json.SerializationContext context)
 	{
 		if (value is null)
 		{
-			writer.WriteNullValue();
+			writer.WriteNull();
 			return;
 		}
 
 		JsonRpcValue marker = manager.Marshal(value, JsonRpcEncoding.Json, RpcCallState.Current);
-		writer.WriteRawValue(Encoding.UTF8.GetString(marker.OwnedBytes.Span));
+		writer.WriteRaw(marker.OwnedBytes.Span);
 	}
 }
