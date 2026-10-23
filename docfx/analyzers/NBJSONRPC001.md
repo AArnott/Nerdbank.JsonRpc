@@ -14,6 +14,7 @@ The generator must emit a proxy whose signatures and wire behavior match the con
 
 Proxy events must be instance events whose delegates return `void` and accept only by-value, non-ref-like parameters.
 Asynchronous, value-returning, static, and by-reference event contracts report this diagnostic.
+Event parameters also cannot contain RPC-marshalable interfaces, including within arrays or generic types, because notifications do not support marshaled handles.
 
 ## Examples
 

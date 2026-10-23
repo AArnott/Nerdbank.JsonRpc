@@ -163,6 +163,10 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			{
 				diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, @event.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), "proxy events must be instance events with synchronous, void-returning delegates and by-value, non-ref-like parameters"));
 			}
+			else if (invoke.Parameters.Any(parameter => ContainsRpcMarshalableInterface(parameter.Type, marshalableAttribute)))
+			{
+				diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, @event.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), "proxy events cannot accept RPC-marshalable interface parameters"));
+			}
 		}
 
 		foreach (IMethodSymbol method in GetProxyMethods(interfaceSymbol))

@@ -50,6 +50,7 @@ Use <xref:Nerdbank.JsonRpc.CommonMethodNameTransforms.Identity> when receiving e
 Event receivers are registered for the connection lifetime, including for proxies attached to a batch.
 Attaching another proxy or local target with a conflicting incoming wire name throws <xref:System.InvalidOperationException>.
 RPC-marshalable interfaces still cannot declare events.
+Proxy event parameters cannot contain RPC-marshalable interfaces, including within arrays or generic types, because notifications do not support marshaled handles.
 
 ### Receiving without a proxy
 

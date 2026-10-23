@@ -110,6 +110,39 @@ public class ClientProxyGeneratorTests
 	}
 
 	[Test]
+	[Arguments("IRemoteObject")]
+	[Arguments("IRemoteObject[]")]
+	[Arguments("System.Collections.Generic.IReadOnlyList<IRemoteObject[]>")]
+	public async Task EventsCannotAcceptRpcMarshalableInterfaceParameters(string parameterType)
+	{
+		string source = /* lang=c#-test */ $$"""
+			using System;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			[RpcMarshalable]
+			internal partial interface IRemoteObject : IDisposable
+			{
+				Task CallAsync();
+			}
+
+			internal interface IBaseEvents
+			{
+				event Action<{{parameterType}}> {|#0:Changed|};
+			}
+
+			[GenerateJsonRpcProxy]
+			internal partial interface IEvents : IBaseEvents
+			{
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(source, CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(0)
+			.WithArguments("IEvents", "proxy events cannot accept RPC-marshalable interface parameters"));
+	}
+
+	[Test]
 	public async Task UnsupportedMethodSignaturesProduceDiagnosticsAndNoProxy()
 	{
 		const string Source = /* lang=c#-test */ """
