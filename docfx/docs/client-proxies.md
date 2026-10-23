@@ -61,15 +61,48 @@ Generate a composite contract or interface groups containing the potentially ava
 
 [!code-csharp[](../../samples/cs/client-proxies.cs#enabled-interfaces)]
 
-A null list (the default) enables all contract interfaces implemented by the proxy; an empty list enables none.
+The primary contract passed to `Attach<T>` and its inherited interfaces are always enabled; they do not need to appear in the list.
+A null list (the default) enables all contract interfaces implemented by the selected proxy; an empty list enables only the primary contract and its inherited interfaces.
+Use additional interface groups rather than inheritance for capabilities that may be unavailable on the remote service.
 Each listed interface also enables its inherited interfaces, but listing separate base interfaces does not enable a composite derived interface.
 An interface the proxy does not implement is never reported as enabled, even if listed.
 The options copy the list when assigned, so later changes to the caller's collection do not affect the proxy.
 The same options work with generic and non-generic attachment, including <xref:Nerdbank.JsonRpc.JsonRpcBatch.Attach*>.
 
 [RPC-marshalable objects](rpc-marshalable-interfaces.md#optional-interfaces) use the peer's advertisement for capability queries independently of the generated proxy's CLR interfaces.
-An explicit enabled-interface list in <xref:Nerdbank.JsonRpc.JsonRpcOptions.MarshaledProxy?displayProperty=nameWithType> can restrict those advertised capabilities further.
+An explicit enabled-interface list in <xref:Nerdbank.JsonRpc.JsonRpcOptions.MarshaledProxy?displayProperty=nameWithType> can restrict those advertised optional capabilities further, but cannot disable the primary contract or its inherited interfaces.
 Proxies compiled by an older generator, and application-written proxies, must implement the new interface themselves to support these queries.
+
+## Discovering root-service capabilities
+
+An application can define an `IDiscovery` RPC contract to learn the other peer's capabilities before attaching its main service proxy.
+This is an application-level protocol, not a built-in discovery request: both peers agree that discovery and the baseline calculator service are always available.
+Use stable, versioned capability identifiers rather than assembly-qualified CLR type names so the protocol can evolve independently of implementation details.
+
+[!code-csharp[](../../samples/cs/discovery.cs#discovery-contract)]
+
+This example uses the `IGroupedCalculator` and `IResettableCalculator` contracts from [Choosing generated interface groups](#choosing-generated-interface-groups).
+The `calculator.reset.v1` identifier means that the peer offers the `IResettableCalculator` contract.
+The serving peer registers the baseline service and discovery target, registering and advertising the optional interface only when its service implements it:
+
+[!code-csharp[](../../samples/cs/discovery.cs#discovery-server)]
+
+The discovery target returns the capability list captured during registration:
+
+[!code-csharp[](../../samples/cs/discovery.cs#discovery-target)]
+
+The calling peer first attaches a discovery proxy and starts its connection.
+It maps recognized capability identifiers to local interface types, and attaches a second proxy on the same connection with <xref:Nerdbank.JsonRpc.JsonRpcProxyOptions.EnabledInterfaces?displayProperty=nameWithType>.
+Unknown capability identifiers are ignored, allowing newer peers to advertise features older clients do not understand.
+
+[!code-csharp[](../../samples/cs/discovery.cs#discovery-client)]
+
+Both methods accept a newly constructed, unstarted connection whose lifetime remains owned by the caller.
+The discovery call must complete before the configured service proxy can be created; cancellation and RPC failures propagate to the caller rather than being treated as an empty capability list.
+The enabled interfaces are a snapshot for that proxy, so this protocol assumes the advertised capabilities remain valid for the connection's lifetime.
+Discovery does not provide authorization or prevent direct calls to unadvertised methods.
+Either peer can use this pattern to discover the other when it exposes the discovery contract.
+For services with events, account for notifications that may arrive before the second proxy is attached; see [Events as notifications](events.md#receiving-the-notifications).
 
 ## Choosing generated interface groups
 

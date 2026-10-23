@@ -18,17 +18,18 @@ public sealed record JsonRpcProxyOptions
 	/// <summary>Gets a shared instance with default settings.</summary>
 	public static JsonRpcProxyOptions Default { get; } = new();
 
-	/// <summary>Gets the contract interfaces considered enabled by <see cref="IClientProxy.Is"/>.</summary>
+	/// <summary>Gets the additional contract interfaces considered enabled by <see cref="IClientProxy.Is"/>.</summary>
 	/// <value>
-	/// A list of enabled interfaces, or <see langword="null"/> (the default) to enable all contract interfaces implemented by the proxy.
-	/// An empty list disables all interfaces for capability queries.
+	/// A list of enabled additional interfaces, or <see langword="null"/> (the default) to enable all contract interfaces implemented by the proxy.
+	/// An empty list enables only the primary contract and its inherited interfaces.
 	/// </value>
 	/// <remarks>
 	/// The list is copied when assigned. Inherited interfaces of each listed interface are also enabled,
 	/// but interfaces not implemented by the generated proxy are never reported as enabled.
+	/// The primary contract and its inherited interfaces are always enabled, regardless of this list.
 	/// For root proxies, supply capabilities learned out of band. The smallest generated group covering the known enabled
 	/// interfaces is selected; it may implement extra CLR interfaces. With a null list, the smallest generated group is selected.
-	/// For marshaled proxies, capability queries are based on the peer's advertisement; this list can only restrict them further.
+	/// For marshaled proxies, capability queries are based on the peer's advertisement; this list can only restrict optional capabilities further.
 	/// This setting does not prevent direct method calls or negotiate capabilities with the peer.
 	/// </remarks>
 	/// <exception cref="ArgumentException">Thrown when an entry is null or is not an interface type.</exception>

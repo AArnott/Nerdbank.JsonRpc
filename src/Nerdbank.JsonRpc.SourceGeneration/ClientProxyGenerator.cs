@@ -794,6 +794,11 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		builder.AppendLine("return false;");
 		builder.CloseBlock();
 		builder.AppendLine();
+		builder.Append("if (type.IsAssignableFrom(typeof(").Append(info.InterfaceName).AppendLine(")))");
+		builder.OpenBlock();
+		builder.AppendLine("return true;");
+		builder.CloseBlock();
+		builder.AppendLine();
 		builder.AppendLine("if (this.jsonRpc is global::Nerdbank.JsonRpc.IClientProxy remoteProxy && !remoteProxy.Is(type))");
 		builder.OpenBlock();
 		builder.AppendLine("return false;");

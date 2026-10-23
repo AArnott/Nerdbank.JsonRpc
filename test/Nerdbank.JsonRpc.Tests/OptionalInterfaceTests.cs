@@ -71,14 +71,16 @@ public class OptionalInterfaceTests
 	}
 
 	[Test]
-	[Arguments(JsonRpcEncoding.Json)]
-	[Arguments(JsonRpcEncoding.MessagePack)]
-	public async Task MarshaledProxyOptionsCanRestrictAdvertisedCapabilities(JsonRpcEncoding encoding)
+	[Arguments(JsonRpcEncoding.Json, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, false)]
+	[Arguments(JsonRpcEncoding.Json, true)]
+	[Arguments(JsonRpcEncoding.MessagePack, true)]
+	public async Task MarshaledProxyOptionsCanRestrictAdvertisedCapabilities(JsonRpcEncoding encoding, bool emptyList)
 	{
 		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
 		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding), new JsonRpcOptions
 		{
-			MarshaledProxy = new JsonRpcProxyOptions { EnabledInterfaces = [typeof(IOptionalObject), typeof(ISubtractCapability)] },
+			MarshaledProxy = new JsonRpcProxyOptions { EnabledInterfaces = emptyList ? [] : [typeof(ISubtractCapability)] },
 		});
 		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
 		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
@@ -92,7 +94,8 @@ public class OptionalInterfaceTests
 		Assert.True(all is IMultiplyCapability);
 		Assert.True(proxy.Is(typeof(IOptionalObject)));
 		Assert.True(proxy.Is(typeof(IDisposable)));
-		Assert.Same(all, proxy.As<ISubtractCapability>());
+		Assert.Same(all, proxy.As<IOptionalObject>());
+		Assert.Equal(!emptyList, proxy.As<ISubtractCapability>() is not null);
 		Assert.Null(proxy.As<IMultiplyCapability>());
 		Assert.Equal(30, await ((IMultiplyCapability)all).CalculateAsync(3, cts.Token));
 	}
@@ -183,6 +186,9 @@ public class OptionalInterfaceTests
 		clientRpc.Start();
 		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
 		using ISiblingCapabilityObject proxy = await clientRpc.Attach<IOptionalInterfaceService>().GetSiblingObjectAsync(cts.Token);
+		Assert.True(proxy.Is(typeof(ISiblingCapabilityObject)));
+		Assert.True(proxy.Is(typeof(IDisposable)));
+		Assert.Same(proxy, proxy.As<ISiblingCapabilityObject>());
 		Assert.False(proxy.Is(typeof(IServerCapability)));
 		Assert.False(proxy.Is(typeof(IClientCapability)));
 		Assert.True(proxy.Is(typeof(ICommonCapability)));

@@ -51,13 +51,14 @@ public static class ProxyOptions
         #endregion
 
         #region enabled-interfaces
-        IExtendedCalculator client = rpc.Attach<IExtendedCalculator>(new JsonRpcProxyOptions
+        IGroupedCalculator client = rpc.Attach<IGroupedCalculator>(new JsonRpcProxyOptions
         {
-            EnabledInterfaces = [typeof(ICalculator)],
+            EnabledInterfaces = [],
         });
-        ICalculator? calculator = client.As<ICalculator>(); // Enabled.
-        IExtendedCalculator? extended = client.As<IExtendedCalculator>(); // Null, despite the CLR interface.
-        bool canReset = client.Is(typeof(IExtendedCalculator)); // False.
+        IGroupedCalculator? service = client.As<IGroupedCalculator>(); // Always enabled.
+        ICalculator? calculator = client.As<ICalculator>(); // Inherited interfaces are also enabled.
+        IResettableCalculator? resettable = client.As<IResettableCalculator>(); // Null.
+        bool canReset = client.Is(typeof(IResettableCalculator)); // False.
         #endregion
     }
 }

@@ -27,18 +27,19 @@ public class ClientProxyTests
 		clientRpc.Start();
 		JsonRpcProxyOptions options = new()
 		{
-			EnabledInterfaces = enableOptional ? [typeof(ICalculator), typeof(ISubtractCapability)] : [typeof(ICalculator)],
+			EnabledInterfaces = enableOptional ? [typeof(ISubtractCapability)] : [],
 		};
-		ICapabilityService client = nonGenericAttach
-			? (ICapabilityService)clientRpc.Attach(typeof(ICapabilityService), options)
-			: clientRpc.Attach<ICapabilityService>(options);
+		IGroupedRootService client = nonGenericAttach
+			? (IGroupedRootService)clientRpc.Attach(typeof(IGroupedRootService), options)
+			: clientRpc.Attach<IGroupedRootService>(options);
 		IClientProxy proxy = Assert.IsAssignableFrom<IClientProxy>(client);
-		Assert.True(client is ISubtractCapability);
+		Assert.Equal(enableOptional, client is ISubtractCapability);
 		Assert.True(proxy.Is(typeof(ICalculator)));
 		Assert.Equal(enableOptional, proxy.Is(typeof(ISubtractCapability)));
 		Assert.Equal(enableOptional, client.Is(typeof(ISubtractCapability)));
 		Assert.Equal(enableOptional, client.As<ISubtractCapability>() is not null);
-		Assert.False(proxy.Is(typeof(ICapabilityService)));
+		Assert.True(proxy.Is(typeof(IGroupedRootService)));
+		Assert.Same(client, client.As<IGroupedRootService>());
 		Assert.Same(client, proxy.As<ICalculator>());
 		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
 		Assert.Equal(5, await proxy.As<ICalculator>()!.AddAsync(2, 3, cts.Token));
@@ -80,7 +81,7 @@ public class ClientProxyTests
 		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
 		using JsonRpc rpc = new(new MockJsonRpcPipeChannel(transport));
 		using JsonRpcBatch batch = rpc.CreateBatch();
-		JsonRpcProxyOptions options = new() { EnabledInterfaces = [typeof(ICompositeCalculator)] };
+		JsonRpcProxyOptions options = new() { EnabledInterfaces = [] };
 		object client = nonGenericAttach ? batch.Attach(typeof(ICompositeCalculator), options) : batch.Attach<ICompositeCalculator>(options);
 		IClientProxy proxy = Assert.IsAssignableFrom<IClientProxy>(client);
 		Assert.True(proxy.Is(typeof(ICompositeCalculator)));
@@ -89,15 +90,18 @@ public class ClientProxyTests
 	}
 
 	[Test]
-	public void EmptyListDisablesAllCapabilitiesAndUnknownInterfacesDoNotAddCapabilities()
+	public void PrimaryAndInheritedInterfacesRemainEnabledWithEmptyOrUnknownCapabilities()
 	{
 		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
 		using JsonRpc rpc = new(new MockJsonRpcPipeChannel(transport));
-		IClientProxy empty = Assert.IsAssignableFrom<IClientProxy>(rpc.Attach<ICalculator>(new() { EnabledInterfaces = [] }));
-		Assert.False(empty.Is(typeof(ICalculator)));
-		Assert.Null(empty.As<ICalculator>());
+		IClientProxy empty = Assert.IsAssignableFrom<IClientProxy>(rpc.Attach<ICapabilityService>(new() { EnabledInterfaces = [] }));
+		Assert.True(empty.Is(typeof(ICapabilityService)));
+		Assert.True(empty.Is(typeof(ICalculator)));
+		Assert.True(empty.Is(typeof(ISubtractCapability)));
+		Assert.Same(empty, empty.As<ICapabilityService>());
+		Assert.Same(empty, empty.As<ICalculator>());
 		IClientProxy unknown = Assert.IsAssignableFrom<IClientProxy>(rpc.Attach<ICalculator>(new() { EnabledInterfaces = [typeof(IMultiplyCapability)] }));
-		Assert.False(unknown.Is(typeof(ICalculator)));
+		Assert.True(unknown.Is(typeof(ICalculator)));
 		Assert.False(unknown.Is(typeof(IMultiplyCapability)));
 	}
 
@@ -141,7 +145,7 @@ public class ClientProxyTests
 		IGroupedRootService extended = nonGeneric ? (IGroupedRootService)rpc.Attach(typeof(IGroupedRootService), options) : rpc.Attach<IGroupedRootService>(options);
 		Assert.True(extended is ISubtractCapability);
 		Assert.True(extended.Is(typeof(ISubtractCapability)));
-		Assert.False(extended.Is(typeof(IGroupedRootService)));
+		Assert.True(extended.Is(typeof(IGroupedRootService)));
 		Assert.Same(extended, extended.As<ICalculator>());
 	}
 

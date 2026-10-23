@@ -14,7 +14,10 @@ public interface IClientProxy
 	/// <summary>Gets a value indicating whether a contract interface is enabled on this proxy.</summary>
 	/// <param name="type">The contract interface type to query.</param>
 	/// <returns><see langword="true"/> if the proxy implements the interface and it is enabled; otherwise <see langword="false"/>.</returns>
-	/// <remarks>Enabling an interface also enables its inherited interfaces. Non-interface types return <see langword="false"/>.</remarks>
+	/// <remarks>
+	/// The primary contract and its inherited interfaces are always enabled on generated proxies.
+	/// Enabling an additional interface also enables its inherited interfaces. Non-interface types return <see langword="false"/>.
+	/// </remarks>
 	/// <exception cref="ArgumentNullException">Thrown when <paramref name="type"/> is <see langword="null"/>.</exception>
 	bool Is(Type type);
 }
