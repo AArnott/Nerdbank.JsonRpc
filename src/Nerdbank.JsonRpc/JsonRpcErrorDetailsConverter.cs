@@ -14,7 +14,7 @@ internal sealed class JsonRpcErrorDetailsConverter : MessagePackConverter<JsonRp
 	{
 		int count = reader.ReadMapHeader();
 		bool hasCode = false, hasMessage = false, hasData = false;
-		long code = 0;
+		JsonRpcErrorCode code = default;
 		string? message = null;
 		JsonRpcValue data = default;
 		for (int i = 0; i < count; i++)
@@ -32,8 +32,9 @@ internal sealed class JsonRpcErrorDetailsConverter : MessagePackConverter<JsonRp
 					throw new ProtocolViolationException("An error code must be an integer supplied once.");
 				}
 
+				long numericCode = reader.ReadInt64();
 				hasCode = true;
-				code = reader.ReadInt64();
+				code = (JsonRpcErrorCode)numericCode;
 			}
 			else if (name.SequenceEqual("message"u8))
 			{
@@ -80,7 +81,7 @@ internal sealed class JsonRpcErrorDetailsConverter : MessagePackConverter<JsonRp
 		JsonRpcValue? data = value.Data is { HasValue: true } present ? present : null;
 		writer.WriteMapHeader(data.HasValue ? 3 : 2);
 		writer.Write("code");
-		writer.Write(value.Code);
+		writer.Write((long)value.Code);
 		writer.Write("message");
 		writer.Write(value.Message);
 		if (data is JsonRpcValue encoded)

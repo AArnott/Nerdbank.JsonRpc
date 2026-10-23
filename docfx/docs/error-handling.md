@@ -27,6 +27,18 @@ Catch the stable remote wrapper first. If a proprietary type is available locall
 
 `RemoteInvocationException.ToString()` prints remote throw stacks and nested remote causes as labeled sections, followed by the local rethrow stack. Treat remote stack traces and messages as diagnostic text, not as trustworthy local call stacks. Logging on the receiving side should also be considered when exposing peer-supplied text to log viewers.
 
+## Sending application-defined error codes
+
+Throw <xref:Nerdbank.JsonRpc.JsonRpcException> from an RPC target method to send its <xref:Nerdbank.JsonRpc.JsonRpcException.ErrorDetails?displayProperty=nameWithType> unchanged as the JSON-RPC error response.
+
+The client receives a <xref:Nerdbank.JsonRpc.RemoteInvocationException> whose <xref:Nerdbank.JsonRpc.JsonRpcException.ErrorDetails?displayProperty=nameWithType> exposes that data.
+
+Applications can define named codes as static extension members on <xref:Nerdbank.JsonRpc.JsonRpcErrorCode>.
+
+[!code-csharp[](../../samples/cs/error-handling.cs#application-error-codes)]
+
+This includes the error code, message, and optional <xref:Nerdbank.JsonRpc.JsonRpcErrorDetails.Data?displayProperty=nameWithType>, regardless of <xref:Nerdbank.JsonRpc.JsonRpcOptions.IncludeExceptionDetails?displayProperty=nameWithType>.
+
 ## Allowing additional exception types
 
 Applications may opt in to serializing and reconstructing selected exception types by registering their source-generated shapes. Each exception shape must declare a PolyType marshaler to a data-only surrogate. This avoids serializing the framework's `Exception` implementation details and gives the application explicit control over which properties cross the boundary; PolyType uses the marshaler to reconstruct the exception without a registration factory. Constructors used by the marshaler should only consume validated data:

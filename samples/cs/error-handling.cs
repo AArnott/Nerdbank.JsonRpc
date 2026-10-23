@@ -6,6 +6,28 @@ using PolyType;
 
 namespace ErrorHandling;
 
+#region application-error-codes
+public static class Extensions
+{
+    extension(JsonRpcErrorCode)
+    {
+        public static JsonRpcErrorCode MyError => (JsonRpcErrorCode)123;
+    }
+}
+
+public static class ApplicationErrorCodeExample
+{
+    public static void RejectUnavailableResource()
+    {
+        throw new JsonRpcException(new JsonRpcErrorDetails
+        {
+            Code = JsonRpcErrorCode.MyError,
+            Message = "The requested resource is unavailable.",
+        });
+    }
+}
+#endregion
+
 public static class Example
 {
     #region catch-remote-exception

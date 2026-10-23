@@ -111,7 +111,7 @@ public class JsonCodecTests : TestBase
 		JsonRpcResult compactResult = Assert.IsType<JsonRpcResult>(await second.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal("[1,2]", Encoding.UTF8.GetString(compactResult.Result.Bytes.ToArray()));
 
-		await second.Writer.WriteAsync(new JsonRpcError { Id = new RequestId("err"), Error = new() { Code = -32603, Message = "error", Data = JsonRpcValue.FromJson("null"u8.ToArray()) } }, this.TimeoutToken);
+		await second.Writer.WriteAsync(new JsonRpcError { Id = new RequestId("err"), Error = new() { Code = JsonRpcErrorCode.InternalError, Message = "error", Data = JsonRpcValue.FromJson("null"u8.ToArray()) } }, this.TimeoutToken);
 		JsonRpcError error = Assert.IsType<JsonRpcError>(await first.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(JsonRpcEncoding.Json, error.Error.Data!.Value.Encoding);
 		Assert.Equal("null", Encoding.UTF8.GetString(error.Error.Data.Value.Bytes.ToArray()));
@@ -236,14 +236,14 @@ public class JsonCodecTests : TestBase
 			? new JsonRpcJsonChannel(serverPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
 			: new JsonRpcMessagePackChannel(serverPipe);
 		server.Start();
-		await client.Writer.WriteAsync(new JsonRpcError { Id = 1, Error = new() { Code = -32603, Message = "oops", Data = default(JsonRpcValue) } }, this.TimeoutToken);
+		await client.Writer.WriteAsync(new JsonRpcError { Id = 1, Error = new() { Code = JsonRpcErrorCode.InternalError, Message = "oops", Data = default(JsonRpcValue) } }, this.TimeoutToken);
 		JsonRpcError response = Assert.IsType<JsonRpcError>(await server.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Null(response.Error.Data);
 
 		JsonRpcValue explicitNull = encoding == JsonRpcEncoding.Json
 			? JsonRpcValue.FromJson("null"u8.ToArray())
 			: JsonRpcValue.FromMessagePack(NilMsgPack);
-		await client.Writer.WriteAsync(new JsonRpcError { Id = 2, Error = new() { Code = -32603, Message = "oops", Data = explicitNull } }, this.TimeoutToken);
+		await client.Writer.WriteAsync(new JsonRpcError { Id = 2, Error = new() { Code = JsonRpcErrorCode.InternalError, Message = "oops", Data = explicitNull } }, this.TimeoutToken);
 		response = Assert.IsType<JsonRpcError>(await server.Reader.ReadAsync(this.TimeoutToken));
 		Assert.True(response.Error.Data.HasValue);
 		Assert.Equal(explicitNull, response.Error.Data.Value);
@@ -251,7 +251,7 @@ public class JsonCodecTests : TestBase
 		JsonRpcValue payload = encoding == JsonRpcEncoding.Json
 			? JsonRpcValue.FromJson("[1,2]"u8.ToArray())
 			: JsonRpcValue.FromMessagePack((RawMessagePack)new byte[] { 0x92, 0x01, 0x02 });
-		await client.Writer.WriteAsync(new JsonRpcError { Id = 3, Error = new() { Code = -32603, Message = "oops", Data = payload } }, this.TimeoutToken);
+		await client.Writer.WriteAsync(new JsonRpcError { Id = 3, Error = new() { Code = JsonRpcErrorCode.InternalError, Message = "oops", Data = payload } }, this.TimeoutToken);
 		response = Assert.IsType<JsonRpcError>(await server.Reader.ReadAsync(this.TimeoutToken));
 		Assert.Equal(payload, response.Error.Data);
 	}
@@ -263,7 +263,7 @@ public class JsonCodecTests : TestBase
 		await using JsonRpcMessagePackChannel channel = new(local, JsonRpcMessagePackChannel.DefaultSerializer, JsonRpcMessagePackFraming.SelfDelimiting);
 		channel.Start();
 		MessagePackSerializer serializer = new();
-		JsonRpcErrorDetails error = new() { Code = -32603, Message = "oops" };
+		JsonRpcErrorDetails error = new() { Code = JsonRpcErrorCode.InternalError, Message = "oops" };
 		await channel.Writer.WriteAsync(new JsonRpcError { Id = 1, Error = error }, this.TimeoutToken);
 		ReadResult read = await peer.Input.ReadAsync(this.TimeoutToken);
 		using (JsonDocument document = JsonDocument.Parse(serializer.ConvertToJson(read.Buffer.ToArray())))
@@ -273,7 +273,7 @@ public class JsonCodecTests : TestBase
 		}
 
 		peer.Input.AdvanceTo(read.Buffer.End);
-		error = new() { Code = -32603, Message = "oops", Data = JsonRpcValue.FromMessagePack(NilMsgPack) };
+		error = new() { Code = JsonRpcErrorCode.InternalError, Message = "oops", Data = JsonRpcValue.FromMessagePack(NilMsgPack) };
 		await channel.Writer.WriteAsync(new JsonRpcError { Id = 2, Error = error }, this.TimeoutToken);
 		read = await peer.Input.ReadAsync(this.TimeoutToken);
 		using (JsonDocument document = JsonDocument.Parse(serializer.ConvertToJson(read.Buffer.ToArray())))
@@ -653,7 +653,7 @@ public class JsonCodecTests : TestBase
 		Assert.Equal("{\"a\": [1,2]}", Encoding.UTF8.GetString(result.Result.Bytes.ToArray()));
 
 		JsonRpcError error = Assert.IsType<JsonRpcError>(await channel.Reader.ReadAsync(this.TimeoutToken));
-		Assert.Equal(-1, error.Error.Code);
+		Assert.Equal(-1L, (long)error.Error.Code);
 		Assert.Equal("m", error.Error.Message);
 		Assert.Equal("{\"x\":1}", Encoding.UTF8.GetString(error.Error.Data!.Value.Bytes.ToArray()));
 	}

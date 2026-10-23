@@ -5,8 +5,9 @@ namespace Nerdbank.JsonRpc;
 
 public class JsonRpcErrorDetails
 {
+	/// <summary>Gets the JSON-RPC error code.</summary>
 	[PropertyShape(Name = "code")]
-	public required long Code { get; init; }
+	public required JsonRpcErrorCode Code { get; init; }
 
 	[PropertyShape(Name = "message")]
 	public required string Message { get; init; }
