@@ -142,6 +142,13 @@ internal class MarshaledObjectManager(JsonRpc owner)
 			.Where(attribute => knownAdvertisedInterfaces.All(attribute.InterfaceIds.Contains))
 			.OrderBy(static attribute => attribute.InterfaceIds.Count)
 			.FirstOrDefault();
+		if (knownAdvertisedInterfaces.Count == 0 && optionalProxyFactory is { InterfaceIds.Count: > 0 }
+			&& typeof(T).GetCustomAttributes<JsonRpcProxyFactoryAttribute>(inherit: false).Any(static factory => factory.AdditionalInterfaces.Count == 0))
+		{
+			// Older generators describe the base-only proxy only through the root factory metadata.
+			optionalProxyFactory = null;
+		}
+
 		if (optionalProxyFactory is null && knownAdvertisedInterfaces.Count > 0)
 		{
 			string advertisedIds = string.Join(", ", advertisedInterfaces.OrderBy(id => id));

@@ -227,7 +227,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				continue;
 			}
 
-			methods.Add(CreateMethodInfo(method, methodShapeAttribute, optionalInterfaceId: null));
+			methods.Add(CreateMethodInfo(method, methodShapeAttribute, interfaceSymbol, optionalInterfaceId: null));
 		}
 
 		if (isMarshalable && optionalInterfaceAttribute is not null)
@@ -260,7 +260,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 					continue;
 				}
 
-				foreach (IMethodSymbol method in GetProxyMethods(optionalInterface))
+				foreach (IMethodSymbol method in GetProxyMethods(optionalInterface, preserveDeclaringInterfaces: true))
 				{
 					if (GetUnsupportedSignatureReason(method, isMarshalable: true, marshalableAttribute) is string reason)
 					{
@@ -268,7 +268,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 						continue;
 					}
 
-					optionalMethods.Add(CreateMethodInfo(method, methodShapeAttribute, interfaceId));
+					optionalMethods.Add(CreateMethodInfo(method, methodShapeAttribute, optionalInterface, interfaceId));
 				}
 
 				optionalInterfaces.Add(new(interfaceId, optionalInterface, optionalMethods.ToImmutable()));
@@ -316,7 +316,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				{
 					ValidateProxyEvents(additionalInterface, marshalableAttribute, diagnostics);
 					ImmutableArray<MethodInfo>.Builder groupMethods = ImmutableArray.CreateBuilder<MethodInfo>();
-					foreach (IMethodSymbol method in GetProxyMethods(additionalInterface))
+					foreach (IMethodSymbol method in GetProxyMethods(additionalInterface, preserveDeclaringInterfaces: true))
 					{
 						if (GetUnsupportedSignatureReason(method, isMarshalable: false, marshalableAttribute) is string reason)
 						{
@@ -324,7 +324,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 						}
 						else
 						{
-							groupMethods.Add(CreateMethodInfo(method, methodShapeAttribute, optionalInterfaceId: null) with { ExplicitImplementation = true });
+							groupMethods.Add(CreateMethodInfo(method, methodShapeAttribute, additionalInterface, optionalInterfaceId: null) with { ExplicitImplementation = true });
 						}
 					}
 
@@ -372,20 +372,33 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	private static IEnumerable<IEventSymbol> GetProxyEvents(INamedTypeSymbol interfaceSymbol)
 		=> interfaceSymbol.AllInterfaces.Concat([interfaceSymbol]).SelectMany(static type => type.GetMembers().OfType<IEventSymbol>()).Where(static @event => @event.DeclaredAccessibility != Accessibility.Private);
 
-	private static IEnumerable<IMethodSymbol> GetProxyMethods(INamedTypeSymbol interfaceSymbol)
+	private static IEnumerable<IMethodSymbol> GetProxyMethods(INamedTypeSymbol interfaceSymbol, bool preserveDeclaringInterfaces = false)
 	{
 		HashSet<string> seenMethods = new(System.StringComparer.Ordinal);
 		foreach (INamedTypeSymbol currentInterface in interfaceSymbol.AllInterfaces.Concat([interfaceSymbol]))
 		{
+			if (IsShapeableInterface(currentInterface))
+			{
+				continue;
+			}
+
 			foreach (IMethodSymbol method in currentInterface.GetMembers().OfType<IMethodSymbol>().Where(static method => method.MethodKind == MethodKind.Ordinary))
 			{
-				if (seenMethods.Add(GetMethodSignatureKey(method)))
+				if (method.ExplicitInterfaceImplementations.Any(static implementation => IsShapeableInterface(implementation.ContainingType)))
+				{
+					continue;
+				}
+
+				if (seenMethods.Add(GetMethodSignatureKey(method) + (preserveDeclaringInterfaces ? "|" + method.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) : string.Empty)))
 				{
 					yield return method;
 				}
 			}
 		}
 	}
+
+	private static bool IsShapeableInterface(INamedTypeSymbol type)
+		=> type.MetadataName == KnownApis.IShapeableMetadataName && type.ContainingNamespace.ToDisplayString() == KnownApis.PolyTypeNamespace && type.ContainingAssembly.Name == KnownApis.PolyTypeAssembly;
 
 	private static string GetMethodSignatureKey(IMethodSymbol method)
 		=> string.Join(
@@ -516,7 +529,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			.Any(static method => method.IsGenericMethod && method.TypeParameters.Length == 1 && method.ContainingAssembly.Name == KnownApis.PolyTypeAssembly) is true;
 	}
 
-	private static MethodInfo CreateMethodInfo(IMethodSymbol method, INamedTypeSymbol? methodShapeAttribute, int? optionalInterfaceId)
+	private static MethodInfo CreateMethodInfo(IMethodSymbol method, INamedTypeSymbol? methodShapeAttribute, INamedTypeSymbol shapeProvider, int? optionalInterfaceId)
 	{
 		bool hasCancellationToken = method.Parameters.LastOrDefault() is { } lastParameter && IsCancellationToken(lastParameter.Type);
 		ImmutableArray<IParameterSymbol> payloadParameters = hasCancellationToken
@@ -526,7 +539,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		ProxyMethodKind methodKind = GetMethodKind(method.ReturnType, out string? resultTypeName);
 		string? explicitRpcName = GetExplicitRpcName(method, methodShapeAttribute);
 
-		return new MethodInfo(method, payloadParameters, hasCancellationToken, methodKind, resultTypeName, explicitRpcName, optionalInterfaceId);
+		return new MethodInfo(method, payloadParameters, hasCancellationToken, methodKind, resultTypeName, explicitRpcName, optionalInterfaceId, shapeProvider.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
 	}
 
 	/// <summary>
@@ -637,7 +650,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 						continue;
 					}
 
-					signature += "|" + id;
+					signature += "|" + id + "|" + method.Symbol.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 				}
 
 				if (methodSignatures.Add(signature))
@@ -684,7 +697,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				.Append(handlerType)
 				.Append(">(global::PolyType.Abstractions.TypeShapeResolver.")
 				.Append(info.HasStaticTypeShapeResolver ? KnownApis.TypeShapeResolve : KnownApis.TypeShapeResolveDynamicOrThrow)
-				.Append('<').Append(info.InterfaceName).AppendLine(">().Provider));");
+				.Append('<').Append(GetEventShapeProvider(info, optionalInterfaces, events[i])).AppendLine(">().Provider));");
 		}
 
 		builder.AppendLine("private readonly global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc;");
@@ -729,23 +742,23 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.Append("this.").Append(methodNameTransformField).AppendLine(" = options.MethodNameTransform;");
 		}
 
-		if (shapeFields.Length > 0)
+		string[] shapeProviders = shapeFields.Select(static field => field.ProviderName).Distinct(StringComparer.Ordinal).ToArray();
+		for (int i = 0; i < shapeProviders.Length; i++)
 		{
-			builder.Append("global::PolyType.ITypeShapeProvider typeShapeProvider = global::PolyType.Abstractions.TypeShapeResolver.")
+			builder.Append("global::PolyType.ITypeShapeProvider typeShapeProvider").Append(i == 0 ? string.Empty : i.ToString())
+				.Append(" = global::PolyType.Abstractions.TypeShapeResolver.")
 				.Append(info.HasStaticTypeShapeResolver ? KnownApis.TypeShapeResolve : KnownApis.TypeShapeResolveDynamicOrThrow)
-				.Append('<')
-				.Append(info.InterfaceName)
-				.AppendLine(">().Provider;");
+				.Append('<').Append(shapeProviders[i]).AppendLine(">().Provider;");
 		}
 
 		foreach (ShapeFieldInfo shapeField in shapeFields)
 		{
+			int providerIndex = Array.IndexOf(shapeProviders, shapeField.ProviderName);
 			builder.Append("this.")
 				.Append(shapeField.FieldName)
 				.Append(" = global::PolyType.TypeShapeProviderExtensions.GetTypeShapeOrThrow<")
 				.Append(shapeField.TypeName)
-				.Append(">(typeShapeProvider);")
-				.AppendLine();
+				.Append(">(typeShapeProvider").Append(providerIndex == 0 ? string.Empty : providerIndex.ToString()).AppendLine(");");
 		}
 
 		if (events.Length > 0)
@@ -901,6 +914,14 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		builder.CloseBlock();
 	}
 
+	private static string GetEventShapeProvider(InterfaceInfo info, ImmutableArray<OptionalInterfaceInfo> additionalInterfaces, IEventSymbol @event)
+	{
+		INamedTypeSymbol provider = GetProxyEvents(info.Symbol).Any(candidate => SymbolEqualityComparer.Default.Equals(candidate, @event))
+			? info.Symbol
+			: additionalInterfaces.First(item => GetProxyEvents(item.Symbol).Any(candidate => SymbolEqualityComparer.Default.Equals(candidate, @event))).Symbol;
+		return provider.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+	}
+
 	private static bool IsBclEventHandler(INamedTypeSymbol type)
 		=> type.OriginalDefinition.ToDisplayString() is "System.EventHandler" or "System.EventHandler<TEventArgs>";
 
@@ -928,23 +949,23 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		{
 			foreach (IParameterSymbol parameter in method.PayloadParameters)
 			{
-				AddShapeField(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), seenTypeNames, shapeFields);
+				AddShapeField(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), method.ShapeProvider, seenTypeNames, shapeFields);
 			}
 
 			if (method.ResultTypeName is not null)
 			{
-				AddShapeField(method.ResultTypeName, seenTypeNames, shapeFields);
+				AddShapeField(method.ResultTypeName, method.ShapeProvider, seenTypeNames, shapeFields);
 			}
 		}
 
 		return shapeFields.ToImmutable();
 	}
 
-	private static void AddShapeField(string typeName, HashSet<string> seenTypeNames, ImmutableArray<ShapeFieldInfo>.Builder shapeFields)
+	private static void AddShapeField(string typeName, string providerName, HashSet<string> seenTypeNames, ImmutableArray<ShapeFieldInfo>.Builder shapeFields)
 	{
-		if (seenTypeNames.Add(typeName))
+		if (seenTypeNames.Add(typeName + "|" + providerName))
 		{
-			shapeFields.Add(new(typeName, $"shape{shapeFields.Count}"));
+			shapeFields.Add(new(typeName, $"shape{shapeFields.Count}", providerName));
 		}
 	}
 
@@ -978,7 +999,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.Append("(global::PolyType.ITypeShape<").Append(nullableResultTypeName).Append(">)");
 		}
 
-		builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
+		builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, method.ShapeProvider, shapeFields)).Append(", ");
 	}
 
 	private static void RenderMethod(SourceWriter builder, MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields, string? transformedRpcNameField, string? methodNameTransformField, bool isMarshalable)
@@ -1022,7 +1043,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				}
 
 				builder.Append(", this.")
-					.Append(GetShapeFieldName(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), shapeFields))
+					.Append(GetShapeFieldName(parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), method.ShapeProvider, shapeFields))
 					.AppendLine(");");
 			}
 
@@ -1055,7 +1076,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				case ProxyMethodKind.AsyncEnumerableOfT:
 					builder.Append("return global::Nerdbank.JsonRpc.JsonRpcEnumerableExtensions.RequestEnumerable(this.jsonRpc, ");
 					AppendRpcMethodName(builder, method, transformedRpcNameField, methodNameTransformField).Append(", __arguments, ");
-					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, shapeFields)).Append(", ");
+					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, method.ShapeProvider, shapeFields)).Append(", ");
 					builder.Append(cancellationToken).AppendLine(");");
 					break;
 				case ProxyMethodKind.Notification:
@@ -1119,11 +1140,11 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		return method.OptionalInterfaceId is null ? builder : builder.Append(")");
 	}
 
-	private static string GetShapeFieldName(string typeName, ImmutableArray<ShapeFieldInfo> shapeFields)
+	private static string GetShapeFieldName(string typeName, string providerName, ImmutableArray<ShapeFieldInfo> shapeFields)
 	{
 		foreach (ShapeFieldInfo shapeField in shapeFields)
 		{
-			if (shapeField.TypeName == typeName)
+			if (shapeField.TypeName == typeName && shapeField.ProviderName == providerName)
 			{
 				return shapeField.FieldName;
 			}
@@ -1238,6 +1259,8 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		internal const string TypeShapeResolveDynamicOrThrow = "ResolveDynamicOrThrow";
 		internal const string IDisposable = "System.IDisposable";
 		internal const string PolyTypeAssembly = "PolyType";
+		internal const string PolyTypeNamespace = "PolyType";
+		internal const string IShapeableMetadataName = "IShapeable`1";
 		internal const string Dispose = "Dispose";
 		internal const string CancellationToken = "global::System.Threading.CancellationToken";
 		internal const string ValueTaskOfT = "global::System.Threading.Tasks.ValueTask<TResult>";
@@ -1273,9 +1296,10 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		string? ResultTypeName,
 		string? ExplicitRpcName,
 		int? OptionalInterfaceId,
+		string ShapeProvider,
 		bool ExplicitImplementation = false);
 
 	private sealed record OptionalInterfaceInfo(int? InterfaceId, INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods);
 
-	private sealed record ShapeFieldInfo(string TypeName, string FieldName);
+	private sealed record ShapeFieldInfo(string TypeName, string FieldName, string ProviderName);
 }

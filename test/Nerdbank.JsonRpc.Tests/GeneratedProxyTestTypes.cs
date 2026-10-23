@@ -157,6 +157,37 @@ internal partial interface ISecondNamedOperation
 	Task<string> DescribeAsync(CancellationToken cancellationToken);
 }
 
+[GenerateJsonRpcProxy]
+[JsonRpcProxyInterfaceGroup(typeof(Nerdbank.JsonRpc.TestContracts.IExternalCapability))]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IExternalGroupedRoot
+{
+}
+
+[GenerateJsonRpcProxy]
+[JsonRpcProxyInterfaceGroup(typeof(IInheritedOperations))]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IInheritedGroupedRoot
+{
+}
+
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IInheritedOperations : IFirstOperation, ISecondOperation
+{
+}
+
+internal interface IFirstOperation
+{
+	[MethodShape(Name = "first.ping")]
+	Task<int> PingAsync(CancellationToken cancellationToken);
+}
+
+internal interface ISecondOperation
+{
+	[MethodShape(Name = "second.ping")]
+	Task<int> PingAsync(CancellationToken cancellationToken);
+}
+
 internal sealed class Calculator : ICalculator
 {
 	internal TaskCompletionSource<int> NotificationReceived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

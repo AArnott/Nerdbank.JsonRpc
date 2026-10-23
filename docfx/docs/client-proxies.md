@@ -118,6 +118,7 @@ An empty group explicitly requests a base-only proxy; no full proxy is implicitl
 For marshalable contracts, each additional interface in a group must be declared with <xref:Nerdbank.JsonRpc.RpcMarshalableOptionalInterfaceAttribute>.
 For ordinary root contracts, groups can add other supported RPC interfaces without marshalable annotations.
 Each additional interface requires generated PolyType method shapes for its argument and result types, as with a composite contract.
+Grouped methods and events use their owning contract's shape provider, including when that contract is defined in a referenced assembly.
 
 When attaching a root proxy, the enabled-interface list selects the smallest generated group covering the known enabled interfaces; with a null list, the smallest generated group is selected.
 When receiving a marshalable object, the advertised optional interfaces select the smallest covering group instead.

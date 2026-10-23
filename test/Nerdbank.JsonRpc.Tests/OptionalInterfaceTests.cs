@@ -229,6 +229,25 @@ public class OptionalInterfaceTests
 		result.Dispose();
 	}
 
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, false)]
+	[Arguments(JsonRpcEncoding.Json, true)]
+	[Arguments(JsonRpcEncoding.MessagePack, true)]
+	public async Task LegacyMetadataPreservesBaseOnlyProxyForEmptyAdvertisement(JsonRpcEncoding encoding, bool optional)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
+		serverRpc.Start();
+		clientRpc.Start();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		using Nerdbank.JsonRpc.TestContracts.ILegacyOptionalObject proxy = await clientRpc.Attach<IOptionalInterfaceService>().GetLegacyObjectAsync(optional, cts.Token);
+		Assert.False(proxy is IClientProxy);
+		Assert.Equal(optional, proxy is Nerdbank.JsonRpc.TestContracts.ILegacyCapability);
+	}
+
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
 		=> encoding == JsonRpcEncoding.Json
 			? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)

@@ -3,6 +3,7 @@
 
 using System.IO.Pipelines;
 using Microsoft.VisualStudio.Threading;
+using Nerdbank.JsonRpc.TestContracts;
 using Nerdbank.Streams;
 
 public class ClientProxyTests
@@ -199,6 +200,43 @@ public class ClientProxyTests
 	}
 
 	[Test]
+	public async Task GroupedMethodsImplementEachInheritedDeclaration()
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe));
+		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe));
+		InheritedOperations target = new();
+		serverRpc.AddRpcTarget<IInheritedOperations>(target);
+		serverRpc.Start();
+		clientRpc.Start();
+		IInheritedGroupedRoot client = clientRpc.Attach<IInheritedGroupedRoot>();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		Assert.Equal(1, await client.As<IFirstOperation>()!.PingAsync(cts.Token));
+		Assert.Equal(2, await client.As<ISecondOperation>()!.PingAsync(cts.Token));
+	}
+
+	[Test]
+	public async Task GroupedMembersResolveShapesFromReferencedContractAssembly()
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe));
+		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe));
+		Assert.Null(PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.GetTypeShape(typeof(ExternalPayload)));
+		Assert.Null(PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.GetTypeShape(typeof(Action<ExternalPayload>)));
+		ExternalCapability target = new();
+		serverRpc.AddRpcTarget<IExternalCapability>(target);
+		IExternalCapability client = clientRpc.Attach<IExternalGroupedRoot>().As<IExternalCapability>()!;
+		TaskCompletionSource<string?> received = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		client.ExternalChanged += value => received.TrySetResult(value.Text);
+		serverRpc.Start();
+		clientRpc.Start();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		ExternalPayload result = await client.EchoAsync(new ExternalPayload { Text = "payload" }, cts.Token);
+		Assert.Equal("payload", result.Text);
+		Assert.Equal("payload", await received.Task.WithCancellation(cts.Token));
+	}
+
+	[Test]
 	public void OptionsRejectInvalidEnabledInterfaces()
 	{
 		Assert.Throws<ArgumentException>(() => new JsonRpcProxyOptions { EnabledInterfaces = [typeof(string)] });
@@ -221,5 +259,23 @@ public class ClientProxyTests
 		Task<int> IFirstNamedOperation.DescribeAsync(CancellationToken cancellationToken) => Task.FromResult(3);
 
 		Task<string> ISecondNamedOperation.DescribeAsync(CancellationToken cancellationToken) => Task.FromResult("second");
+	}
+
+	private sealed class InheritedOperations : IInheritedOperations
+	{
+		Task<int> IFirstOperation.PingAsync(CancellationToken cancellationToken) => Task.FromResult(1);
+
+		Task<int> ISecondOperation.PingAsync(CancellationToken cancellationToken) => Task.FromResult(2);
+	}
+
+	private sealed class ExternalCapability : IExternalCapability
+	{
+		public event Action<ExternalPayload>? ExternalChanged;
+
+		public Task<ExternalPayload> EchoAsync(ExternalPayload value, CancellationToken cancellationToken)
+		{
+			this.ExternalChanged?.Invoke(value);
+			return Task.FromResult(value);
+		}
 	}
 }

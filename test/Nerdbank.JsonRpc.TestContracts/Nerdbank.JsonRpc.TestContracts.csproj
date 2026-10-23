@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0</TargetFrameworks>
+    <TargetFrameworks Condition="'$(OS)' == 'Windows_NT'">$(TargetFrameworks);net472</TargetFrameworks>
+    <IsTestProject>false</IsTestProject>
+    <PublishNativeAOTTests>false</PublishNativeAOTTests>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Nerdbank.JsonRpc\Nerdbank.JsonRpc.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,6 +1,7 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using Nerdbank.JsonRpc.TestContracts;
 using PolyType;
 
 [GenerateJsonRpcProxy]
@@ -18,6 +19,8 @@ internal partial interface IOptionalInterfaceService
 	Task<IFullOnlyObject> GetFullOnlyObjectAsync(bool multiply, CancellationToken cancellationToken);
 
 	Task<ISiblingCapabilityObject> GetSiblingObjectAsync(CancellationToken cancellationToken);
+
+	Task<ILegacyOptionalObject> GetLegacyObjectAsync(bool optional, CancellationToken cancellationToken);
 }
 
 [RpcMarshalable]
@@ -93,6 +96,9 @@ internal partial interface IClientCapability : ICommonCapability
 
 internal sealed class OptionalInterfaceService : IOptionalInterfaceService
 {
+	public Task<ILegacyOptionalObject> GetLegacyObjectAsync(bool optional, CancellationToken cancellationToken)
+		=> Task.FromResult<ILegacyOptionalObject>(optional ? new LegacyOptionalObject() : new LegacyObject());
+
 	public Task<ISiblingCapabilityObject> GetSiblingObjectAsync(CancellationToken cancellationToken)
 		=> Task.FromResult<ISiblingCapabilityObject>(new SiblingCapabilityObject());
 
@@ -158,5 +164,16 @@ internal sealed class OptionalInterfaceService : IOptionalInterfaceService
 		public void Dispose()
 		{
 		}
+	}
+
+	private class LegacyObject : ILegacyOptionalObject
+	{
+		public void Dispose()
+		{
+		}
+	}
+
+	private sealed class LegacyOptionalObject : LegacyObject, ILegacyCapability
+	{
 	}
 }
