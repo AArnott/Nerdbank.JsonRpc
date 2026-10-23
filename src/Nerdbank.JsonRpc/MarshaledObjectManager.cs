@@ -166,7 +166,7 @@ internal class MarshaledObjectManager(JsonRpc owner)
 				.Select(static attribute => attribute.OptionalInterface),
 		];
 		JsonRpcProxyOptions configuredOptions = owner.Options.MarshaledProxy;
-		MarshaledObjectProxyClient client = new(owner, handle, callScopedHandle, supportedInterfaces);
+		MarshaledObjectProxyClient client = new(owner, handle, callScopedHandle, supportedInterfaces, knownAdvertisedInterfaces);
 		T proxy = optionalProxyFactory is not null
 			? JsonRpc.CastProxy<T>(optionalProxyFactory.CreateProxy(client, configuredOptions))
 			: JsonRpc.AttachCore<T>(client, configuredOptions);

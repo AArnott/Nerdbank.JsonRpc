@@ -5,7 +5,7 @@ using Microsoft;
 
 namespace Nerdbank.JsonRpc;
 
-internal sealed class MarshaledObjectProxyClient(JsonRpc owner, long handle, MarshaledObjectManager.CallScopedHandle callScopedHandle, IReadOnlyList<Type> supportedInterfaces) : IJsonRpcClient, IClientProxy
+internal sealed class MarshaledObjectProxyClient(JsonRpc owner, long handle, MarshaledObjectManager.CallScopedHandle callScopedHandle, IReadOnlyList<Type> supportedInterfaces, IReadOnlyCollection<int> advertisedInterfaceIds) : IJsonRpcClient, IClientProxy
 {
 	private int disposed;
 
@@ -51,6 +51,11 @@ internal sealed class MarshaledObjectProxyClient(JsonRpc owner, long handle, Mar
 		this.ThrowIfDisposed();
 		return owner.NotifyAsync(this.GetMethodName(method), arguments, cancellationToken);
 	}
+
+	/// <summary>Tests whether the peer advertised an exact optional-interface wire identifier.</summary>
+	/// <param name="interfaceId">The optional-interface wire identifier.</param>
+	/// <returns>Whether this identifier was advertised, without considering interface inheritance.</returns>
+	internal bool IsOptionalInterfaceAdvertised(int interfaceId) => advertisedInterfaceIds.Contains(interfaceId);
 
 	private string GetMethodName(string method) => $"$/invokeProxy/{handle}/{method}";
 

@@ -27,6 +27,8 @@ internal partial interface IOptionalInterfaceService
 	Task<IInheritedOptionalObject> GetInheritedObjectAsync(bool derived, CancellationToken cancellationToken);
 
 	Task<ISiblingRouteObject> GetSiblingRouteObjectAsync(bool right, CancellationToken cancellationToken);
+
+	Task<ILeafRouteObject> GetLeafRouteObjectAsync(CancellationToken cancellationToken);
 }
 
 [RpcMarshalable]
@@ -141,8 +143,24 @@ internal partial interface ISiblingRouteObject : IDisposable
 {
 }
 
+[RpcMarshalable]
+[RpcMarshalableOptionalInterface(1, typeof(IBaseOptionalCapability))]
+[RpcMarshalableOptionalInterface(2, typeof(IDerivedOptionalCapability))]
+[RpcMarshalableOptionalInterface(3, typeof(ILeafOptionalCapability))]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface ILeafRouteObject : IDisposable
+{
+}
+
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface ILeafOptionalCapability : IDerivedOptionalCapability
+{
+}
+
 internal sealed class OptionalInterfaceService : IOptionalInterfaceService
 {
+	public Task<ILeafRouteObject> GetLeafRouteObjectAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+
 	public Task<ISiblingRouteObject> GetSiblingRouteObjectAsync(bool right, CancellationToken cancellationToken)
 		=> Task.FromResult<ISiblingRouteObject>(right ? new RightRouteObject() : new LeftRouteObject());
 

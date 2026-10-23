@@ -29,7 +29,7 @@ The receiver selects the smallest generated proxy group covering the advertised 
 Use the generated `Is(Type)` and `As<T>()` extensions for capability discovery: ordinary C# type tests and casts may report interfaces that the remote object did not advertise.
 Unknown IDs are ignored for version tolerance.
 Optional calls use `$/invokeProxy/{handle}/{interfaceId}.{method}` on the wire, which keeps same-named methods on different interfaces distinct.
-When optional interfaces inherit the same method declaration, the generated proxy selects a route supported by the peer's advertised interfaces, independently of local capability-query restrictions.
+When optional interfaces inherit the same method declaration, the generated proxy selects a route using an exact optional-interface ID advertised by the peer, independently of local capability-query restrictions.
 Optional capabilities preserve the base object's identity and lifetime; disposing any generated proxy releases that marshaled handle.
 As with the base interface, optional capabilities cannot be forwarded to a third connection.
 

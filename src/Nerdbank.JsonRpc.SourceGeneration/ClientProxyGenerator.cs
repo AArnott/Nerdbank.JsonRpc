@@ -679,7 +679,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 					{
 						OptionalRoutes = [
 							.. implemented.Where(item => item.Methods.Any(candidate => SymbolEqualityComparer.Default.Equals(candidate.Symbol, method.Symbol)))
-								.Select(static item => new OptionalRouteInfo(item.InterfaceId!.Value, item.Symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))),
+								.Select(static item => item.InterfaceId!.Value),
 						],
 					});
 				}
@@ -1156,10 +1156,10 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		if (method.OptionalInterfaceId is int interfaceId)
 		{
 			builder.Append("((");
-			foreach (OptionalRouteInfo route in method.OptionalRoutes.Where(route => route.InterfaceId != interfaceId))
+			foreach (int route in method.OptionalRoutes.Where(route => route != interfaceId))
 			{
-				builder.Append("(this.jsonRpc as global::Nerdbank.JsonRpc.IClientProxy)?.Is(typeof(").Append(route.InterfaceName).Append(")) == true ? ");
-				AppendQuoted(builder, route.InterfaceId.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".");
+				builder.Append("global::Nerdbank.JsonRpc.JsonRpcExtensions.IsOptionalInterfaceAdvertised(this.jsonRpc, ").Append(route).Append(") ? ");
+				AppendQuoted(builder, route.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".");
 				builder.Append(" : ");
 			}
 
@@ -1340,10 +1340,8 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		string ShapeProvider,
 		bool ExplicitImplementation = false)
 	{
-		internal ImmutableArray<OptionalRouteInfo> OptionalRoutes { get; init; } = [];
+		internal ImmutableArray<int> OptionalRoutes { get; init; } = [];
 	}
-
-	private sealed record OptionalRouteInfo(int InterfaceId, string InterfaceName);
 
 	private sealed record OptionalInterfaceInfo(int? InterfaceId, INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods);
 

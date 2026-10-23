@@ -323,6 +323,45 @@ public class OptionalInterfaceTests
 		}
 	}
 
+	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task SharedInheritedMethodsUseExactAdvertisedLeafId(bool restrictToBase)
+	{
+		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
+		using JsonRpc rpc = new(new MockJsonRpcPipeChannel(transport), new JsonRpcOptions
+		{
+			MarshaledProxy = new() { EnabledInterfaces = restrictToBase ? [typeof(IBaseOptionalCapability)] : null },
+		});
+		rpc.Start();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		Task<ILeafRouteObject> resultTask = rpc.Attach<IOptionalInterfaceService>().GetLeafRouteObjectAsync(cts.Token);
+		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(cts.Token));
+		using Sequence<byte> buffer = new();
+		MessagePackWriter writer = new(buffer);
+		writer.WriteMapHeader(4);
+		writer.Write("__jsonrpc_marshaled");
+		writer.Write(1);
+		writer.Write("handle");
+		writer.Write(1L);
+		writer.Write("lifetime");
+		writer.Write("explicit");
+		writer.Write("optionalInterfaces");
+		writer.WriteArrayHeader(1);
+		writer.Write(3);
+		writer.Flush();
+		await remote.Writer.WriteAsync(new JsonRpcResult { Id = request.Id!.Value, Result = (RawMessagePack)buffer.AsReadOnlySequence.ToArray() }, cts.Token);
+		using ILeafRouteObject proxy = await resultTask.WithCancellation(cts.Token);
+		Assert.True(proxy.Is(typeof(IBaseOptionalCapability)));
+		Assert.Equal(!restrictToBase, proxy.Is(typeof(IDerivedOptionalCapability)));
+		Assert.Equal(!restrictToBase, proxy.Is(typeof(ILeafOptionalCapability)));
+		Task<int> valueTask = proxy.As<IBaseOptionalCapability>()!.BaseValueAsync(cts.Token);
+		JsonRpcRequest invocation = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(cts.Token));
+		await remote.Writer.WriteAsync(new JsonRpcResult { Id = invocation.Id!.Value, Result = (RawMessagePack)new byte[] { 42 } }, cts.Token);
+		Assert.Equal(42, await valueTask.WithCancellation(cts.Token));
+		Assert.Equal("$/invokeProxy/1/3.baseValue", invocation.Method);
+	}
+
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
 		=> encoding == JsonRpcEncoding.Json
 			? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
