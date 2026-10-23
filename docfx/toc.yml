@@ -2,7 +2,7 @@ items:
 - name: Docs
   href: docs/
 - name: Analyzer diagnostics
-  href: analyzers/NBJSONRPC001.md
+  href: analyzers/
 - name: API
   href: api/
 - name: GitHub

@@ -19,7 +19,7 @@ The `Nerdbank.JsonRpc` NuGet package includes its source generator as a C# analy
 using Nerdbank.JsonRpc;
 using PolyType;
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 public partial interface ICalculator
 {

@@ -37,7 +37,7 @@ internal partial interface IResettableCounter
 #endregion
 
 #region observer-subscription-contract
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface ISubscriptionService
 {
@@ -46,7 +46,7 @@ internal partial interface ISubscriptionService
 #endregion
 
 #region progress-contract
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IWorkService
 {
@@ -55,7 +55,7 @@ internal partial interface IWorkService
 #endregion
 
 #region async-enumerable-contract
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IFileService
 {

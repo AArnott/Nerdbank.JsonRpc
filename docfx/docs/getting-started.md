@@ -10,7 +10,7 @@ Consume Nerdbank.JsonRpc via its NuGet package. The badge links to the latest ve
 
 ## Define an RPC contract
 
-Define an interface shared by the local target and the strongly typed proxy. <xref:PolyType.GenerateShapeAttribute> generates the method metadata used to dispatch incoming calls, while <xref:Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute> generates the proxy used to make outgoing calls.
+Define an interface shared by the local target and the strongly typed proxy. <xref:PolyType.GenerateShapeAttribute> generates the method metadata used to dispatch incoming calls, while <xref:Nerdbank.JsonRpc.JsonRpcContractAttribute> generates the proxy used to make outgoing calls.
 
 [!code-csharp[](../../samples/cs/getting-started.cs#rpc-contract)]
 

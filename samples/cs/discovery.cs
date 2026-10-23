@@ -8,7 +8,7 @@ using PolyType;
 namespace Discovery;
 
 #region discovery-contract
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 public partial interface IDiscovery
 {

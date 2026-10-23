@@ -7,7 +7,7 @@ using Nerdbank.JsonRpc;
 using Nerdbank.Streams;
 using PolyType;
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IEventAttachmentContract
 {

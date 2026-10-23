@@ -4,7 +4,7 @@
 using PolyType;
 
 /// <summary>A JSON-RPC test contract with an explicit <see cref="MethodShapeAttribute.Name"/> that must bypass method name transforms.</summary>
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IExplicitNameCalculator
 {

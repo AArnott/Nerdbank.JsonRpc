@@ -6,7 +6,7 @@ Marshalable interfaces declare methods only and need a generated PolyType shape 
 
 [!code-csharp[](../../samples/cs/rpc-marshalable-interfaces.cs#explicit-lifetime-counter)]
 
-The interface itself does not also need <xref:Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute>; the JSON-RPC source generator creates its marshaled proxy from <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute>. A typical use is to return the interface from a normal RPC contract, call methods on the returned proxy, and dispose it when finished.
+The interface itself does not also need <xref:Nerdbank.JsonRpc.JsonRpcContractAttribute>; the JSON-RPC source generator creates its marshaled proxy from <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute>. A typical use is to return the interface from a normal RPC contract, call methods on the returned proxy, and dispose it when finished.
 
 Set <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute.CallScopedLifetime> to `true` for a call-scoped interface. Such an interface need not inherit `IDisposable`; its proxy is valid while the receiving RPC method is running, and the target remains under the sender's lifetime control. If the successful result contains `IAsyncEnumerable<T>` values, this scope extends through their enumeration and asynchronous disposal. All returned sequences sharing that scope must finish or be disposed; this also applies to nested sequences delivered in later batches. An error response does not extend the scope.
 

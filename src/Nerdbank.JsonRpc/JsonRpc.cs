@@ -729,7 +729,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		Requires.Argument(interfaceType.IsInterface, nameof(interfaceType), "The requested proxy type must be an interface.");
 
 		ProxyFactoryRegistration registration = GetCachedProxyFactory(interfaceType)
-			?? throw new NotSupportedException($"No generated JSON-RPC proxy was found for interface '{interfaceType.FullName}'. Add GenerateJsonRpcProxyAttribute to the interface or request an annotated composite interface.");
+			?? throw new NotSupportedException($"No generated JSON-RPC proxy was found for interface '{interfaceType.FullName}'. Add JsonRpcContractAttribute to the interface or request an annotated composite interface.");
 		object proxy = registration.CreateProxy(client, options ?? JsonRpcProxyOptions.Default);
 		if (!interfaceType.IsInstanceOfType(proxy))
 		{

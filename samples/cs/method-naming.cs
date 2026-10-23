@@ -7,7 +7,7 @@ using PolyType;
 namespace MethodNaming;
 
 #region contract
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 public partial interface ICalculator
 {

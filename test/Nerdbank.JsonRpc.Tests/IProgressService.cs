@@ -3,7 +3,7 @@
 
 using PolyType;
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IProgressService
 {

@@ -22,7 +22,7 @@ Define a contract shared by both parties:
 using Nerdbank.JsonRpc;
 using PolyType;
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 public partial interface ICalculator
 {

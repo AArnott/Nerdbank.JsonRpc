@@ -9,7 +9,7 @@ namespace Benchmarks;
 /// An RPC contract shared by the Nerdbank.JsonRpc and StreamJsonRpc benchmarks, covering a no-argument method,
 /// a method with a few small arguments, and a method that accepts a large object graph.
 /// </summary>
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [StreamJsonRpc.JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 public partial interface IRpcBenchmarkContract

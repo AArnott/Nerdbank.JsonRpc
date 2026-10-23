@@ -5,7 +5,7 @@ using System.IO;
 using System.IO.Pipelines;
 using PolyType;
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IOutOfBandStreamService
 {

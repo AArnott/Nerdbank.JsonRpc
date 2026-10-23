@@ -19,7 +19,7 @@ internal partial interface ICounter : IDisposable
 }
 
 /// <summary>The contract exercised by the interop tests.</summary>
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [StreamJsonRpc.JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IInteropContract
@@ -45,7 +45,7 @@ internal partial interface IInteropContract
 	Task<int> EchoDuplex(IDuplexPipe pipe, CancellationToken cancellationToken);
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [StreamJsonRpc.JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IEventInteropContract

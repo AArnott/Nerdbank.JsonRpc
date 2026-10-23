@@ -39,7 +39,7 @@ internal static class CSharpSourceGeneratorVerifier
 
 		test.DisabledDiagnostics.Add("CS1701");
 		test.DisabledDiagnostics.Add("CS1702");
-		test.TestState.AdditionalReferences.Add(typeof(GenerateJsonRpcProxyAttribute).Assembly);
+		test.TestState.AdditionalReferences.Add(typeof(JsonRpcContractAttribute).Assembly);
 		test.TestState.AdditionalReferences.Add(typeof(MessagePackSerializer).Assembly);
 		test.TestState.AdditionalReferences.Add(typeof(Sequence<>).Assembly);
 		test.TestState.AdditionalReferences.Add(typeof(ITypeShape<>).Assembly);

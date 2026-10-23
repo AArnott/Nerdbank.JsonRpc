@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -10,7 +10,7 @@ using Nerdbank.Streams;
 using PolyType;
 
 /// <summary>Contract for the RPC method invoked by the main-thread client.</summary>
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface ICallbackService
 {
@@ -18,7 +18,7 @@ internal partial interface ICallbackService
 }
 
 /// <summary>Contract for the callback that needs the original caller's main thread.</summary>
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IMainThreadService
 {

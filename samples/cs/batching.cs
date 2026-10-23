@@ -6,7 +6,7 @@ using PolyType;
 
 namespace Batching;
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface ICalculator
 {
