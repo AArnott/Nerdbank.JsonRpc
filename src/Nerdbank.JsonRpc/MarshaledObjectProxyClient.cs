@@ -1,13 +1,22 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using Microsoft;
+
 namespace Nerdbank.JsonRpc;
 
-internal sealed class MarshaledObjectProxyClient(JsonRpc owner, long handle, MarshaledObjectManager.CallScopedHandle callScopedHandle) : IJsonRpcClient
+internal sealed class MarshaledObjectProxyClient(JsonRpc owner, long handle, MarshaledObjectManager.CallScopedHandle callScopedHandle, IReadOnlyList<Type> supportedInterfaces) : IJsonRpcClient, IClientProxy
 {
 	private int disposed;
 
 	public JsonRpcSerializer Serializer => owner.UserDataSerializer;
+
+	/// <inheritdoc/>
+	bool IClientProxy.Is(Type type)
+	{
+		Requires.NotNull(type);
+		return type.IsInterface && supportedInterfaces.Any(type.IsAssignableFrom);
+	}
 
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default)
 	{

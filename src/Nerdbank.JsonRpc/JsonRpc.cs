@@ -496,7 +496,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// Attaches a generated client proxy for an RPC contract interface to this JSON-RPC connection.
 	/// </summary>
 	/// <typeparam name="T">The RPC contract interface to proxy.</typeparam>
-	/// <param name="options">Options controlling argument encoding for this proxy.</param>
+	/// <param name="options">Options controlling argument encoding and enabled interfaces for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <typeparamref name="T"/>.</returns>
 	/// <remarks>Attach and subscribe to proxy events before calling <see cref="Start"/> to avoid losing early notifications. Attaching does not start the connection.</remarks>
 	public T Attach<T>(JsonRpcProxyOptions? options = null) => AttachCore<T>(this, options);
@@ -505,7 +505,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// Attaches a generated client proxy for an RPC contract interface to this JSON-RPC connection.
 	/// </summary>
 	/// <param name="interfaceType">The RPC contract interface to proxy.</param>
-	/// <param name="options">Options controlling argument encoding for this proxy.</param>
+	/// <param name="options">Options controlling argument encoding and enabled interfaces for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <paramref name="interfaceType"/>.</returns>
 	/// <remarks>
 	/// Attach and subscribe to proxy events before calling <see cref="Start"/> to avoid losing early notifications.
@@ -1344,14 +1344,15 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			return null;
 		}
 
-		if (interfaceType.GetCustomAttribute<JsonRpcProxyFactoryAttribute>(inherit: false) is { } factory)
+		JsonRpcProxyFactoryAttribute[] factories = [.. interfaceType.GetCustomAttributes<JsonRpcProxyFactoryAttribute>(inherit: false)];
+		if (factories.Length > 0)
 		{
-			return new(factory, legacyProxyType: null);
+			return new(interfaceType, factories, legacyProxyType: null);
 		}
 
 #pragma warning disable CS0618 // Support proxy metadata emitted by previous versions of the source generator.
 		return interfaceType.GetCustomAttribute<JsonRpcProxyImplementationAttribute>(inherit: false) is { } legacyFactory
-			? new(factory: null, legacyFactory.ProxyType)
+			? new(interfaceType, factories: [], legacyFactory.ProxyType)
 			: null;
 #pragma warning restore CS0618
 	}
@@ -2314,21 +2315,27 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	internal sealed class ProxyFactoryRegistration
 	{
 		/// <summary>Initializes a new instance of the <see cref="ProxyFactoryRegistration"/> class.</summary>
-		/// <param name="factory">The source-generated factory, if available.</param>
+		/// <param name="interfaceType">The primary RPC contract.</param>
+		/// <param name="factories">The source-generated factories, if available.</param>
 		/// <param name="legacyProxyType">The proxy type from legacy metadata, if available.</param>
 		internal ProxyFactoryRegistration(
-			JsonRpcProxyFactoryAttribute? factory,
+			Type interfaceType,
+			JsonRpcProxyFactoryAttribute[] factories,
 #if NET
 			[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)]
 #endif
 			Type? legacyProxyType)
 		{
-			this.Factory = factory;
+			this.InterfaceType = interfaceType;
+			this.Factories = [.. factories.OrderBy(static factory => factory.AdditionalInterfaces.Count)];
 			this.LegacyProxyType = legacyProxyType;
 		}
 
-		/// <summary>Gets the source-generated factory, if the proxy was emitted by the current generator.</summary>
-		internal JsonRpcProxyFactoryAttribute? Factory { get; }
+		/// <summary>Gets the primary RPC contract.</summary>
+		internal Type InterfaceType { get; }
+
+		/// <summary>Gets the source-generated factories, ordered by increasing group size.</summary>
+		internal JsonRpcProxyFactoryAttribute[] Factories { get; }
 
 		/// <summary>Gets the legacy proxy type, if the proxy was emitted by an earlier generator.</summary>
 #if NET
@@ -2341,9 +2348,19 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		/// <param name="options">Options controlling the proxy's behavior.</param>
 		/// <returns>The generated proxy instance.</returns>
 		internal object CreateProxy(IJsonRpcClient client, JsonRpcProxyOptions options)
-			=> this.Factory is not null
-				? this.Factory.CreateProxy(client, options)
-				: CreateLegacyProxy(this.LegacyProxyType!, client, options);
+		{
+			if (this.Factories.Length == 0)
+			{
+				return CreateLegacyProxy(this.LegacyProxyType!, client, options);
+			}
+
+			IReadOnlyList<Type>? enabled = options.EnabledInterfaces;
+			JsonRpcProxyFactoryAttribute? factory = enabled is null ? this.Factories[0] : this.Factories.FirstOrDefault(candidate =>
+				enabled.All(type => type.IsAssignableFrom(this.InterfaceType) || !this.Factories.Any(other => other.AdditionalInterfaces.Any(type.IsAssignableFrom)) || candidate.AdditionalInterfaces.Any(type.IsAssignableFrom)));
+			return factory is not null
+				? factory.CreateProxy(client, options)
+				: throw new NotSupportedException("No generated proxy group covers the enabled interfaces. Add a JsonRpcProxyInterfaceGroupAttribute containing them.");
+		}
 	}
 
 	/// <summary>

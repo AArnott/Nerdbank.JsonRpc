@@ -12,10 +12,26 @@ namespace Nerdbank.JsonRpc;
 /// The source generator emits a derived attribute for each generated proxy and applies it to the RPC contract interface.
 /// This lets the proxy be created without constructor reflection, and works even when the proxy type is not accessible to the caller.
 /// </remarks>
-[AttributeUsage(AttributeTargets.Interface, Inherited = false, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Interface, Inherited = false, AllowMultiple = true)]
 [EditorBrowsable(EditorBrowsableState.Never)]
 public abstract class JsonRpcProxyFactoryAttribute : Attribute
 {
+	/// <summary>Initializes a new instance of the <see cref="JsonRpcProxyFactoryAttribute"/> class for a base-only proxy.</summary>
+	protected JsonRpcProxyFactoryAttribute()
+		: this([])
+	{
+	}
+
+	/// <summary>Initializes a new instance of the <see cref="JsonRpcProxyFactoryAttribute"/> class for an interface group.</summary>
+	/// <param name="additionalInterfaces">The interfaces implemented in addition to the primary contract.</param>
+	protected JsonRpcProxyFactoryAttribute(params Type[] additionalInterfaces)
+	{
+		this.AdditionalInterfaces = Array.AsReadOnly(additionalInterfaces);
+	}
+
+	/// <summary>Gets the interfaces implemented in addition to the primary contract.</summary>
+	public IReadOnlyList<Type> AdditionalInterfaces { get; }
+
 	/// <summary>
 	/// Creates a new instance of the generated proxy.
 	/// </summary>

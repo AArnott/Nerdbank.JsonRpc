@@ -17,7 +17,6 @@ namespace Nerdbank.JsonRpc.SourceGeneration;
 public sealed class ClientProxyGenerator : IIncrementalGenerator
 {
 	private const string DiagnosticHelpLink = "https://aarnott.github.io/Nerdbank.JsonRpc/analyzers/NBJSONRPC001.html";
-	private const int MaxOptionalInterfaces = 8;
 
 	private static readonly DiagnosticDescriptor UnsupportedMethodSignature = new(
 		"NBJSONRPC001",
@@ -71,6 +70,10 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		context.RegisterSourceOutput(proxyInterfaces, static (ctx, output) => EmitProxy(ctx, output));
 		context.RegisterSourceOutput(marshalableInterfaces, static (ctx, output) => EmitProxy(ctx, output));
+		IncrementalValueProvider<bool> publicExtensions = context.AnalyzerConfigOptionsProvider.Select(static (options, _) =>
+			options.GlobalOptions.TryGetValue("build_property.PublicRpcMarshalableInterfaceExtensions", out string? value) && bool.TryParse(value, out bool enabled) && enabled);
+		context.RegisterSourceOutput(proxyInterfaces.Collect().Combine(marshalableInterfaces.Collect()).Combine(publicExtensions), static (ctx, outputs) =>
+			EmitInterfaceExtensions(ctx, outputs.Left.Left.Concat(outputs.Left.Right).SelectMany(static output => output.Extensions), outputs.Right));
 	}
 
 	private static bool HasAttribute(INamedTypeSymbol symbol, INamedTypeSymbol? attributeSymbol)
@@ -122,7 +125,15 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			cancellationToken);
 		ImmutableArray<DiagnosticInfo> diagnostics = info.Diagnostics;
 		string? source = diagnostics.IsEmpty ? RenderProxy(info) : null;
-		return new ProxyOutput(info.HintName, source, diagnostics);
+		return new ProxyOutput(info.HintName, source, diagnostics)
+		{
+			Extensions = source is null ? [] : info.OptionalInterfaces.Concat(info.ProxyGroups.SelectMany(static group => group))
+				.Select(static item => item.Symbol).Concat([info.Symbol])
+				.GroupBy(static symbol => symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), StringComparer.Ordinal)
+				.Select(static group => group.First())
+				.Select(static symbol => new ExtensionInfo(symbol.ContainingNamespace.IsGlobalNamespace ? string.Empty : symbol.ContainingNamespace.ToDisplayString(), symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), symbol.DeclaredAccessibility == Accessibility.Public ? "public" : "internal"))
+				.OrderBy(static extension => extension.TypeName, StringComparer.Ordinal).ToImmutableArray(),
+		};
 	}
 
 	private static void EmitProxy(SourceProductionContext context, ProxyOutput output)
@@ -135,6 +146,54 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		if (output.Source is not null)
 		{
 			context.AddSource(output.HintName, SourceText.From(output.Source, Encoding.UTF8));
+		}
+	}
+
+	private static void EmitInterfaceExtensions(SourceProductionContext context, IEnumerable<ExtensionInfo> extensions, bool publicExtensions)
+	{
+		foreach (IGrouping<string, ExtensionInfo> group in extensions.Distinct().OrderBy(static item => item.TypeName, StringComparer.Ordinal).GroupBy(static item => item.Namespace))
+		{
+			SourceWriter builder = new();
+			builder.AppendLine("#nullable enable");
+			builder.AppendLine();
+			if (group.Key.Length > 0)
+			{
+				builder.Append("namespace ").Append(group.Key).AppendLine(";");
+				builder.AppendLine();
+			}
+
+			bool publicClass = publicExtensions && group.Any(static extension => extension.Visibility == "public");
+			if (publicClass)
+			{
+				builder.AppendLine("[global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]");
+			}
+
+			builder.Append(publicClass ? "public" : "internal").AppendLine(" static class NerdbankJsonRpcInterfaceExtensions");
+			builder.OpenBlock();
+			foreach (ExtensionInfo extension in group)
+			{
+				builder.AppendLine("/// <inheritdoc cref=\"global::Nerdbank.JsonRpc.IClientProxy.Is(global::System.Type)\"/>");
+				builder.Append(extension.Visibility).Append(" static bool Is(this ").Append(extension.TypeName).AppendLine("? self, global::System.Type type)");
+				builder.OpenBlock();
+				builder.AppendLine("if (type is null)");
+				builder.OpenBlock();
+				builder.AppendLine("throw new global::System.ArgumentNullException(nameof(type));");
+				builder.CloseBlock();
+				builder.AppendLine("return self is global::Nerdbank.JsonRpc.IClientProxy proxy ? proxy.Is(type) : type.IsInstanceOfType(self);");
+				builder.CloseBlock();
+				builder.AppendLine();
+				builder.AppendLine("/// <summary>Returns the object as an interface when it is enabled on the remote proxy, or implemented by a local object.</summary>");
+				builder.Append(extension.Visibility).Append(" static T? As<T>(this ").Append(extension.TypeName).AppendLine("? self) where T : class");
+				using (builder.Indent())
+				{
+					builder.AppendLine("=> self is global::Nerdbank.JsonRpc.IClientProxy proxy ? global::Nerdbank.JsonRpc.JsonRpcExtensions.As<T>(proxy) : self as T;");
+				}
+
+				builder.AppendLine();
+			}
+
+			builder.CloseBlock();
+			context.AddSource("NerdbankJsonRpcInterfaceExtensions" + (group.Key.Length == 0 ? string.Empty : "." + group.Key) + ".g.cs", SourceText.From(builder.ToString(), Encoding.UTF8));
 		}
 	}
 
@@ -157,17 +216,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			return new InterfaceInfo(interfaceSymbol, eventShapeAttribute, methods.ToImmutable(), optionalInterfaces.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasGenerateProxyAttribute, diagnostics.ToImmutable());
 		}
 
-		foreach (IEventSymbol @event in GetProxyEvents(interfaceSymbol))
-		{
-			if (@event.IsStatic || @event.Type is not INamedTypeSymbol { DelegateInvokeMethod: { ReturnsVoid: true } invoke } || invoke.Parameters.Any(static parameter => parameter.RefKind != RefKind.None || parameter.Type.IsRefLikeType || parameter.Type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer))
-			{
-				diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, @event.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), "proxy events must be instance events with synchronous, void-returning delegates and by-value, non-ref-like parameters"));
-			}
-			else if (invoke.Parameters.Any(parameter => ContainsRpcMarshalableInterface(parameter.Type, marshalableAttribute)))
-			{
-				diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, @event.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), "proxy events cannot accept RPC-marshalable interface parameters"));
-			}
-		}
+		ValidateProxyEvents(interfaceSymbol, marshalableAttribute, diagnostics);
 
 		foreach (IMethodSymbol method in GetProxyMethods(interfaceSymbol))
 		{
@@ -184,13 +233,8 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		if (isMarshalable && optionalInterfaceAttribute is not null)
 		{
 			ImmutableArray<AttributeData> optionalInterfaceAttributes = interfaceSymbol.GetAttributes().Where(attribute => SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, optionalInterfaceAttribute)).ToImmutableArray();
-			if (optionalInterfaceAttributes.Length > MaxOptionalInterfaces)
-			{
-				diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceSymbol.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), $"at most {MaxOptionalInterfaces} optional interfaces are supported"));
-			}
-
 			HashSet<int> interfaceIds = [];
-			foreach (AttributeData attribute in optionalInterfaceAttributes.Take(MaxOptionalInterfaces))
+			foreach (AttributeData attribute in optionalInterfaceAttributes)
 			{
 				if (attribute.ConstructorArguments is not [{ Value: int interfaceId }, { Value: INamedTypeSymbol optionalInterface }])
 				{
@@ -231,7 +275,98 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			}
 		}
 
-		return new InterfaceInfo(interfaceSymbol, eventShapeAttribute, methods.ToImmutable(), optionalInterfaces.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasGenerateProxyAttribute, diagnostics.ToImmutable());
+		ImmutableArray<ImmutableArray<OptionalInterfaceInfo>>.Builder groups = ImmutableArray.CreateBuilder<ImmutableArray<OptionalInterfaceInfo>>();
+		INamedTypeSymbol? groupAttribute = compilation.GetTypeByMetadataName(KnownApis.JsonRpcProxyInterfaceGroupAttribute);
+		foreach (AttributeData attribute in interfaceSymbol.GetAttributes().Where(attribute => SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, groupAttribute)))
+		{
+			ImmutableArray<OptionalInterfaceInfo>.Builder group = ImmutableArray.CreateBuilder<OptionalInterfaceInfo>();
+			if (attribute.ConstructorArguments is not [{ Kind: TypedConstantKind.Array, IsNull: false } argument])
+			{
+				diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceSymbol.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), "proxy groups must contain non-null interface types"));
+				continue;
+			}
+
+			foreach (TypedConstant additionalType in argument.Values)
+			{
+				if (additionalType.Value is not INamedTypeSymbol { TypeKind: TypeKind.Interface } additionalInterface)
+				{
+					diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceSymbol.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), "proxy groups must contain non-null interface types"));
+					continue;
+				}
+
+				if (SymbolEqualityComparer.Default.Equals(additionalInterface, interfaceSymbol) || group.Any(item => SymbolEqualityComparer.Default.Equals(item.Symbol, additionalInterface)))
+				{
+					continue;
+				}
+
+				OptionalInterfaceInfo? optional = optionalInterfaces.FirstOrDefault(item => SymbolEqualityComparer.Default.Equals(item.Symbol, additionalInterface));
+				if (optional is not null)
+				{
+					group.Add(optional);
+				}
+				else if (isMarshalable)
+				{
+					diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceSymbol.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), $"proxy group interface '{additionalInterface.ToDisplayString()}' must be declared as an optional marshalable interface"));
+				}
+				else if (GetUnsupportedInterfaceReason(additionalInterface, isMarshalable: false, isCallScoped: false) is string groupReason)
+				{
+					diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceSymbol.Locations.FirstOrDefault(), additionalInterface.ToDisplayString(), groupReason));
+				}
+				else
+				{
+					ValidateProxyEvents(additionalInterface, marshalableAttribute, diagnostics);
+					ImmutableArray<MethodInfo>.Builder groupMethods = ImmutableArray.CreateBuilder<MethodInfo>();
+					foreach (IMethodSymbol method in GetProxyMethods(additionalInterface))
+					{
+						if (GetUnsupportedSignatureReason(method, isMarshalable: false, marshalableAttribute) is string reason)
+						{
+							diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: true, method.Locations.FirstOrDefault(), method.ToDisplayString(), reason));
+						}
+						else
+						{
+							groupMethods.Add(CreateMethodInfo(method, methodShapeAttribute, optionalInterfaceId: null) with { ExplicitImplementation = true });
+						}
+					}
+
+					group.Add(new(null, additionalInterface, groupMethods.ToImmutable()));
+				}
+			}
+
+			ImmutableArray<OptionalInterfaceInfo> sorted = group.OrderBy(static item => item.Symbol.ToDisplayString(), StringComparer.Ordinal).ToImmutableArray();
+			if (!groups.Any(existing => existing.Select(static item => item.Symbol.ToDisplayString()).SequenceEqual(sorted.Select(static item => item.Symbol.ToDisplayString()))))
+			{
+				groups.Add(sorted);
+			}
+		}
+
+		if (groups.Count == 0 && !interfaceSymbol.GetAttributes().Any(attribute => SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, groupAttribute)))
+		{
+			groups.Add([]);
+			if (optionalInterfaces.Count > 0)
+			{
+				groups.Add(optionalInterfaces.OrderBy(static item => item.InterfaceId).ToImmutableArray());
+			}
+		}
+
+		return new InterfaceInfo(interfaceSymbol, eventShapeAttribute, methods.ToImmutable(), optionalInterfaces.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasGenerateProxyAttribute, diagnostics.ToImmutable())
+		{
+			ProxyGroups = groups.ToImmutable(),
+		};
+	}
+
+	private static void ValidateProxyEvents(INamedTypeSymbol interfaceSymbol, INamedTypeSymbol? marshalableAttribute, ImmutableArray<DiagnosticInfo>.Builder diagnostics)
+	{
+		foreach (IEventSymbol @event in GetProxyEvents(interfaceSymbol))
+		{
+			if (@event.IsStatic || @event.Type is not INamedTypeSymbol { DelegateInvokeMethod: { ReturnsVoid: true } invoke } || invoke.Parameters.Any(static parameter => parameter.RefKind != RefKind.None || parameter.Type.IsRefLikeType || parameter.Type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer))
+			{
+				diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, @event.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), "proxy events must be instance events with synchronous, void-returning delegates and by-value, non-ref-like parameters"));
+			}
+			else if (invoke.Parameters.Any(parameter => ContainsRpcMarshalableInterface(parameter.Type, marshalableAttribute)))
+			{
+				diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, @event.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), "proxy events cannot accept RPC-marshalable interface parameters"));
+			}
+		}
 	}
 
 	private static IEnumerable<IEventSymbol> GetProxyEvents(INamedTypeSymbol interfaceSymbol)
@@ -468,46 +603,51 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 
 		string factoryName = GetGeneratedMemberName(info, "NerdbankJsonRpc_ProxyFactoryAttribute");
-		builder.Append('[').Append(info.ProxyTypeName).Append('.').Append(factoryName).AppendLine("]");
-		ImmutableArray<OptionalInterfaceInfo> optionalInterfaces = info.OptionalInterfaces.OrderBy(static optional => optional.InterfaceId).ToImmutableArray();
-		int variantCount = 1 << optionalInterfaces.Length;
-		for (int mask = 1; mask < variantCount; mask++)
+		for (int index = 0; index < info.ProxyGroups.Length; index++)
 		{
-			string proxyTypeName = info.Symbol.ContainingNamespace.IsGlobalNamespace
-				? "global::" + GetVariantProxyName(info, mask)
-				: "global::" + info.Symbol.ContainingNamespace.ToDisplayString() + "." + GetVariantProxyName(info, mask);
+			string proxyTypeName = GetGroupProxyName(info, index);
 			builder.Append('[').Append(proxyTypeName).Append('.').Append(factoryName).AppendLine("]");
+			if (info.IsMarshalable)
+			{
+				builder.Append('[').Append(proxyTypeName).Append('.').Append(GetGeneratedMemberName(info, factoryName + "_Marshaled")).AppendLine("]");
+			}
 		}
 
 		builder.Append(GetAccessibility(info.Symbol.DeclaredAccessibility)).Append(" partial interface ").Append(info.Symbol.Name).AppendLine();
 		builder.OpenBlock();
 		builder.CloseBlock();
-		builder.AppendLine();
 
-		RenderProxyClass(builder, info, info.ProxyName, factoryName, info.Methods, []);
-		for (int mask = 1; mask < variantCount; mask++)
+		for (int index = 0; index < info.ProxyGroups.Length; index++)
 		{
-			ImmutableArray<OptionalInterfaceInfo> implemented = optionalInterfaces.Where((_, index) => (mask & (1 << index)) != 0).ToImmutableArray();
+			ImmutableArray<OptionalInterfaceInfo> implemented = info.ProxyGroups[index];
 			ImmutableArray<MethodInfo>.Builder methods = ImmutableArray.CreateBuilder<MethodInfo>();
-			HashSet<string> baseMethodSignatures = new(StringComparer.Ordinal);
-			foreach (MethodInfo method in info.Methods)
+			HashSet<string> methodSignatures = new(StringComparer.Ordinal);
+			foreach (MethodInfo method in info.Methods.Concat(implemented.SelectMany(static additional => additional.Methods)))
 			{
-				baseMethodSignatures.Add(GetMethodSignatureKey(method.Symbol));
-				methods.Add(method);
-			}
+				string signature = GetMethodSignatureKey(method.Symbol);
+				if (method.ExplicitImplementation)
+				{
+					signature += "|" + method.Symbol.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+				}
 
-			foreach (MethodInfo method in implemented.SelectMany(static optional => optional.Methods))
-			{
-				// A base method can implement an overlapping optional interface member. Keep distinct optional
-				// interface methods because they use explicit implementations and distinct wire prefixes.
-				if (!baseMethodSignatures.Contains(GetMethodSignatureKey(method.Symbol)))
+				if (method.OptionalInterfaceId is int id)
+				{
+					if (info.Methods.Any(baseMethod => GetMethodSignatureKey(baseMethod.Symbol) == signature))
+					{
+						continue;
+					}
+
+					signature += "|" + id;
+				}
+
+				if (methodSignatures.Add(signature))
 				{
 					methods.Add(method);
 				}
 			}
 
 			builder.AppendLine();
-			RenderProxyClass(builder, info, GetVariantProxyName(info, mask), factoryName, methods.ToImmutable(), implemented);
+			RenderProxyClass(builder, info, GetGroupProxyName(info, index), factoryName, methods.ToImmutable(), implemented);
 		}
 
 		return builder.ToString();
@@ -516,7 +656,11 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	private static void RenderProxyClass(SourceWriter builder, InterfaceInfo info, string proxyName, string factoryName, ImmutableArray<MethodInfo> methods, ImmutableArray<OptionalInterfaceInfo> optionalInterfaces)
 	{
 		ImmutableArray<ShapeFieldInfo> shapeFields = GetShapeFields(methods);
-		ImmutableArray<IEventSymbol> events = GetProxyEvents(info.Symbol).ToImmutableArray();
+		ImmutableArray<IEventSymbol> events = GetProxyEvents(info.Symbol)
+			.Concat(optionalInterfaces.SelectMany(static item => GetProxyEvents(item.Symbol)))
+			.GroupBy(static @event => @event.ContainingType.ToDisplayString() + "." + @event.Name, StringComparer.Ordinal)
+			.Select(static group => group.First()).ToImmutableArray();
+		string enabledInterfacesField = GetGeneratedMemberName(info, "NerdbankJsonRpc_EnabledInterfaces");
 		bool needsMethodNameTransform = methods.Any(m => m.ExplicitRpcName is null && m.Kind is not ProxyMethodKind.Unsupported && !(info.IsMarshalable && IsDisposeMethod(m)));
 		string? methodNameTransformField = needsMethodNameTransform ? GetGeneratedMemberName(info, "NerdbankJsonRpc_MethodNameTransform") : null;
 		ImmutableArray<string?> transformedRpcNameFields = methods
@@ -529,7 +673,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.Append(", ").Append(optionalInterface.Symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
 		}
 
-		builder.AppendLine();
+		builder.AppendLine(", global::Nerdbank.JsonRpc.IClientProxy");
 		builder.OpenBlock();
 		for (int i = 0; i < events.Length; i++)
 		{
@@ -545,6 +689,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		builder.AppendLine("private readonly global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc;");
 		builder.AppendLine("private readonly bool useNamedArguments;");
+		builder.Append("private readonly global::System.Collections.Generic.IReadOnlyList<global::System.Type>? ").Append(enabledInterfacesField).AppendLine(";");
 
 		if (methodNameTransformField is string transformField)
 		{
@@ -578,6 +723,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		builder.OpenBlock();
 		builder.AppendLine("this.jsonRpc = jsonRpc;");
 		builder.AppendLine("this.useNamedArguments = options.UseNamedArguments;");
+		builder.Append("this.").Append(enabledInterfacesField).AppendLine(" = options.EnabledInterfaces;");
 		if (needsMethodNameTransform)
 		{
 			builder.Append("this.").Append(methodNameTransformField).AppendLine(" = options.MethodNameTransform;");
@@ -636,7 +782,46 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		builder.CloseBlock();
 		builder.AppendLine();
-		RenderProxyFactory(builder, proxyName, factoryName, optionalInterfaces);
+		builder.AppendLine("bool global::Nerdbank.JsonRpc.IClientProxy.Is(global::System.Type type)");
+		builder.OpenBlock();
+		builder.AppendLine("if (type is null)");
+		builder.OpenBlock();
+		builder.AppendLine("throw new global::System.ArgumentNullException(nameof(type));");
+		builder.CloseBlock();
+		builder.AppendLine();
+		builder.AppendLine("if (!type.IsInterface || type == typeof(global::Nerdbank.JsonRpc.IClientProxy) || !type.IsInstanceOfType(this))");
+		builder.OpenBlock();
+		builder.AppendLine("return false;");
+		builder.CloseBlock();
+		builder.AppendLine();
+		builder.AppendLine("if (this.jsonRpc is global::Nerdbank.JsonRpc.IClientProxy remoteProxy && !remoteProxy.Is(type))");
+		builder.OpenBlock();
+		builder.AppendLine("return false;");
+		builder.CloseBlock();
+		builder.AppendLine();
+		builder.Append("if (this.").Append(enabledInterfacesField).AppendLine(" is null)");
+		builder.OpenBlock();
+		builder.AppendLine("return true;");
+		builder.CloseBlock();
+		builder.AppendLine();
+		builder.Append("foreach (global::System.Type enabledInterface in this.").Append(enabledInterfacesField).AppendLine(")");
+		builder.OpenBlock();
+		builder.AppendLine("if (type.IsAssignableFrom(enabledInterface))");
+		builder.OpenBlock();
+		builder.AppendLine("return true;");
+		builder.CloseBlock();
+		builder.CloseBlock();
+		builder.AppendLine();
+		builder.AppendLine("return false;");
+		builder.CloseBlock();
+		builder.AppendLine();
+		RenderProxyFactory(builder, proxyName, factoryName, optionalInterfaces, isMarshalable: false);
+		if (info.IsMarshalable)
+		{
+			builder.AppendLine();
+			RenderProxyFactory(builder, proxyName, GetGeneratedMemberName(info, factoryName + "_Marshaled"), optionalInterfaces, isMarshalable: true);
+		}
+
 		for (int i = 0; i < methods.Length; i++)
 		{
 			builder.AppendLine();
@@ -664,10 +849,15 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	/// Renders a nested attribute that creates the proxy with a direct constructor call,
 	/// so the runtime can activate the proxy without constructor reflection.
 	/// </summary>
-	private static void RenderProxyFactory(SourceWriter builder, string proxyName, string factoryName, ImmutableArray<OptionalInterfaceInfo> optionalInterfaces)
+	private static void RenderProxyFactory(SourceWriter builder, string proxyName, string factoryName, ImmutableArray<OptionalInterfaceInfo> optionalInterfaces, bool isMarshalable)
 	{
+		if (isMarshalable)
+		{
+			optionalInterfaces = optionalInterfaces.OrderBy(static item => item.InterfaceId).ToImmutableArray();
+		}
+
 		builder.Append("internal sealed class ").Append(factoryName).Append(" : global::Nerdbank.JsonRpc.");
-		builder.AppendLine(optionalInterfaces.IsEmpty ? "JsonRpcProxyFactoryAttribute" : "JsonRpcOptionalProxyFactoryAttribute");
+		builder.AppendLine(isMarshalable ? "JsonRpcOptionalProxyFactoryAttribute" : "JsonRpcProxyFactoryAttribute");
 		builder.OpenBlock();
 		if (!optionalInterfaces.IsEmpty)
 		{
@@ -682,7 +872,14 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 						builder.Append(", ");
 					}
 
-					builder.Append(optionalInterfaces[i].InterfaceId);
+					if (isMarshalable)
+					{
+						builder.Append(optionalInterfaces[i].InterfaceId!.Value);
+					}
+					else
+					{
+						builder.Append("typeof(").Append(optionalInterfaces[i].Symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append(")");
+					}
 				}
 
 				builder.AppendLine(")");
@@ -702,12 +899,14 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	private static bool IsBclEventHandler(INamedTypeSymbol type)
 		=> type.OriginalDefinition.ToDisplayString() is "System.EventHandler" or "System.EventHandler<TEventArgs>";
 
-	private static string GetVariantProxyName(InterfaceInfo info, int mask) => $"{info.ProxyName}_Optional{mask}";
+	private static string GetGroupProxyName(InterfaceInfo info, int index) => index == 0 ? info.ProxyName : $"{info.ProxyName}_Group{index}";
 
 	private static string GetGeneratedMemberName(InterfaceInfo info, string baseName)
 	{
 		string name = baseName;
-		while (info.Symbol.GetMembers(name).Length > 0 || info.Symbol.AllInterfaces.Any(interfaceSymbol => interfaceSymbol.GetMembers(name).Length > 0))
+		IEnumerable<INamedTypeSymbol> interfaces = info.ProxyGroups.SelectMany(static group => group).Select(static item => item.Symbol)
+			.Concat([info.Symbol]).SelectMany(static symbol => symbol.AllInterfaces.Concat([symbol]));
+		while (interfaces.Any(interfaceSymbol => interfaceSymbol.GetMembers(name).Length > 0))
 		{
 			name += "_";
 		}
@@ -782,13 +981,13 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		string parameters = string.Join(", ", method.Symbol.Parameters.Select(static p => $"{GetTypeName(p.Type, p.NullableAnnotation)} {EscapeIdentifier(p.Name)}"));
 		string cancellationToken = method.HasCancellationToken ? EscapeIdentifier(method.Symbol.Parameters[^1].Name) : KnownApis.CancellationToken + ".None";
 
-		if (method.OptionalInterfaceId is null)
+		if (method.OptionalInterfaceId is null && !method.ExplicitImplementation)
 		{
 			builder.Append("public ");
 		}
 
 		builder.Append(method.Symbol.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat.AddMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier))).Append(' ');
-		if (method.OptionalInterfaceId is not null)
+		if (method.OptionalInterfaceId is not null || method.ExplicitImplementation)
 		{
 			builder.Append(method.Symbol.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append('.');
 		}
@@ -946,7 +1145,12 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			_ => "internal",
 		};
 
-	private sealed record ProxyOutput(string HintName, string? Source, ImmutableArray<DiagnosticInfo> Diagnostics);
+	private sealed record ExtensionInfo(string Namespace, string TypeName, string Visibility);
+
+	private sealed record ProxyOutput(string HintName, string? Source, ImmutableArray<DiagnosticInfo> Diagnostics)
+	{
+		internal ImmutableArray<ExtensionInfo> Extensions { get; init; } = [];
+	}
 
 	private sealed class ProxyOutputComparer : IEqualityComparer<ProxyOutput>
 	{
@@ -956,7 +1160,8 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			=> ReferenceEquals(x, y) || (x is not null && y is not null
 				&& x.HintName == y.HintName
 				&& x.Source == y.Source
-				&& x.Diagnostics.SequenceEqual(y.Diagnostics));
+				&& x.Diagnostics.SequenceEqual(y.Diagnostics)
+				&& x.Extensions.SequenceEqual(y.Extensions));
 
 		public int GetHashCode(ProxyOutput obj)
 		{
@@ -1015,6 +1220,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 	private static class KnownApis
 	{
+		internal const string JsonRpcProxyInterfaceGroupAttribute = "Nerdbank.JsonRpc.JsonRpcProxyInterfaceGroupAttribute";
 		internal const string GenerateJsonRpcProxyAttribute = "Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute";
 		internal const string RpcMarshalableAttribute = "Nerdbank.JsonRpc.RpcMarshalableAttribute";
 		internal const string RpcMarshalableOptionalInterfaceAttribute = "Nerdbank.JsonRpc.RpcMarshalableOptionalInterfaceAttribute";
@@ -1039,6 +1245,8 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, INamedTypeSymbol? EventShapeAttribute, ImmutableArray<MethodInfo> Methods, ImmutableArray<OptionalInterfaceInfo> OptionalInterfaces, bool HasStaticTypeShapeResolver, bool IsMarshalable, bool IsCallScoped, bool HasGenerateProxyAttribute, ImmutableArray<DiagnosticInfo> Diagnostics)
 	{
+		internal ImmutableArray<ImmutableArray<OptionalInterfaceInfo>> ProxyGroups { get; init; } = [];
+
 		internal string HintName => this.Symbol.ContainingNamespace.IsGlobalNamespace ? this.ProxyName + ".g.cs" : this.Symbol.ContainingNamespace.ToDisplayString() + "." + this.ProxyName + ".g.cs";
 
 		internal string InterfaceName => this.Symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
@@ -1059,9 +1267,10 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		ProxyMethodKind Kind,
 		string? ResultTypeName,
 		string? ExplicitRpcName,
-		int? OptionalInterfaceId);
+		int? OptionalInterfaceId,
+		bool ExplicitImplementation = false);
 
-	private sealed record OptionalInterfaceInfo(int InterfaceId, INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods);
+	private sealed record OptionalInterfaceInfo(int? InterfaceId, INamedTypeSymbol Symbol, ImmutableArray<MethodInfo> Methods);
 
 	private sealed record ShapeFieldInfo(string TypeName, string FieldName);
 }

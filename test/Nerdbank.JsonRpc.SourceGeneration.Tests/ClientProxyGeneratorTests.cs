@@ -2,10 +2,13 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Testing;
 using Nerdbank.JsonRpc;
 using Nerdbank.JsonRpc.SourceGeneration;
@@ -539,7 +542,7 @@ public class ClientProxyGeneratorTests
 			Source,
 			CompilerDiagnostics.Warnings,
 			DiagnosticResult.CompilerError("CS0311")
-				.WithSpan(System.IO.Path.Combine("Nerdbank.JsonRpc.SourceGeneration", "Nerdbank.JsonRpc.SourceGeneration.ClientProxyGenerator", "CollidingLocalsProxy.g.cs"), 23, 107, 23, 140)
+				.WithSpan(System.IO.Path.Combine("Nerdbank.JsonRpc.SourceGeneration", "Nerdbank.JsonRpc.SourceGeneration.ClientProxyGenerator", "CollidingLocalsProxy.g.cs"), 25, 107, 25, 140)
 				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<ICollidingLocals>", "T", "ICollidingLocals"));
 	}
 
@@ -556,10 +559,167 @@ public class ClientProxyGeneratorTests
 				Task NerdbankJsonRpc_ProxyFactoryAttribute();
 
 				Task NerdbankJsonRpc_ProxyFactoryAttribute_();
+
+				Task NerdbankJsonRpc_EnabledInterfaces();
+
+				Task Is();
 			}
 			""";
 
 		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, validateGeneratedCode: true);
+	}
+
+	[Test]
+	[Arguments(0, 1)]
+	[Arguments(3, 2)]
+	[Arguments(9, 2)]
+	public async Task DefaultGroupsDoNotGrowExponentially(int optionalCount, int expectedProxyCount)
+	{
+		string attributes = string.Join("\n", Enumerable.Range(0, optionalCount).Select(index => $"[RpcMarshalableOptionalInterface({index}, typeof(IOptional{index}))]"));
+		string interfaces = string.Join("\n", Enumerable.Range(0, optionalCount).Select(index => $"internal interface IOptional{index} {{ }}"));
+		string source = /* lang=c#-test */ $$"""
+			using System;
+			using Nerdbank.JsonRpc;
+			[RpcMarshalable]
+			{{attributes}}
+			internal partial interface IContract : IDisposable { }
+			{{interfaces}}
+			""";
+		GeneratorRunResult result = await RunGeneratorAsync(source);
+		ClassDeclarationSyntax[] proxies = GetProxyClasses(result);
+		if (proxies.Length != expectedProxyCount || proxies[0].BaseList!.Types.Count != 2)
+		{
+			throw new InvalidOperationException($"Expected {expectedProxyCount} proxies including a base-only proxy, got {proxies.Length}.");
+		}
+
+		if (optionalCount > 0 && proxies[1].BaseList!.Types.Count != optionalCount + 2)
+		{
+			throw new InvalidOperationException("The full proxy must implement every optional interface.");
+		}
+	}
+
+	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task ExplicitGroupsReplaceDefaultsAndDeduplicate(bool includeEmpty)
+	{
+		string source = /* lang=c#-test */ $$"""
+			using System;
+			using Nerdbank.JsonRpc;
+			[RpcMarshalable]
+			[RpcMarshalableOptionalInterface(1, typeof(IFirst))]
+			[RpcMarshalableOptionalInterface(2, typeof(ISecond))]
+			[RpcMarshalableOptionalInterface(3, typeof(IThird))]
+			[JsonRpcProxyInterfaceGroup(typeof(IFirst))]
+			[JsonRpcProxyInterfaceGroup(typeof(IFirst), typeof(IFirst))]
+			[JsonRpcProxyInterfaceGroup(typeof(ISecond))]
+			{{(includeEmpty ? "[JsonRpcProxyInterfaceGroup]" : string.Empty)}}
+			internal partial interface IContract : IDisposable { }
+			internal interface IFirst { }
+			internal interface ISecond { }
+			internal interface IThird { }
+			""";
+		ClassDeclarationSyntax[] proxies = GetProxyClasses(await RunGeneratorAsync(source));
+		if (proxies.Length != (includeEmpty ? 3 : 2)
+			|| proxies.Count(proxy => proxy.BaseList!.Types.Count == 2) != (includeEmpty ? 1 : 0)
+			|| proxies.Any(proxy => proxy.BaseList!.Types.Any(type => type.ToString().Contains("IThird"))))
+		{
+			throw new InvalidOperationException("Only the distinct explicit groups should be emitted, without implicit base-only or full proxies.");
+		}
+	}
+
+	[Test]
+	[Arguments("typeof(string)")]
+	[Arguments("null")]
+	public async Task InvalidProxyGroupsProduceDiagnostics(string argument)
+	{
+		string source = /* lang=c#-test */ $$"""
+			using Nerdbank.JsonRpc;
+			[GenerateJsonRpcProxy]
+			[JsonRpcProxyInterfaceGroup({{argument}})]
+			internal partial interface {|#0:IContract|} { }
+			""";
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(
+			source,
+			CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001").WithLocation(0)
+				.WithArguments("IContract", "proxy groups must contain non-null interface types"));
+	}
+
+	[Test]
+	public async Task MarshalableGroupsRequireDeclaredOptionalInterfaces()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System;
+			using Nerdbank.JsonRpc;
+			[RpcMarshalable]
+			[JsonRpcProxyInterfaceGroup(typeof(IExtra))]
+			internal partial interface {|#0:IContract|} : IDisposable { }
+			internal interface IExtra { }
+			""";
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(
+			Source,
+			CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001").WithLocation(0)
+				.WithArguments("IContract", "proxy group interface 'IExtra' must be declared as an optional marshalable interface"));
+	}
+
+	[Test]
+	public async Task InterfaceExtensionsAreDeduplicatedAcrossContractsAndNamespaces()
+	{
+		const string Source = /* lang=c#-test */ """
+			#nullable enable
+			using System;
+			using Nerdbank.JsonRpc;
+			namespace Contracts
+			{
+				[RpcMarshalable]
+				[RpcMarshalableOptionalInterface(1, typeof(Capabilities.IExtra))]
+				public partial interface IFirst : IDisposable { }
+				[RpcMarshalable]
+				[RpcMarshalableOptionalInterface(2, typeof(Capabilities.IExtra))]
+				public partial interface ISecond : IDisposable { }
+				internal class Consumer
+				{
+					bool Test(IFirst? first, ISecond? second) => first.Is(typeof(Capabilities.IExtra)) || second.As<Capabilities.IExtra>() is not null;
+				}
+			}
+			namespace Capabilities
+			{
+				public interface IExtra { }
+				internal class Consumer
+				{
+					bool Test(IExtra? extra) => extra.Is(typeof(IExtra)) && extra.As<IExtra>() is not null;
+				}
+			}
+			""";
+		GeneratorRunResult result = await RunGeneratorAsync(Source);
+		GeneratedSourceResult extensions = result.GeneratedSources.Single(source => source.HintName == "NerdbankJsonRpcInterfaceExtensions.Capabilities.g.cs");
+		if (extensions.SyntaxTree.GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>().Count() != 2)
+		{
+			throw new InvalidOperationException("A shared optional interface should get exactly one Is and one As extension.");
+		}
+	}
+
+	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task InterfaceExtensionVisibilityMatchesStreamJsonRpcPolicy(bool publicExtensions)
+	{
+		const string Source = /* lang=c#-test */ """
+			using Nerdbank.JsonRpc;
+			[GenerateJsonRpcProxy]
+			public partial interface IPublicContract { }
+			[GenerateJsonRpcProxy]
+			internal partial interface IInternalContract { }
+			""";
+		GeneratorRunResult result = await RunGeneratorAsync(Source, publicExtensions);
+		ClassDeclarationSyntax extensions = result.GeneratedSources.SelectMany(static source => source.SyntaxTree.GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>())
+			.Single(static declaration => declaration.Identifier.ValueText == "NerdbankJsonRpcInterfaceExtensions");
+		if (extensions.Modifiers.Any(SyntaxKind.PublicKeyword) != publicExtensions
+			|| extensions.Members.OfType<MethodDeclarationSyntax>().Count(static method => method.Modifiers.Any(SyntaxKind.PublicKeyword)) != 2
+			|| extensions.Members.OfType<MethodDeclarationSyntax>().Count(static method => method.Modifiers.Any(SyntaxKind.InternalKeyword)) != 2)
+		{
+			throw new InvalidOperationException("Extensions should be assembly-local by default, with opt-in public accessors only for public contracts.");
+		}
 	}
 
 	[Test]
@@ -651,5 +811,59 @@ public class ClientProxyGeneratorTests
 			=> run.TrackedSteps["GenerateJsonRpcProxyOutputs"]
 				.SelectMany(static step => step.Outputs)
 				.All(static output => output.Reason is IncrementalStepRunReason.Cached or IncrementalStepRunReason.Unchanged);
+	}
+
+	private static ClassDeclarationSyntax[] GetProxyClasses(GeneratorRunResult result)
+		=> [
+			.. result.GeneratedSources.SelectMany(static source => source.SyntaxTree.GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>())
+				.Where(static declaration => declaration.BaseList?.Types.Any(static type => type.ToString() == "global::Nerdbank.JsonRpc.IClientProxy") is true),
+		];
+
+	private static async Task<GeneratorRunResult> RunGeneratorAsync([StringSyntax("c#-test")] string source, bool publicExtensions = false)
+	{
+		CSharpParseOptions parseOptions = new(LanguageVersion.Preview);
+		ImmutableArray<MetadataReference> references = await ReferenceAssemblies.Net.Net90.ResolveAsync(LanguageNames.CSharp, CancellationToken.None);
+		references = references.Add(MetadataReference.CreateFromFile(typeof(GenerateJsonRpcProxyAttribute).Assembly.Location));
+		CSharpCompilation compilation = CSharpCompilation.Create(
+			"ProxyGroupTests",
+			[CSharpSyntaxTree.ParseText(source, parseOptions)],
+			references,
+			new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+		GeneratorDriver driver = CSharpGeneratorDriver.Create(
+			[new ClientProxyGenerator().AsSourceGenerator()],
+			parseOptions: parseOptions,
+			optionsProvider: new ExtensionOptionsProvider(publicExtensions));
+		driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out Compilation updated, out ImmutableArray<Diagnostic> diagnostics);
+		Diagnostic[] errors = [.. diagnostics.Concat(updated.GetDiagnostics()).Where(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)];
+		if (errors.Length > 0)
+		{
+			throw new InvalidOperationException(string.Join("\n", errors.Select(static error => error.ToString())));
+		}
+
+		GeneratorRunResult result = driver.GetRunResult().Results.Single();
+		if (!result.Diagnostics.IsEmpty)
+		{
+			throw new InvalidOperationException(string.Join("\n", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+		}
+
+		return result;
+	}
+
+	private sealed class ExtensionOptionsProvider(bool publicExtensions) : AnalyzerConfigOptionsProvider
+	{
+		public override AnalyzerConfigOptions GlobalOptions { get; } = new ExtensionOptions(publicExtensions);
+
+		public override AnalyzerConfigOptions GetOptions(SyntaxTree tree) => new ExtensionOptions(false);
+
+		public override AnalyzerConfigOptions GetOptions(AdditionalText textFile) => new ExtensionOptions(false);
+	}
+
+	private sealed class ExtensionOptions(bool enabled) : AnalyzerConfigOptions
+	{
+		public override bool TryGetValue(string key, out string value)
+		{
+			value = enabled ? "true" : "false";
+			return key == "build_property.PublicRpcMarshalableInterfaceExtensions";
+		}
 	}
 }

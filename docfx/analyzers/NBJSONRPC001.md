@@ -16,6 +16,10 @@ Proxy events must be instance events whose delegates return `void` and accept on
 Asynchronous, value-returning, static, and by-reference event contracts report this diagnostic.
 Event parameters also cannot contain RPC-marshalable interfaces, including within arrays or generic types, because notifications do not support marshaled handles.
 
+Interface groups must contain non-null, non-generic, non-nested interface types with supported RPC members.
+On a marshalable contract, every group member must also be declared with <xref:Nerdbank.JsonRpc.RpcMarshalableOptionalInterfaceAttribute>.
+Invalid groups report this diagnostic instead of emitting an incomplete proxy; see [generated interface groups](../docs/client-proxies.md#choosing-generated-interface-groups).
+
 ## Examples
 
 Unsupported:

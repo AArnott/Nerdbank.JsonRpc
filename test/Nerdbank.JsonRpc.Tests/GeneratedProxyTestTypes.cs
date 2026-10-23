@@ -114,6 +114,49 @@ internal partial interface INullableProxyEvents : INullableProxyEventBase<string
 {
 }
 
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface ICapabilityService : ICalculator, ISubtractCapability
+{
+}
+
+[GenerateJsonRpcProxy]
+[JsonRpcProxyInterfaceGroup]
+[JsonRpcProxyInterfaceGroup(typeof(ISubtractCapability))]
+[JsonRpcProxyInterfaceGroup(typeof(IGroupedEventCapability))]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IGroupedRootService : ICalculator
+{
+}
+
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IGroupedEventCapability
+{
+	event EventHandler<int>? Changed;
+}
+
+[GenerateJsonRpcProxy]
+[JsonRpcProxyInterfaceGroup(typeof(ISecondNamedOperation))]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IFirstNamedOperation
+{
+	[MethodShape(Name = "first.operation")]
+	Task<int> ExecuteAsync(CancellationToken cancellationToken);
+
+	[MethodShape(Name = "first.description")]
+	Task<int> DescribeAsync(CancellationToken cancellationToken);
+}
+
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface ISecondNamedOperation
+{
+	[MethodShape(Name = "second.operation")]
+	Task<int> ExecuteAsync(CancellationToken cancellationToken);
+
+	[MethodShape(Name = "second.description")]
+	Task<string> DescribeAsync(CancellationToken cancellationToken);
+}
+
 internal sealed class Calculator : ICalculator
 {
 	internal TaskCompletionSource<int> NotificationReceived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

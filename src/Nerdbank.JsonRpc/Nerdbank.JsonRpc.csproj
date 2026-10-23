@@ -20,6 +20,9 @@
           Visible="false" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="buildTransitive\Nerdbank.JsonRpc.props" Pack="true" PackagePath="buildTransitive\Nerdbank.JsonRpc.props" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Microsoft.VisualStudio.Threading" />
     <PackageReference Include="Nerdbank.Json" />

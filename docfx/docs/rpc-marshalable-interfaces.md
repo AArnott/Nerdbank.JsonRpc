@@ -24,7 +24,19 @@ Apply <xref:Nerdbank.JsonRpc.RpcMarshalableOptionalInterfaceAttribute> to a mars
 
 [!code-csharp[](../../samples/cs/rpc-marshalable-interfaces.cs#optional-interfaces)]
 
-The sender advertises only interfaces implemented by the actual target. The receiver's generated proxy implements exactly the advertised interfaces it recognizes, so normal C# type tests and casts provide capability discovery (`counter is IResettableCounter`). Unknown IDs are ignored for version tolerance. Optional calls use `$/invokeProxy/{handle}/{interfaceId}.{method}` on the wire, which keeps same-named methods on different interfaces distinct. Optional capabilities preserve the base object's identity and lifetime; disposing any generated proxy releases that marshaled handle. As with the base interface, optional capabilities cannot be forwarded to a third connection.
+The sender advertises only interfaces implemented by the actual target.
+The receiver selects the smallest generated proxy group covering the advertised interfaces it recognizes, preferring an exact match and otherwise accepting a superset.
+Use the generated `Is(Type)` and `As<T>()` extensions for capability discovery: ordinary C# type tests and casts may report interfaces that the remote object did not advertise.
+Unknown IDs are ignored for version tolerance.
+Optional calls use `$/invokeProxy/{handle}/{interfaceId}.{method}` on the wire, which keeps same-named methods on different interfaces distinct.
+Optional capabilities preserve the base object's identity and lifetime; disposing any generated proxy releases that marshaled handle.
+As with the base interface, optional capabilities cannot be forwarded to a third connection.
+
+Newly generated marshalable proxies also implement <xref:Nerdbank.JsonRpc.IClientProxy>, and expose the query extensions directly on the RPC interfaces, consistently with [root service proxies](client-proxies.md#testing-remote-interface-availability).
+By default these queries report the recognized capabilities advertised by the peer, including inherited interfaces, even if the generated proxy implements a larger set.
+By default only a base-only proxy and a full optional-interface proxy are generated.
+Use <xref:Nerdbank.JsonRpc.JsonRpcProxyInterfaceGroupAttribute> for common subsets or stricter CLR interface sets; when groups are specified, only those groups are generated.
+See [interface groups](client-proxies.md#choosing-generated-interface-groups) for selection and failure behavior.
 
 ## Connection boundaries
 

@@ -10,7 +10,8 @@ namespace Nerdbank.JsonRpc;
 /// <summary>Declares an optional interface that a marshalable object may implement.</summary>
 /// <remarks>
 /// When a value implements <see cref="OptionalInterface"/>, its marker advertises <see cref="InterfaceId"/> and
-/// the receiver's generated proxy implements that interface. Interface IDs are permanent protocol identifiers and
+/// the receiver selects a generated proxy implementing that interface. The proxy may also implement extra interfaces;
+/// use <see cref="IClientProxy.Is"/> to distinguish advertised capabilities. Interface IDs are permanent protocol identifiers and
 /// must be unique among attributes applied to the same marshalable interface.
 /// </remarks>
 [AttributeUsage(AttributeTargets.Interface, Inherited = false, AllowMultiple = true)]
