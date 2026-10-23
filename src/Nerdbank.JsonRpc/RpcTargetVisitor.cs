@@ -293,7 +293,20 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 					setCancellationToken?.Invoke(dispatch.CancellationToken, ref argState);
 					setDispatchRequest?.Invoke(dispatch, ref argState);
 
-					if (!argState.AreRequiredArgumentsSet || (flexible && attributeRequired.Any(index => !argState.IsArgumentSet(index))))
+					bool missingExplicitlyRequired = false;
+					if (flexible)
+					{
+						foreach (int index in attributeRequired)
+						{
+							if (!argState.IsArgumentSet(index))
+							{
+								missingExplicitlyRequired = true;
+								break;
+							}
+						}
+					}
+
+					if (!argState.AreRequiredArgumentsSet || missingExplicitlyRequired)
 					{
 						return new DispatchResponse
 						{
