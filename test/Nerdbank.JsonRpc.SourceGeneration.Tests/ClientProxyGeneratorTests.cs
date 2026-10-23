@@ -723,6 +723,71 @@ public class ClientProxyGeneratorTests
 	}
 
 	[Test]
+	public async Task ImportedInterfaceExtensionsRemainInternalForDownstreamConsumers()
+	{
+		const string FirstContract = /* lang=c#-test */ """
+			using Nerdbank.JsonRpc;
+			namespace Contracts;
+			[GenerateJsonRpcProxy]
+			public partial interface IExtra { }
+			""";
+		const string SecondContract = /* lang=c#-test */ """
+			using Nerdbank.JsonRpc;
+			namespace Contracts;
+			[GenerateJsonRpcProxy]
+			[JsonRpcProxyInterfaceGroup(typeof(IExtra))]
+			public partial interface IRoot { }
+			""";
+		const string Consumer = /* lang=c#-test */ """
+			using Contracts;
+			public static class Consumer
+			{
+				public static bool IsExtra(IExtra proxy) => proxy.Is(typeof(IExtra));
+				public static IExtra? AsExtra(IExtra proxy) => proxy.As<IExtra>();
+				public static bool IsRoot(IRoot proxy) => proxy.Is(typeof(IRoot));
+				public static IRoot? AsRoot(IRoot proxy) => proxy.As<IRoot>();
+			}
+			""";
+
+		CSharpParseOptions parseOptions = new(LanguageVersion.Preview);
+		ImmutableArray<MetadataReference> references = await ReferenceAssemblies.Net.Net90.ResolveAsync(LanguageNames.CSharp, CancellationToken.None);
+		references = references.Add(MetadataReference.CreateFromFile(typeof(GenerateJsonRpcProxyAttribute).Assembly.Location));
+		MetadataReference first = Compile("FirstContracts", FirstContract, references, generate: true);
+		MetadataReference second = Compile("SecondContracts", SecondContract, references.Add(first), generate: true);
+		Compile("Consumer", Consumer, references.Add(first).Add(second), generate: false);
+
+		MetadataReference Compile(string name, [StringSyntax("c#-test")] string source, ImmutableArray<MetadataReference> metadata, bool generate)
+		{
+			Compilation compilation = CSharpCompilation.Create(
+				name,
+				[CSharpSyntaxTree.ParseText(source, parseOptions)],
+				metadata,
+				new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+			if (generate)
+			{
+				GeneratorDriver driver = CSharpGeneratorDriver.Create(
+					[new ClientProxyGenerator().AsSourceGenerator()],
+					parseOptions: parseOptions,
+					optionsProvider: new ExtensionOptionsProvider(true));
+				driver.RunGeneratorsAndUpdateCompilation(compilation, out compilation, out ImmutableArray<Diagnostic> diagnostics);
+				if (!diagnostics.IsEmpty)
+				{
+					throw new InvalidOperationException(string.Join("\n", diagnostics));
+				}
+			}
+
+			using System.IO.MemoryStream stream = new();
+			Microsoft.CodeAnalysis.Emit.EmitResult result = compilation.Emit(stream);
+			if (!result.Success)
+			{
+				throw new InvalidOperationException(string.Join("\n", result.Diagnostics));
+			}
+
+			return MetadataReference.CreateFromImage(stream.ToArray());
+		}
+	}
+
+	[Test]
 	[Arguments(false)]
 	[Arguments(true)]
 	public async Task UnchangedOutputsAreCachedAndOnlyChangedProxyIsRegenerated(bool changeEvent)

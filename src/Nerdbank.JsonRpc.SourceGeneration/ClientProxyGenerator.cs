@@ -131,7 +131,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				.Select(static item => item.Symbol).Concat([info.Symbol])
 				.GroupBy(static symbol => symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), StringComparer.Ordinal)
 				.Select(static group => group.First())
-				.Select(static symbol => new ExtensionInfo(symbol.ContainingNamespace.IsGlobalNamespace ? string.Empty : symbol.ContainingNamespace.ToDisplayString(), symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), symbol.DeclaredAccessibility == Accessibility.Public ? "public" : "internal"))
+				.Select(symbol => new ExtensionInfo(symbol.ContainingNamespace.IsGlobalNamespace ? string.Empty : symbol.ContainingNamespace.ToDisplayString(), symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), symbol.DeclaredAccessibility == Accessibility.Public && SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, compilation.Assembly) ? "public" : "internal"))
 				.OrderBy(static extension => extension.TypeName, StringComparer.Ordinal).ToImmutableArray(),
 		};
 	}

@@ -52,7 +52,8 @@ Use <xref:Nerdbank.JsonRpc.IClientProxy.Is(System.Type)> or <xref:Nerdbank.JsonR
 The generator also emits `Is(Type)` and `As<T>()` extension methods directly on the contract interfaces and their optional interfaces, so callers need not cast to <xref:Nerdbank.JsonRpc.IClientProxy>.
 These extensions use proxy capability metadata when present and ordinary CLR type checking for local implementations; null receivers return false or null.
 The extension classes are internal to the contract assembly by default, matching StreamJsonRpc and avoiding conflicting extensions from referenced assemblies.
-For a shared contract assembly whose consumers need these extensions, set the MSBuild property `PublicRpcMarshalableInterfaceExtensions` to `true` when compiling that assembly; accessors for public interfaces then become public.
+For a shared contract assembly whose consumers need these extensions, set the MSBuild property `PublicRpcMarshalableInterfaceExtensions` to `true` when compiling that assembly; accessors for public interfaces defined in that assembly then become public.
+Accessors for interfaces imported from referenced assemblies remain internal to avoid ambiguous extension calls in downstream consumers.
 Despite the property's name, it applies to both root and marshalable contract interfaces.
 The queries are local: they do not send RPC requests, negotiate capabilities, or guard direct method calls.
 
