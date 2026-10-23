@@ -25,6 +25,8 @@ internal partial interface IOptionalInterfaceService
 	Task<IWitnessOptionalObject> GetWitnessObjectAsync(CancellationToken cancellationToken);
 
 	Task<IInheritedOptionalObject> GetInheritedObjectAsync(bool derived, CancellationToken cancellationToken);
+
+	Task<ISiblingRouteObject> GetSiblingRouteObjectAsync(bool right, CancellationToken cancellationToken);
 }
 
 [RpcMarshalable]
@@ -131,8 +133,19 @@ internal partial interface IDerivedOptionalCapability : IBaseOptionalCapability
 	Task<int> DerivedValueAsync(CancellationToken cancellationToken);
 }
 
+[RpcMarshalable]
+[RpcMarshalableOptionalInterface(1, typeof(IServerCapability))]
+[RpcMarshalableOptionalInterface(2, typeof(IClientCapability))]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface ISiblingRouteObject : IDisposable
+{
+}
+
 internal sealed class OptionalInterfaceService : IOptionalInterfaceService
 {
+	public Task<ISiblingRouteObject> GetSiblingRouteObjectAsync(bool right, CancellationToken cancellationToken)
+		=> Task.FromResult<ISiblingRouteObject>(right ? new RightRouteObject() : new LeftRouteObject());
+
 	public Task<IWitnessOptionalObject> GetWitnessObjectAsync(CancellationToken cancellationToken) => Task.FromResult<IWitnessOptionalObject>(new WitnessOptionalObject());
 
 	public Task<IInheritedOptionalObject> GetInheritedObjectAsync(bool derived, CancellationToken cancellationToken)
@@ -240,5 +253,23 @@ internal sealed class OptionalInterfaceService : IOptionalInterfaceService
 	private sealed class DerivedOptionalObject : BaseOptionalObject, IDerivedOptionalCapability
 	{
 		public Task<int> DerivedValueAsync(CancellationToken cancellationToken) => Task.FromResult(2);
+	}
+
+	private sealed class LeftRouteObject : ISiblingRouteObject, IServerCapability
+	{
+		public Task<int> ReadAsync(CancellationToken cancellationToken) => Task.FromResult(1);
+
+		public void Dispose()
+		{
+		}
+	}
+
+	private sealed class RightRouteObject : ISiblingRouteObject, IClientCapability
+	{
+		public Task<int> ReadAsync(CancellationToken cancellationToken) => Task.FromResult(2);
+
+		public void Dispose()
+		{
+		}
 	}
 }

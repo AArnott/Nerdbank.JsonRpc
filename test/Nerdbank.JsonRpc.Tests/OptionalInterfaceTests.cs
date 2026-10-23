@@ -287,6 +287,42 @@ public class OptionalInterfaceTests
 		}
 	}
 
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, false, false)]
+	[Arguments(JsonRpcEncoding.Json, true, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, false, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, true, false)]
+	[Arguments(JsonRpcEncoding.Json, false, true)]
+	[Arguments(JsonRpcEncoding.Json, true, true)]
+	[Arguments(JsonRpcEncoding.MessagePack, false, true)]
+	[Arguments(JsonRpcEncoding.MessagePack, true, true)]
+	public async Task SharedInheritedMethodsUseAdvertisedSiblingRoute(JsonRpcEncoding encoding, bool right, bool restrictToCommon)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding), new JsonRpcOptions
+		{
+			MarshaledProxy = new() { EnabledInterfaces = restrictToCommon ? [typeof(ICommonCapability)] : null },
+		});
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
+		serverRpc.Start();
+		clientRpc.Start();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		using ISiblingRouteObject proxy = await clientRpc.Attach<IOptionalInterfaceService>().GetSiblingRouteObjectAsync(right, cts.Token);
+		Assert.True(proxy is IServerCapability);
+		Assert.True(proxy is IClientCapability);
+		Assert.Equal(!restrictToCommon && !right, proxy.As<IServerCapability>() is not null);
+		Assert.Equal(!restrictToCommon && right, proxy.As<IClientCapability>() is not null);
+		Assert.Equal(right ? 2 : 1, await proxy.As<ICommonCapability>()!.ReadAsync(cts.Token));
+		if (!restrictToCommon)
+		{
+			int value = right
+				? await proxy.As<IClientCapability>()!.ReadAsync(cts.Token)
+				: await proxy.As<IServerCapability>()!.ReadAsync(cts.Token);
+			Assert.Equal(right ? 2 : 1, value);
+		}
+	}
+
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
 		=> encoding == JsonRpcEncoding.Json
 			? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)
