@@ -8,6 +8,9 @@ By default, Nerdbank.JsonRpc maps CLR method names to JSON-RPC wire names by rem
 
 A method annotated with `[MethodShape(Name = "...")]` always dispatches on that exact name, both when registering a server target and when generating a client proxy. The configured transform is not applied to it. This makes explicit names a reliable escape hatch when you need a specific wire name, such as `subtract` in the example above.
 
+Every method on a target must have a unique wire name, including when signatures accept different argument counts.
+Contracts annotated with <xref:Nerdbank.JsonRpc.JsonRpcContractAttribute> or <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute> receive [NBJSONRPC002](../analyzers/NBJSONRPC002.md) when their names collide under the default policy.
+
 ## Interoperating with StreamJsonRpc
 
 StreamJsonRpc's default behavior is to send and expect CLR-style method names (for example, `GetValueAsync`) unless its own `MethodNameTransform` is configured. To interoperate with such a peer, use <xref:Nerdbank.JsonRpc.CommonMethodNameTransforms.Identity> on either side, which returns names unchanged:

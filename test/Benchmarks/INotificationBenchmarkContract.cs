@@ -6,7 +6,7 @@ using PolyType;
 namespace Benchmarks;
 
 /// <summary>A generated notification contract used to measure submission overhead.</summary>
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 public partial interface INotificationBenchmarkContract
 {

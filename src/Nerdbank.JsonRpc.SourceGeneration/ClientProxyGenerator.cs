@@ -7,11 +7,12 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
+using static Nerdbank.JsonRpc.SourceGeneration.ContractUtilities;
 
 namespace Nerdbank.JsonRpc.SourceGeneration;
 
 /// <summary>
-/// Generates JSON-RPC client proxy implementations for interfaces annotated with <c>GenerateJsonRpcProxyAttribute</c>.
+/// Generates JSON-RPC client proxy implementations for interfaces annotated with <c>JsonRpcContractAttribute</c>.
 /// </summary>
 [Generator(LanguageNames.CSharp)]
 public sealed class ClientProxyGenerator : IIncrementalGenerator
@@ -51,17 +52,19 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	public void Initialize(IncrementalGeneratorInitializationContext context)
 	{
 		IncrementalValuesProvider<ProxyOutput> proxyInterfaces = context.SyntaxProvider.ForAttributeWithMetadataName(
-			KnownApis.GenerateJsonRpcProxyAttribute,
+			KnownApis.JsonRpcContractAttribute,
 			static (node, _) => node is InterfaceDeclarationSyntax,
-			static (ctx, cancellationToken) => CreateProxyOutput(ctx, hasGenerateProxyAttribute: true, cancellationToken)!)
-			.WithTrackingName("GenerateJsonRpcProxyModels")
+			static (ctx, cancellationToken) => CreateProxyOutput(ctx, hasContractAttribute: true, cancellationToken))
+			.Where(static output => output is not null)
+			.Select(static (output, _) => output!)
+			.WithTrackingName("JsonRpcContractModels")
 			.WithComparer(ProxyOutputComparer.Instance)
-			.WithTrackingName("GenerateJsonRpcProxyOutputs");
+			.WithTrackingName("JsonRpcContractOutputs");
 
 		IncrementalValuesProvider<ProxyOutput> marshalableInterfaces = context.SyntaxProvider.ForAttributeWithMetadataName(
 			KnownApis.RpcMarshalableAttribute,
 			static (node, _) => node is InterfaceDeclarationSyntax,
-			static (ctx, cancellationToken) => CreateProxyOutput(ctx, hasGenerateProxyAttribute: false, cancellationToken))
+			static (ctx, cancellationToken) => CreateProxyOutput(ctx, hasContractAttribute: false, cancellationToken))
 			.Where(static output => output is not null)
 			.Select(static (output, _) => output!)
 			.WithTrackingName("RpcMarshalableProxyModels")
@@ -75,9 +78,6 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		context.RegisterSourceOutput(proxyInterfaces.Collect().Combine(marshalableInterfaces.Collect()).Combine(publicExtensions), static (ctx, outputs) =>
 			EmitInterfaceExtensions(ctx, outputs.Left.Left.Concat(outputs.Left.Right).SelectMany(static output => output.Extensions), outputs.Right));
 	}
-
-	private static bool HasAttribute(INamedTypeSymbol symbol, INamedTypeSymbol? attributeSymbol)
-		=> attributeSymbol is not null && symbol.GetAttributes().Any(attribute => SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, attributeSymbol));
 
 	private static bool GetCallScopedLifetime(INamedTypeSymbol interfaceSymbol, INamedTypeSymbol? marshalableAttribute)
 	{
@@ -97,21 +97,28 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		return false;
 	}
 
-	private static ProxyOutput? CreateProxyOutput(GeneratorAttributeSyntaxContext context, bool hasGenerateProxyAttribute, CancellationToken cancellationToken)
+	private static ProxyOutput? CreateProxyOutput(GeneratorAttributeSyntaxContext context, bool hasContractAttribute, CancellationToken cancellationToken)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
 		INamedTypeSymbol interfaceSymbol = (INamedTypeSymbol)context.TargetSymbol;
 		Compilation compilation = context.SemanticModel.Compilation;
-		INamedTypeSymbol? generateProxyAttribute = compilation.GetTypeByMetadataName(KnownApis.GenerateJsonRpcProxyAttribute);
+		INamedTypeSymbol? contractAttribute = compilation.GetTypeByMetadataName(KnownApis.JsonRpcContractAttribute);
 		INamedTypeSymbol? rpcMarshalableAttribute = compilation.GetTypeByMetadataName(KnownApis.RpcMarshalableAttribute);
 		INamedTypeSymbol? optionalInterfaceAttribute = compilation.GetTypeByMetadataName(KnownApis.RpcMarshalableOptionalInterfaceAttribute);
-		bool hasGeneratedProxyAttribute = hasGenerateProxyAttribute || HasAttribute(interfaceSymbol, generateProxyAttribute);
-		if (!hasGenerateProxyAttribute && hasGeneratedProxyAttribute)
+		bool hasContract = hasContractAttribute || HasAttribute(interfaceSymbol, contractAttribute);
+		if (interfaceSymbol.GetAttributes().Any(attribute =>
+			SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, contractAttribute)
+			&& attribute.NamedArguments.Any(static argument => argument.Key == KnownApis.GenerateProxy && argument.Value.Value is false)))
 		{
 			return null;
 		}
 
-		bool isMarshalable = !hasGenerateProxyAttribute || HasAttribute(interfaceSymbol, rpcMarshalableAttribute);
+		if (!hasContractAttribute && hasContract)
+		{
+			return null;
+		}
+
+		bool isMarshalable = !hasContractAttribute || HasAttribute(interfaceSymbol, rpcMarshalableAttribute);
 		bool isCallScoped = isMarshalable && GetCallScopedLifetime(interfaceSymbol, rpcMarshalableAttribute);
 		InterfaceInfo info = CreateInterfaceInfo(
 			interfaceSymbol,
@@ -119,7 +126,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			compilation,
 			isMarshalable,
 			isCallScoped,
-			hasGeneratedProxyAttribute,
+			hasContract,
 			rpcMarshalableAttribute,
 			optionalInterfaceAttribute,
 			cancellationToken);
@@ -197,7 +204,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 	}
 
-	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol, InterfaceDeclarationSyntax interfaceDeclaration, Compilation compilation, bool isMarshalable, bool isCallScoped, bool hasGenerateProxyAttribute, INamedTypeSymbol? marshalableAttribute, INamedTypeSymbol? optionalInterfaceAttribute, CancellationToken cancellationToken)
+	private static InterfaceInfo CreateInterfaceInfo(INamedTypeSymbol interfaceSymbol, InterfaceDeclarationSyntax interfaceDeclaration, Compilation compilation, bool isMarshalable, bool isCallScoped, bool hasContractAttribute, INamedTypeSymbol? marshalableAttribute, INamedTypeSymbol? optionalInterfaceAttribute, CancellationToken cancellationToken)
 	{
 		INamedTypeSymbol? methodShapeAttribute = compilation.GetTypeByMetadataName(KnownApis.MethodShapeAttribute);
 		INamedTypeSymbol? eventShapeAttribute = compilation.GetTypeByMetadataName(KnownApis.EventShapeAttribute);
@@ -207,13 +214,13 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		if (!interfaceDeclaration.Modifiers.Any(SyntaxKind.PartialKeyword))
 		{
 			diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceDeclaration.Identifier.GetLocation(), interfaceSymbol.ToDisplayString(), "annotated interfaces must be partial"));
-			return new InterfaceInfo(interfaceSymbol, eventShapeAttribute, methods.ToImmutable(), optionalInterfaces.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasGenerateProxyAttribute, diagnostics.ToImmutable());
+			return new InterfaceInfo(interfaceSymbol, eventShapeAttribute, methods.ToImmutable(), optionalInterfaces.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasContractAttribute, diagnostics.ToImmutable());
 		}
 
 		if (GetUnsupportedInterfaceReason(interfaceSymbol, isMarshalable, isCallScoped) is string interfaceReason)
 		{
 			diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, interfaceSymbol.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), interfaceReason));
-			return new InterfaceInfo(interfaceSymbol, eventShapeAttribute, methods.ToImmutable(), optionalInterfaces.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasGenerateProxyAttribute, diagnostics.ToImmutable());
+			return new InterfaceInfo(interfaceSymbol, eventShapeAttribute, methods.ToImmutable(), optionalInterfaces.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasContractAttribute, diagnostics.ToImmutable());
 		}
 
 		ValidateProxyEvents(interfaceSymbol, marshalableAttribute, diagnostics);
@@ -359,7 +366,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			}
 		}
 
-		return new InterfaceInfo(interfaceSymbol, eventShapeAttribute, methods.ToImmutable(), optionalInterfaces.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasGenerateProxyAttribute, diagnostics.ToImmutable())
+		return new InterfaceInfo(interfaceSymbol, eventShapeAttribute, methods.ToImmutable(), optionalInterfaces.ToImmutable(), HasStaticTypeShapeResolver(compilation), isMarshalable, isCallScoped, hasContractAttribute, diagnostics.ToImmutable())
 		{
 			ProxyGroups = groups.ToImmutable(),
 		};
@@ -369,13 +376,9 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	{
 		foreach (IEventSymbol @event in GetProxyEvents(interfaceSymbol))
 		{
-			if (@event.IsStatic || @event.Type is not INamedTypeSymbol { DelegateInvokeMethod: { ReturnsVoid: true } invoke } || invoke.Parameters.Any(static parameter => parameter.RefKind != RefKind.None || parameter.Type.IsRefLikeType || parameter.Type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer))
+			if (GetUnsupportedEventReason(@event, marshalableAttribute) is string reason)
 			{
-				diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, @event.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), "proxy events must be instance events with synchronous, void-returning delegates and by-value, non-ref-like parameters"));
-			}
-			else if (invoke.Parameters.Any(parameter => ContainsRpcMarshalableInterface(parameter.Type, marshalableAttribute)))
-			{
-				diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, @event.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), "proxy events cannot accept RPC-marshalable interface parameters"));
+				diagnostics.Add(DiagnosticInfo.Create(isMethodDiagnostic: false, @event.Locations.FirstOrDefault(), interfaceSymbol.ToDisplayString(), reason));
 			}
 		}
 	}
@@ -393,7 +396,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				continue;
 			}
 
-			foreach (IMethodSymbol method in currentInterface.GetMembers().OfType<IMethodSymbol>().Where(static method => method.MethodKind == MethodKind.Ordinary))
+			foreach (IMethodSymbol method in currentInterface.GetMembers().OfType<IMethodSymbol>().Where(static method => method.MethodKind == MethodKind.Ordinary && method.DeclaredAccessibility != Accessibility.Private))
 			{
 				if (method.ExplicitInterfaceImplementations.Any(static implementation => IsShapeableInterface(implementation.ContainingType)))
 				{
@@ -475,70 +478,6 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		return null;
 	}
 
-	private static string? GetUnsupportedSignatureReason(IMethodSymbol method, bool isMarshalable, INamedTypeSymbol? marshalableAttribute)
-	{
-		if (method.ReturnsVoid && method.Parameters.Any(parameter => ContainsRpcMarshalableInterface(parameter.Type, marshalableAttribute)))
-		{
-			return "notification methods cannot accept RPC-marshalable interface parameters";
-		}
-
-		if (method.IsGenericMethod)
-		{
-			return "generic methods are not supported yet";
-		}
-
-		bool isDisposeMethod = method.Name == KnownApis.Dispose && method.ContainingType.ToDisplayString() == KnownApis.IDisposable && method.Parameters.Length == 0;
-		if (isMarshalable && !isDisposeMethod && method.ReturnsVoid)
-		{
-			return "marshalable interface methods must return Task or ValueTask";
-		}
-
-		for (int parameterIndex = 0; parameterIndex < method.Parameters.Length; parameterIndex++)
-		{
-			IParameterSymbol parameter = method.Parameters[parameterIndex];
-			if (parameter.RefKind is not RefKind.None)
-			{
-				return "ref, out, and in parameters are not supported yet";
-			}
-
-			if (IsCancellationToken(parameter.Type) && parameterIndex != method.Parameters.Length - 1)
-			{
-				return "CancellationToken parameters must appear last";
-			}
-
-			if (parameter.IsParams)
-			{
-				return "params parameters are not supported yet";
-			}
-		}
-
-		if (GetMethodKind(method.ReturnType, out _) is ProxyMethodKind.Unsupported)
-		{
-			return $"return type '{method.ReturnType.ToDisplayString()}' is not supported yet";
-		}
-
-		return null;
-	}
-
-	private static bool ContainsRpcMarshalableInterface(ITypeSymbol type, INamedTypeSymbol? marshalableAttribute)
-	{
-		if (type is IArrayTypeSymbol arrayType)
-		{
-			return ContainsRpcMarshalableInterface(arrayType.ElementType, marshalableAttribute);
-		}
-
-		if (type is not INamedTypeSymbol namedType)
-		{
-			return false;
-		}
-
-		return (namedType.TypeKind == TypeKind.Interface && HasAttribute(namedType, marshalableAttribute))
-			|| namedType.TypeArguments.Any(argument => ContainsRpcMarshalableInterface(argument, marshalableAttribute));
-	}
-
-	private static bool IsCancellationToken(ITypeSymbol type)
-		=> type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == KnownApis.CancellationToken;
-
 	private static bool HasStaticTypeShapeResolver(Compilation compilation)
 	{
 		INamedTypeSymbol? resolver = compilation.GetTypeByMetadataName(KnownApis.TypeShapeResolver);
@@ -558,33 +497,6 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		string? explicitRpcName = GetExplicitRpcName(method, methodShapeAttribute);
 
 		return new MethodInfo(method, payloadParameters, hasCancellationToken, methodKind, resultTypeName, explicitRpcName, optionalInterfaceId, shapeProvider.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
-	}
-
-	/// <summary>
-	/// Gets the RPC method name explicitly assigned via <c>[MethodShape(Name = "...")]</c> on the given method, if any.
-	/// </summary>
-	/// <param name="method">The method to inspect.</param>
-	/// <param name="methodShapeAttribute">The symbol for the PolyType method shape attribute, if available.</param>
-	/// <returns>The explicit name, or <see langword="null"/> if the method has no explicit <c>MethodShapeAttribute.Name</c>.</returns>
-	private static string? GetExplicitRpcName(IMethodSymbol method, INamedTypeSymbol? methodShapeAttribute)
-	{
-		foreach (AttributeData attribute in method.GetAttributes())
-		{
-			if (methodShapeAttribute is null || !SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, methodShapeAttribute))
-			{
-				continue;
-			}
-
-			foreach (KeyValuePair<string, TypedConstant> namedArgument in attribute.NamedArguments)
-			{
-				if (namedArgument.Key == KnownApis.MethodShapeName && namedArgument.Value.Value is string explicitName)
-				{
-					return explicitName;
-				}
-			}
-		}
-
-		return null;
 	}
 
 	private static ProxyMethodKind GetMethodKind(ITypeSymbol returnType, out string? resultTypeName)
@@ -1283,36 +1195,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 	}
 
-	private static class KnownApis
-	{
-		internal const string JsonRpcProxyInterfaceGroupAttribute = "Nerdbank.JsonRpc.JsonRpcProxyInterfaceGroupAttribute";
-		internal const string GenerateJsonRpcProxyAttribute = "Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute";
-		internal const string RpcMarshalableAttribute = "Nerdbank.JsonRpc.RpcMarshalableAttribute";
-		internal const string RpcMarshalableOptionalInterfaceAttribute = "Nerdbank.JsonRpc.RpcMarshalableOptionalInterfaceAttribute";
-		internal const string GenerateShapeAttribute = "PolyType.GenerateShapeAttribute";
-		internal const string TypeShapeProviderAttributeName = "TypeShapeProviderAttribute";
-		internal const string MethodShapeAttribute = "PolyType.MethodShapeAttribute";
-		internal const string EventShapeAttribute = "PolyType.EventShapeAttribute";
-		internal const string TypeShapeResolver = "PolyType.Abstractions.TypeShapeResolver";
-		internal const string CallScopedLifetime = "CallScopedLifetime";
-		internal const string MethodShapeName = "Name";
-		internal const string TypeShapeResolve = "Resolve";
-		internal const string TypeShapeResolveDynamicOrThrow = "ResolveDynamicOrThrow";
-		internal const string IDisposable = "System.IDisposable";
-		internal const string PolyTypeAssembly = "PolyType";
-		internal const string PolyTypeNamespace = "PolyType";
-		internal const string IShapeableMetadataName = "IShapeable`1";
-		internal const string Dispose = "Dispose";
-		internal const string CancellationToken = "global::System.Threading.CancellationToken";
-		internal const string ValueTaskOfT = "global::System.Threading.Tasks.ValueTask<TResult>";
-		internal const string IAsyncEnumerableOfT = "global::System.Collections.Generic.IAsyncEnumerable<T>";
-		internal const string TaskOfT = "global::System.Threading.Tasks.Task<TResult>";
-		internal const string ValueTask = "global::System.Threading.Tasks.ValueTask";
-		internal const string Task = "global::System.Threading.Tasks.Task";
-		internal const string Void = "void";
-	}
-
-	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, INamedTypeSymbol? EventShapeAttribute, ImmutableArray<MethodInfo> Methods, ImmutableArray<OptionalInterfaceInfo> OptionalInterfaces, bool HasStaticTypeShapeResolver, bool IsMarshalable, bool IsCallScoped, bool HasGenerateProxyAttribute, ImmutableArray<DiagnosticInfo> Diagnostics)
+	private sealed record InterfaceInfo(INamedTypeSymbol Symbol, INamedTypeSymbol? EventShapeAttribute, ImmutableArray<MethodInfo> Methods, ImmutableArray<OptionalInterfaceInfo> OptionalInterfaces, bool HasStaticTypeShapeResolver, bool IsMarshalable, bool IsCallScoped, bool HasContractAttribute, ImmutableArray<DiagnosticInfo> Diagnostics)
 	{
 		internal ImmutableArray<ImmutableArray<OptionalInterfaceInfo>> ProxyGroups { get; init; } = [];
 

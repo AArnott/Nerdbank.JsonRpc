@@ -21,6 +21,61 @@ using Xunit;
 public class ClientProxyGeneratorTests
 {
 	[Test]
+	[Arguments("")]
+	[Arguments("(GenerateProxy = true)")]
+	public async Task ContractGeneratesProxyByDefault(string options)
+	{
+		string source = /* lang=c#-test */ $$"""
+			using Nerdbank.JsonRpc;
+			[JsonRpcContract{{options}}]
+			internal partial interface IService { }
+			""";
+
+		GeneratorRunResult result = await RunGeneratorAsync(source);
+		if (GetProxyClasses(result) is not [{ Identifier.ValueText: "ServiceProxy" }])
+		{
+			throw new InvalidOperationException("The contract should generate exactly one ServiceProxy.");
+		}
+	}
+
+	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task DisabledProxyGenerationProducesNoSourcesOrGeneratorDiagnostics(bool marshalable)
+	{
+		string source = /* lang=c#-test */ $$"""
+			using Nerdbank.JsonRpc;
+			[JsonRpcContract(GenerateProxy = false)]
+			{{(marshalable ? "[RpcMarshalable]" : string.Empty)}}
+			internal interface IService { }
+			""";
+
+		GeneratorRunResult result = await RunGeneratorAsync(source);
+		if (!result.GeneratedSources.IsEmpty || !result.Diagnostics.IsEmpty)
+		{
+			throw new InvalidOperationException("Disabling proxy generation should emit no sources or generator diagnostics.");
+		}
+	}
+
+	[Test]
+	public async Task ContractAndMarshalableAttributesDoNotGenerateDuplicateProxies()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System;
+			using Nerdbank.JsonRpc;
+			[JsonRpcContract]
+			[RpcMarshalable]
+			internal partial interface IService : IDisposable { }
+			""";
+
+		GeneratorRunResult result = await RunGeneratorAsync(Source);
+		if (GetProxyClasses(result).Length != 1)
+		{
+			throw new InvalidOperationException("Combining contract and marshalable attributes should generate exactly one proxy.");
+		}
+	}
+
+	[Test]
 	public async Task PrivateEventsAreExcludedFromValidationAndEmission()
 	{
 		const string Source = /* lang=c#-test */ """
@@ -32,7 +87,7 @@ public class ClientProxyGeneratorTests
 				private event Func<int> Hidden { add { } remove { } }
 			}
 
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			internal partial interface IPrivateEvents : IBaseEvents
 			{
 				private event Action Hidden { add { } remove { } }
@@ -56,7 +111,7 @@ public class ClientProxyGeneratorTests
 				event EventHandler<T>? Changed;
 			}
 
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 			internal partial interface IEvents : IBaseEvents<int>
 			{
@@ -100,7 +155,7 @@ public class ClientProxyGeneratorTests
 
 			internal delegate void RefLikeHandler(Span<int> value);
 
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			internal partial interface IEvents
 			{
 				{{(isStatic ? "static abstract " : string.Empty)}}event {{handlerType}} {|#0:Changed|};
@@ -134,7 +189,7 @@ public class ClientProxyGeneratorTests
 				event Action<{{parameterType}}> {|#0:Changed|};
 			}
 
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			internal partial interface IEvents : IBaseEvents
 			{
 			}
@@ -153,7 +208,7 @@ public class ClientProxyGeneratorTests
 			using System.Threading.Tasks;
 			using Nerdbank.JsonRpc;
 
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			internal partial interface IUnsupportedProxySignatures
 			{
 				ValueTask<T> {|#1:GenericAsync|}<T>(T value, CancellationToken cancellationToken);
@@ -202,7 +257,7 @@ public class ClientProxyGeneratorTests
 				ValueTask<int> GetAsync(int value = 42, CancellationToken cancellationToken = default);
 			}
 
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			internal partial interface IOptionalParameters : IBaseContract
 			{
 				Task<string?> EchoAsync(string? value = "default", CancellationToken cancellationToken = default);
@@ -229,7 +284,7 @@ public class ClientProxyGeneratorTests
 			using System.Threading.Tasks;
 			using Nerdbank.JsonRpc;
 
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			internal partial interface {|#0:IGenericProxy|}<T>
 			{
 				ValueTask<int> GetAsync(T value, CancellationToken cancellationToken);
@@ -237,7 +292,7 @@ public class ClientProxyGeneratorTests
 
 			internal static class Container
 			{
-				[GenerateJsonRpcProxy]
+				[JsonRpcContract]
 				internal partial interface {|#1:INestedProxy|}
 				{
 					ValueTask<int> GetAsync(int value, CancellationToken cancellationToken);
@@ -323,7 +378,7 @@ public class ClientProxyGeneratorTests
 			using System.Threading.Tasks;
 			using Nerdbank.JsonRpc;
 
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			internal interface {|#0:INonPartialProxy|}
 			{
 				ValueTask<int> GetAsync(int value, CancellationToken cancellationToken);
@@ -348,7 +403,7 @@ public class ClientProxyGeneratorTests
 
 			namespace First
 			{
-				[GenerateJsonRpcProxy]
+				[JsonRpcContract]
 				[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 				internal partial interface ICalculator
 				{
@@ -358,7 +413,7 @@ public class ClientProxyGeneratorTests
 
 			namespace Second
 			{
-				[GenerateJsonRpcProxy]
+				[JsonRpcContract]
 				[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 				internal partial interface ICalculator
 				{
@@ -386,7 +441,7 @@ public class ClientProxyGeneratorTests
 				Task CallAsync();
 			}
 
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 			internal partial interface INotificationContract
 			{
@@ -508,7 +563,7 @@ public class ClientProxyGeneratorTests
 			using Nerdbank.JsonRpc;
 			using PolyType;
 
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 			internal partial interface IKeywordParameters
 			{
@@ -529,7 +584,7 @@ public class ClientProxyGeneratorTests
 			using Nerdbank.JsonRpc;
 			using PolyType;
 
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			internal partial interface ICollidingLocals
 			{
 				Task<string?> GetAsync(string arguments, string argumentsBuilder, CancellationToken cancellationToken);
@@ -553,7 +608,7 @@ public class ClientProxyGeneratorTests
 			using System.Threading.Tasks;
 			using Nerdbank.JsonRpc;
 
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			internal partial interface ICollidingNames
 			{
 				Task NerdbankJsonRpc_ProxyFactoryAttribute();
@@ -635,7 +690,7 @@ public class ClientProxyGeneratorTests
 	{
 		string source = /* lang=c#-test */ $$"""
 			using Nerdbank.JsonRpc;
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			[JsonRpcProxyInterfaceGroup({{argument}})]
 			internal partial interface {|#0:IContract|} { }
 			""";
@@ -706,9 +761,9 @@ public class ClientProxyGeneratorTests
 	{
 		const string Source = /* lang=c#-test */ """
 			using Nerdbank.JsonRpc;
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			public partial interface IPublicContract { }
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			internal partial interface IInternalContract { }
 			""";
 		GeneratorRunResult result = await RunGeneratorAsync(Source, publicExtensions);
@@ -728,13 +783,13 @@ public class ClientProxyGeneratorTests
 		const string FirstContract = /* lang=c#-test */ """
 			using Nerdbank.JsonRpc;
 			namespace Contracts;
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			public partial interface IExtra { }
 			""";
 		const string SecondContract = /* lang=c#-test */ """
 			using Nerdbank.JsonRpc;
 			namespace Contracts;
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			[JsonRpcProxyInterfaceGroup(typeof(IExtra))]
 			public partial interface IRoot { }
 			""";
@@ -751,7 +806,7 @@ public class ClientProxyGeneratorTests
 
 		CSharpParseOptions parseOptions = new(LanguageVersion.Preview);
 		ImmutableArray<MetadataReference> references = await ReferenceAssemblies.Net.Net90.ResolveAsync(LanguageNames.CSharp, CancellationToken.None);
-		references = references.Add(MetadataReference.CreateFromFile(typeof(GenerateJsonRpcProxyAttribute).Assembly.Location));
+		references = references.Add(MetadataReference.CreateFromFile(typeof(JsonRpcContractAttribute).Assembly.Location));
 		MetadataReference first = Compile("FirstContracts", FirstContract, references, generate: true);
 		MetadataReference second = Compile("SecondContracts", SecondContract, references.Add(first), generate: true);
 		Compile("Consumer", Consumer, references.Add(first).Add(second), generate: false);
@@ -796,17 +851,17 @@ public class ClientProxyGeneratorTests
 			using System.Threading.Tasks;
 			using Nerdbank.JsonRpc;
 
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			internal partial interface IFirst { event System.Action Changed; }
 
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			internal partial interface ISecond { }
 			""";
 		const string ChangedContracts = /* lang=c#-test */ """
 			using System.Threading.Tasks;
 			using Nerdbank.JsonRpc;
 
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			internal partial interface IFirst
 			{
 				Task<int> GetAsync();
@@ -814,7 +869,7 @@ public class ClientProxyGeneratorTests
 				event System.Action<int> Changed;
 			}
 
-			[GenerateJsonRpcProxy]
+			[JsonRpcContract]
 			internal partial interface ISecond { }
 			""";
 
@@ -822,7 +877,7 @@ public class ClientProxyGeneratorTests
 		SyntaxTree contractsTree = CSharpSyntaxTree.ParseText(Contracts, parseOptions, "Contracts.cs");
 		ImmutableArray<MetadataReference> references = await ReferenceAssemblies.Net.Net90.ResolveAsync(LanguageNames.CSharp, CancellationToken.None);
 		references = references
-			.Add(MetadataReference.CreateFromFile(typeof(GenerateJsonRpcProxyAttribute).Assembly.Location))
+			.Add(MetadataReference.CreateFromFile(typeof(JsonRpcContractAttribute).Assembly.Location))
 			.Add(MetadataReference.CreateFromFile(typeof(MessagePackSerializer).Assembly.Location))
 			.Add(MetadataReference.CreateFromFile(typeof(Sequence<>).Assembly.Location))
 			.Add(MetadataReference.CreateFromFile(typeof(ITypeShape<>).Assembly.Location));
@@ -862,7 +917,7 @@ public class ClientProxyGeneratorTests
 		CSharpCompilation compilationWithChangedProxy = compilationWithUnrelatedSource.ReplaceSyntaxTree(contractsTree, changedTree);
 		driver = driver.RunGenerators(compilationWithChangedProxy);
 		GeneratorRunResult changedRun = driver.GetRunResult().Results.Single();
-		IncrementalStepRunReason[] outputReasons = changedRun.TrackedSteps["GenerateJsonRpcProxyOutputs"]
+		IncrementalStepRunReason[] outputReasons = changedRun.TrackedSteps["JsonRpcContractOutputs"]
 			.SelectMany(static step => step.Outputs)
 			.Select(static output => output.Reason)
 			.ToArray();
@@ -873,7 +928,7 @@ public class ClientProxyGeneratorTests
 		}
 
 		static bool AreOutputsStable(GeneratorRunResult run)
-			=> run.TrackedSteps["GenerateJsonRpcProxyOutputs"]
+			=> run.TrackedSteps["JsonRpcContractOutputs"]
 				.SelectMany(static step => step.Outputs)
 				.All(static output => output.Reason is IncrementalStepRunReason.Cached or IncrementalStepRunReason.Unchanged);
 	}
@@ -888,7 +943,7 @@ public class ClientProxyGeneratorTests
 	{
 		CSharpParseOptions parseOptions = new(LanguageVersion.Preview);
 		ImmutableArray<MetadataReference> references = await ReferenceAssemblies.Net.Net90.ResolveAsync(LanguageNames.CSharp, CancellationToken.None);
-		references = references.Add(MetadataReference.CreateFromFile(typeof(GenerateJsonRpcProxyAttribute).Assembly.Location));
+		references = references.Add(MetadataReference.CreateFromFile(typeof(JsonRpcContractAttribute).Assembly.Location));
 		CSharpCompilation compilation = CSharpCompilation.Create(
 			"ProxyGroupTests",
 			[CSharpSyntaxTree.ParseText(source, parseOptions)],

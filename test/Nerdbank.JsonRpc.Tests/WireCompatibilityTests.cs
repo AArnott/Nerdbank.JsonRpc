@@ -1,4 +1,4 @@
-﻿// Copyright (c) Andrew Arnott. All rights reserved.
+// Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Buffers;
@@ -24,7 +24,7 @@ internal partial interface IWireCallScoped
 	Task<int> Add(int value, CancellationToken cancellationToken);
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IWireService
 {

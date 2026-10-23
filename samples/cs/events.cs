@@ -9,7 +9,7 @@ namespace Events;
 #pragma warning disable SA1649 // The sample file name matches its documentation topic rather than its type.
 
 #region proxy-contract
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 public partial interface IWatcher
 {

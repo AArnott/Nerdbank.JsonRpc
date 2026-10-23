@@ -3,7 +3,7 @@
 
 using PolyType;
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface ICalculator
 {
@@ -18,7 +18,7 @@ internal partial interface ICalculator
 	void SetLastValue(int value, CancellationToken cancellationToken);
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IDisposableContract
 {
@@ -33,13 +33,13 @@ internal partial interface IDisposableContract
 	Task UseConcreteDisposableContainerAsync(ConcreteDisposableContainer value, CancellationToken cancellationToken);
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface ICompositeCalculator : ICalculator
 {
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IOptionalParameterContract
 {
@@ -54,7 +54,7 @@ internal interface INotGeneratedProxy
 {
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IGeneratedMemberNameCollision
 {
@@ -62,7 +62,7 @@ internal partial interface IGeneratedMemberNameCollision
 }
 
 #pragma warning disable SA1300 // Element should begin with upper-case letter
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IGeneratedTransformFieldCollision
 {
@@ -77,7 +77,7 @@ internal interface IInheritedGeneratedMemberNameCollisionBase
 	Task NerdbankJsonRpc_MethodNameTransform(CancellationToken cancellationToken);
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IInheritedGeneratedMemberNameCollision : IInheritedGeneratedMemberNameCollisionBase
 {
@@ -89,7 +89,7 @@ internal interface IProxyEventBase
 	event EventHandler<int>? Changed;
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IProxyEvents : IProxyEventBase
 {
@@ -108,19 +108,19 @@ internal interface INullableProxyEventBase<T>
 	event Action<T>? Changed;
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface INullableProxyEvents : INullableProxyEventBase<string?>
 {
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface ICapabilityService : ICalculator, ISubtractCapability
 {
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [JsonRpcProxyInterfaceGroup]
 [JsonRpcProxyInterfaceGroup(typeof(ISubtractCapability))]
 [JsonRpcProxyInterfaceGroup(typeof(IGroupedEventCapability))]
@@ -135,7 +135,7 @@ internal partial interface IGroupedEventCapability
 	event EventHandler<int>? Changed;
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [JsonRpcProxyInterfaceGroup(typeof(ISecondNamedOperation))]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IFirstNamedOperation
@@ -157,14 +157,14 @@ internal partial interface ISecondNamedOperation
 	Task<string> DescribeAsync(CancellationToken cancellationToken);
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [JsonRpcProxyInterfaceGroup(typeof(Nerdbank.JsonRpc.TestContracts.IExternalCapability))]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IExternalGroupedRoot
 {
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [JsonRpcProxyInterfaceGroup(typeof(IInheritedOperations))]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IInheritedGroupedRoot
@@ -188,7 +188,7 @@ internal interface ISecondOperation
 	Task<int> PingAsync(CancellationToken cancellationToken);
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [JsonRpcProxyInterfaceGroup(typeof(IWitnessCapability))]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IWitnessGroupedRoot
@@ -202,7 +202,7 @@ internal interface IWitnessCapability
 	Task<WitnessPayload> EchoWitnessAsync(WitnessPayload value, CancellationToken cancellationToken);
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [JsonRpcProxyInterfaceGroup]
 [JsonRpcProxyInterfaceGroup(typeof(ISubtractCapability))]
 [JsonRpcProxyInterfaceGroup(typeof(IDerivedSubtractCapability))]

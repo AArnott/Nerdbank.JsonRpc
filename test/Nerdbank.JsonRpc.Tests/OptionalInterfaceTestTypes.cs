@@ -4,7 +4,7 @@
 using Nerdbank.JsonRpc.TestContracts;
 using PolyType;
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 internal partial interface IOptionalInterfaceService
 {

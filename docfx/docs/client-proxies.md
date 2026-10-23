@@ -1,6 +1,6 @@
 # Generated client proxies
 
-The client proxy generator is included in the `Nerdbank.JsonRpc` NuGet package as a C# analyzer. It creates a typed implementation of an interface annotated with <xref:Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute>. It uses PolyType-generated method shapes for arguments and results. [Getting Started](getting-started.md) shows the contract declaration and how to call <xref:Nerdbank.JsonRpc.JsonRpc.Attach*> on a connection to obtain the proxy; you do not need to construct the generated implementation yourself.
+The client proxy generator is included in the `Nerdbank.JsonRpc` NuGet package as a C# analyzer. It creates a typed implementation of an interface annotated with <xref:Nerdbank.JsonRpc.JsonRpcContractAttribute>. It uses PolyType-generated method shapes for arguments and results. [Getting Started](getting-started.md) shows the contract declaration and how to call <xref:Nerdbank.JsonRpc.JsonRpc.Attach*> on a connection to obtain the proxy; you do not need to construct the generated implementation yourself.
 
 ## Choosing request return types
 
@@ -17,6 +17,12 @@ Discarding an awaitable does not cancel its request. Response processing and enc
 This guidance applies to the ValueTasks returned by the connection and batch request APIs as well as generated proxies. It does not change the wire protocol, and client and server interfaces can use different supported asynchronous return types.
 
 ## Supported contracts
+
+<xref:Nerdbank.JsonRpc.JsonRpcContractAttribute> identifies the RPC contract and enables [contract analysis](../analyzers/index.md), including detection of colliding wire names.
+It replaces the former `GenerateJsonRpcProxyAttribute`.
+Set <xref:Nerdbank.JsonRpc.JsonRpcContractAttribute.GenerateProxy?displayProperty=nameWithType> to `false` to keep these checks without generating a client proxy:
+
+[!code-csharp[](../../samples/cs/contract-validation.cs#target-only)]
 
 Generated proxy contracts must be `partial`, non-nested, non-generic interfaces. Their methods must be non-generic and may return `ValueTask<T>`, `Task<T>`, `ValueTask`, or `Task` for requests, `IAsyncEnumerable<T>` for streaming requests, or `void` for notifications. Generated proxies also implement instance events with synchronous, void-returning delegate types and by-value, non-ref-like parameters, including inherited events.
 Attach the proxy and subscribe before starting the connection to avoid losing early notifications; see [Events as notifications](events.md#receiving-the-notifications).

@@ -6,14 +6,14 @@ using PolyType;
 
 namespace ClientProxies;
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 public partial interface ICalculator
 {
     ValueTask<int> AddAsync(int a, int b, CancellationToken cancellationToken);
 }
 
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
 public partial interface IExtendedCalculator : ICalculator
 {
@@ -21,7 +21,7 @@ public partial interface IExtendedCalculator : ICalculator
 }
 
 #region proxy-interface-groups
-[GenerateJsonRpcProxy]
+[JsonRpcContract]
 [JsonRpcProxyInterfaceGroup]
 [JsonRpcProxyInterfaceGroup(typeof(IResettableCalculator))]
 [GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
