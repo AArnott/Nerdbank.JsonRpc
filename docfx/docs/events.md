@@ -44,7 +44,7 @@ Handlers can also be added and removed after startup, with ordinary CLR multicas
 Notifications dispatched while no handler is subscribed are discarded, not buffered or replayed.
 Proxy events run through the connection's normal dispatch synchronization context, and handler exceptions use the same logging and error handling as local target methods.
 
-<xref:Nerdbank.JsonRpc.JsonRpcProxyOptions.EventNameTransform> controls incoming event names independently of method names and defaults to <xref:Nerdbank.JsonRpc.CommonMethodNameTransforms.CamelCase>.
+<xref:Nerdbank.JsonRpc.JsonRpcProxyOptions.EventNameTransform> controls incoming event names independently of method names and defaults to <xref:Nerdbank.JsonRpc.CommonMethodNameTransforms.CamelCase(System.String)?displayProperty=nameWithType>.
 An explicit <xref:PolyType.EventShapeAttribute.Name> bypasses the transform.
 Use <xref:Nerdbank.JsonRpc.CommonMethodNameTransforms.Identity> when receiving events from a StreamJsonRpc peer with default naming.
 Event receivers are registered for the connection lifetime, including for proxies attached to a batch.
