@@ -118,6 +118,86 @@ public class CollidingMethodNamesTests
 	}
 
 	[Test]
+	public async Task UnrelatedBaseDeclarationsWithIdenticalSignaturesCollide()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			interface ILeft { Task PingAsync(); }
+			interface IRight { Task PingAsync(); }
+			[JsonRpcContract(GenerateProxy = false)]
+			interface {|#0:IDerived|} : ILeft, IRight { }
+			""";
+
+		await Verify.VerifyAsync(Source, Verify.Diagnostic("NBJSONRPC002", "IRight.PingAsync()", "ILeft.PingAsync()", "IDerived", "ping").WithLocation(0));
+	}
+
+	[Test]
+	[Arguments("protected")]
+	[Arguments("internal")]
+	[Arguments("private protected")]
+	public async Task NonPublicHelpersAreNotRpcMethods(string accessibility)
+	{
+		string source = /* lang=c#-test */ $$"""
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+			using PolyType;
+
+			[JsonRpcContract(GenerateProxy = false)]
+			[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+			partial interface IFoo
+			{
+				Task FooAsync();
+				{{accessibility}} Task Foo() => Task.CompletedTask;
+			}
+			""";
+
+		await Verify.VerifyAsync(source);
+	}
+
+	[Test]
+	public async Task ExplicitlyIncludedNonPublicMethodIsAnalyzed()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+			using PolyType;
+
+			[JsonRpcContract(GenerateProxy = false)]
+			[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+			partial interface IFoo
+			{
+				Task FooAsync();
+				[MethodShape]
+				protected Task {|#0:Foo|}() => Task.CompletedTask;
+			}
+			""";
+
+		await Verify.VerifyAsync(Source, Verify.Diagnostic("NBJSONRPC002", "IFoo.Foo()", "IFoo.FooAsync()", "IFoo", "foo").WithLocation(0));
+	}
+
+	[Test]
+	public async Task ExplicitlyIgnoredMethodDoesNotCollide()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+			using PolyType;
+
+			[JsonRpcContract(GenerateProxy = false)]
+			partial interface IFoo
+			{
+				Task FooAsync();
+				[MethodShape(Ignore = true)]
+				Task Foo();
+			}
+			""";
+
+		await Verify.VerifyAsync(Source);
+	}
+
+	[Test]
 	public async Task DiamondInheritanceDoesNotDuplicateMethods()
 	{
 		const string Source = /* lang=c#-test */ """

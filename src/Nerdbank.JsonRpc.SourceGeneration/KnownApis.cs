@@ -42,6 +42,9 @@ internal static class KnownApis
 	/// <summary>The explicit shape name member name.</summary>
 	internal const string MethodShapeName = "Name";
 
+	/// <summary>The method shape exclusion member name.</summary>
+	internal const string MethodShapeIgnore = "Ignore";
+
 	/// <summary>The static shape resolution method name.</summary>
 	internal const string TypeShapeResolve = "Resolve";
 

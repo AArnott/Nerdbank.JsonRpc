@@ -8,6 +8,8 @@
 
 Two methods on an interface annotated with <xref:Nerdbank.JsonRpc.JsonRpcContractAttribute> or <xref:Nerdbank.JsonRpc.RpcMarshalableAttribute> map to the same JSON-RPC method name under the default naming policy.
 Inherited methods are included.
+Distinct declarations on unrelated base interfaces remain distinct, even when their CLR signatures match; diamond inheritance of the same declaration is counted only once.
+Non-public helpers are excluded unless explicitly included with <xref:PolyType.MethodShapeAttribute>, and methods marked with <xref:PolyType.MethodShapeAttribute.Ignore> are excluded.
 The diagnostic identifies the conflicting member, or the derived contract when the conflicting member is inherited.
 
 ## Why this is reported

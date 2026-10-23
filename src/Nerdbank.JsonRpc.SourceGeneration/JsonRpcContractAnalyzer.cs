@@ -70,7 +70,6 @@ public sealed class JsonRpcContractAnalyzer : DiagnosticAnalyzer
 			SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, contractAttribute)
 			&& attribute.NamedArguments.Any(static argument => argument.Key == KnownApis.GenerateProxy && argument.Value.Value is false));
 		Dictionary<string, IMethodSymbol> methodsByName = new(StringComparer.Ordinal);
-		HashSet<string> signatures = new(StringComparer.Ordinal);
 		foreach (INamedTypeSymbol type in new[] { contract }.Concat(contract.AllInterfaces))
 		{
 			context.CancellationToken.ThrowIfCancellationRequested();
@@ -81,7 +80,11 @@ public sealed class JsonRpcContractAnalyzer : DiagnosticAnalyzer
 
 			foreach (ISymbol member in type.GetMembers())
 			{
-				if (member.DeclaredAccessibility == Accessibility.Private)
+				AttributeData? methodShape = member is IMethodSymbol && methodShapeAttribute is not null
+					? member.GetAttributes().FirstOrDefault(attribute => SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, methodShapeAttribute))
+					: null;
+				if ((member.DeclaredAccessibility != Accessibility.Public && methodShape is null)
+					|| methodShape?.NamedArguments.Any(static argument => argument.Key == KnownApis.MethodShapeIgnore && argument.Value.Value is true) is true)
 				{
 					continue;
 				}
@@ -124,13 +127,6 @@ public sealed class JsonRpcContractAnalyzer : DiagnosticAnalyzer
 				}
 
 				string rpcName = GetExplicitRpcName(method, methodShapeAttribute) ?? GetDefaultRpcName(method.Name);
-				string signature = string.Join("|", new[] { rpcName, method.Name, method.ReturnType.ToDisplayString() }
-					.Concat(method.Parameters.Select(static parameter => $"{parameter.RefKind}:{parameter.Type.ToDisplayString()}")));
-				if (!signatures.Add(signature))
-				{
-					continue;
-				}
-
 				if (methodsByName.TryGetValue(rpcName, out IMethodSymbol? other))
 				{
 					context.ReportDiagnostic(Diagnostic.Create(CollidingMethodNames, location, method.ToDisplayString(), other.ToDisplayString(), contract.ToDisplayString(), rpcName));
