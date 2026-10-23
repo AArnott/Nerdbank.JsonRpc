@@ -834,7 +834,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <returns>The error details to send to the peer.</returns>
 	internal JsonRpcErrorDetails CreateApplicationError(Exception exception, JsonRpcErrorCode code)
 	{
-		if (exception is JsonRpcException rpcException)
+		if (exception is JsonRpcException rpcException && exception is not RemoteInvocationException)
 		{
 			return rpcException.ErrorDetails;
 		}
