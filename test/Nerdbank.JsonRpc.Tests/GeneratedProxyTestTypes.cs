@@ -84,6 +84,25 @@ internal partial interface IInheritedGeneratedMemberNameCollision : IInheritedGe
 	Task OtherMethod(CancellationToken cancellationToken);
 }
 
+internal interface IProxyEventBase
+{
+	event EventHandler<int>? Changed;
+}
+
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IProxyEvents : IProxyEventBase
+{
+	event EventHandler? Empty;
+
+	event Action? Pulse;
+
+	event Action<object?, int>? Lookalike;
+
+	[EventShape(Name = "custom.pair")]
+	event Action<int, string>? Pair;
+}
+
 internal sealed class Calculator : ICalculator
 {
 	internal TaskCompletionSource<int> NotificationReceived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

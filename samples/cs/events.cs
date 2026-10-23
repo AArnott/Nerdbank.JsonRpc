@@ -8,6 +8,17 @@ namespace Events;
 
 #pragma warning disable SA1649 // The sample file name matches its documentation topic rather than its type.
 
+#region proxy-contract
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+public partial interface IWatcher
+{
+    event EventHandler<decimal>? PriceChanged;
+
+    event Action<int, int>? RangeChanged;
+}
+#endregion
+
 public static class EventsExamples
 {
     public static void Run(JsonRpc rpc, Watcher watcher, bool disableEventForwarding = false)
@@ -36,6 +47,19 @@ public static class EventsExamples
         }
         #endregion
     }
+
+    #region proxy-receiver-registration
+    public static IWatcher AttachWatcher(JsonRpc rpc, EventHandler<decimal> priceChanged)
+    {
+        ArgumentNullException.ThrowIfNull(rpc);
+        ArgumentNullException.ThrowIfNull(priceChanged);
+
+        IWatcher watcher = rpc.Attach<IWatcher>();
+        watcher.PriceChanged += priceChanged;
+        rpc.Start();
+        return watcher;
+    }
+    #endregion
 
     #region remote-receiver-registration
     public static void RegisterReceiver(JsonRpc remoteRpc, WatcherEventReceiver receiver)

@@ -17,7 +17,12 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 	{
 	}
 
-	private delegate void ParameterSetter<TArgumentState>(DispatchRequest request, JsonRpcValue value, ref TArgumentState state);
+	/// <summary>Deserializes one wire argument into invocation state.</summary>
+	/// <typeparam name="TArgumentState">The invocation state type.</typeparam>
+	/// <param name="request">The request being dispatched.</param>
+	/// <param name="value">The serialized argument.</param>
+	/// <param name="state">The state to update.</param>
+	internal delegate void ParameterSetter<TArgumentState>(DispatchRequest request, JsonRpcValue value, ref TArgumentState state);
 
 	private delegate void SpecialParameterSetter<TParameterType, TArgumentState>(in TParameterType reader, ref TArgumentState state);
 
@@ -104,20 +109,67 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 	}
 
 	public override object? VisitMethod<TDeclaringType, TArgumentState, TResult>(IMethodShape<TDeclaringType, TArgumentState, TResult> methodShape, object? state = null)
+		=> this.CreateMethodInvoker(methodShape.Parameters, methodShape.GetArgumentStateConstructor(), methodShape.GetMethodInvoker(), methodShape.ReturnType);
+
+	public override object? VisitParameter<TArgumentState, TParameterType>(IParameterShape<TArgumentState, TParameterType> parameterShape, object? state = null)
+	{
+		Setter<TArgumentState, TParameterType> setter = parameterShape.GetSetter();
+
+		if (typeof(TParameterType) == typeof(CancellationToken) || typeof(TParameterType) == typeof(DispatchRequest))
+		{
+			return new SpecialParameterSetter<TParameterType, TArgumentState>((in TParameterType argument, ref TArgumentState argState) => setter(ref argState, argument));
+		}
+
+		return new ParameterSetter<TArgumentState>((DispatchRequest request, JsonRpcValue argument, ref TArgumentState argState) =>
+		{
+			TParameterType value = request.UserDataSerializer.Deserialize(argument, parameterShape.ParameterType, request.CallState, request.CancellationToken);
+			setter(ref argState, value);
+		});
+	}
+
+	/// <summary>
+	/// Determines whether a delegate type is exactly <see cref="EventHandler"/> or the generic <see cref="EventHandler{TEventArgs}"/>,
+	/// as opposed to some other delegate that merely happens to share their (object? sender, TEventArgs e) parameter shape.
+	/// </summary>
+	/// <param name="delegateType">The delegate type to examine.</param>
+	/// <returns>Whether the delegate is a BCL event handler.</returns>
+	internal static bool IsBclEventHandlerDelegate(Type delegateType)
+	{
+		if (delegateType == typeof(EventHandler))
+		{
+			return true;
+		}
+
+		return delegateType.IsGenericType && delegateType.GetGenericTypeDefinition() == typeof(EventHandler<>);
+	}
+
+	/// <summary>Builds the common argument binding and dispatch pipeline for methods and proxy events.</summary>
+	/// <typeparam name="TDeclaringType">The invocation target type.</typeparam>
+	/// <typeparam name="TArgumentState">The argument state type.</typeparam>
+	/// <typeparam name="TResult">The invocation result type.</typeparam>
+	/// <param name="parameters">The wire parameters.</param>
+	/// <param name="argStateCtor">Creates initialized argument state.</param>
+	/// <param name="invoker">Invokes the target.</param>
+	/// <param name="returnType">The result shape.</param>
+	/// <param name="isEvent">Whether all parameters are ordinary serialized values.</param>
+	/// <param name="parameterOffset">The number of omitted leading parameters.</param>
+	/// <returns>The dispatch callback.</returns>
+	internal MethodInvoker CreateMethodInvoker<TDeclaringType, TArgumentState, TResult>(IReadOnlyList<IParameterShape> parameters, Func<TArgumentState> argStateCtor, MethodInvoker<TDeclaringType, TArgumentState, TResult> invoker, ITypeShape<TResult> returnType, bool isEvent = false, int parameterOffset = 0)
+		where TArgumentState : IArgumentState
 	{
 		SpecialParameterSetter<CancellationToken, TArgumentState>? setCancellationToken = null;
 		SpecialParameterSetter<DispatchRequest, TArgumentState>? setDispatchRequest = null;
-		Memory<ParameterSetter<TArgumentState>> parameterSetters = new ParameterSetter<TArgumentState>[methodShape.Parameters.Count];
-		for (int i = 0; i < methodShape.Parameters.Count; i++)
+		Memory<ParameterSetter<TArgumentState>> parameterSetters = new ParameterSetter<TArgumentState>[parameters.Count];
+		for (int i = 0; i < parameters.Count; i++)
 		{
-			IParameterShape parameter = methodShape.Parameters[i];
-			switch (parameter.Accept(this))
+			IParameterShape parameter = parameters[i];
+			switch (parameter.Accept(isEvent ? ProxyEventVisitor.ParameterVisitor : this))
 			{
-				case SpecialParameterSetter<CancellationToken, TArgumentState> ctSetter when i == methodShape.Parameters.Count - 1:
+				case SpecialParameterSetter<CancellationToken, TArgumentState> ctSetter when i == parameters.Count - 1:
 					setCancellationToken = ctSetter;
 					parameterSetters = parameterSetters[..^1]; // trim the last one because it's special.
 					break;
-				case SpecialParameterSetter<DispatchRequest, TArgumentState> dispatchSetter when i == methodShape.Parameters.Count - 1:
+				case SpecialParameterSetter<DispatchRequest, TArgumentState> dispatchSetter when i == parameters.Count - 1:
 					setDispatchRequest = dispatchSetter;
 					parameterSetters = parameterSetters[..^1];
 					break;
@@ -129,12 +181,9 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			}
 		}
 
-		Func<TArgumentState> argStateCtor = methodShape.GetArgumentStateConstructor();
-		MethodInvoker<TDeclaringType?, TArgumentState, TResult> invoker = methodShape.GetMethodInvoker();
-
 		// Build up a parameter name to index lookup table.
-		SpanDictionary<byte, IParameterShape> parameterNameToIndex = methodShape.Parameters
-			.Where(p => p.ParameterType.Type != typeof(CancellationToken) && p.ParameterType.Type != typeof(DispatchRequest))
+		SpanDictionary<byte, IParameterShape> parameterNameToIndex = parameters
+			.Where(p => isEvent || (p.ParameterType.Type != typeof(CancellationToken) && p.ParameterType.Type != typeof(DispatchRequest)))
 			.ToSpanDictionary(
 			p =>
 			{
@@ -191,7 +240,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 									};
 								}
 
-								index = parameterShape.Position;
+								index = parameterShape.Position - parameterOffset;
 							}
 
 							parameterSetters.Span[index](dispatch, values[i].Value, ref argState);
@@ -240,7 +289,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 				values.Return();
 			}
 
-			var target = (TDeclaringType?)dispatch.TargetInstance;
+			var target = (TDeclaringType)dispatch.TargetInstance!;
 			JsonRpcResponse? response;
 			try
 			{
@@ -262,7 +311,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 					response = new JsonRpcResult
 					{
 						Id = id,
-						Result = dispatch.JsonRpc.SerializeMarshaledResult(result, methodShape.ReturnType, dispatch.CallState, dispatch.JsonRpc.DisposalToken),
+						Result = dispatch.JsonRpc.SerializeMarshaledResult(result, returnType, dispatch.CallState, dispatch.JsonRpc.DisposalToken),
 					};
 				}
 				else
@@ -299,22 +348,6 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 
 			return new DispatchResponse { Response = response, IsError = isError || response is JsonRpcError };
 		}
-	}
-
-	public override object? VisitParameter<TArgumentState, TParameterType>(IParameterShape<TArgumentState, TParameterType> parameterShape, object? state = null)
-	{
-		Setter<TArgumentState, TParameterType> setter = parameterShape.GetSetter();
-
-		if (typeof(TParameterType) == typeof(CancellationToken) || typeof(TParameterType) == typeof(DispatchRequest))
-		{
-			return new SpecialParameterSetter<TParameterType, TArgumentState>((in TParameterType argument, ref TArgumentState argState) => setter(ref argState, argument));
-		}
-
-		return new ParameterSetter<TArgumentState>((DispatchRequest request, JsonRpcValue argument, ref TArgumentState argState) =>
-		{
-			TParameterType value = request.UserDataSerializer.Deserialize(argument, parameterShape.ParameterType, request.CallState, request.CancellationToken);
-			setter(ref argState, value);
-		});
 	}
 
 	/// <summary>
@@ -363,20 +396,6 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 		}
 
 		return transformed;
-	}
-
-	/// <summary>
-	/// Determines whether a delegate type is exactly <see cref="EventHandler"/> or the generic <see cref="EventHandler{TEventArgs}"/>,
-	/// as opposed to some other delegate that merely happens to share their (object? sender, TEventArgs e) parameter shape.
-	/// </summary>
-	private static bool IsBclEventHandlerDelegate(Type delegateType)
-	{
-		if (delegateType == typeof(EventHandler))
-		{
-			return true;
-		}
-
-		return delegateType.IsGenericType && delegateType.GetGenericTypeDefinition() == typeof(EventHandler<>);
 	}
 
 	/// <summary>

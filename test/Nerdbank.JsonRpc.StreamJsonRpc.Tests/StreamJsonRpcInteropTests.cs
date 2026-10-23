@@ -45,12 +45,59 @@ internal partial interface IInteropContract
 	Task<int> EchoDuplex(IDuplexPipe pipe, CancellationToken cancellationToken);
 }
 
+[GenerateJsonRpcProxy]
+[StreamJsonRpc.JsonRpcContract]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IEventInteropContract
+{
+	event EventHandler<int>? Changed;
+}
+
 /// <summary>
 /// Verifies that Nerdbank.JsonRpc is wire-compatible with StreamJsonRpc for every exotic type,
 /// with Nerdbank.JsonRpc acting as both the client and the server.
 /// </summary>
 public class StreamJsonRpcInteropTests : TestBase
 {
+	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task Events_CanSubscribeBeforeListening(bool nerdbankClient)
+	{
+		(IDuplexPipe nerdbankPipe, IDuplexPipe streamPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc nerdbankRpc = new(new JsonRpcJsonChannel(nerdbankPipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited));
+		using StreamRpc streamRpc = new(new StreamJsonRpc.NewLineDelimitedMessageHandler(streamPipe, new StreamJsonRpc.JsonMessageFormatter()));
+		EventInteropSource source = new();
+		IEventInteropContract proxy;
+		if (nerdbankClient)
+		{
+			streamRpc.AddLocalRpcTarget<IEventInteropContract>(source, null);
+			proxy = nerdbankRpc.Attach<IEventInteropContract>(new JsonRpcProxyOptions { EventNameTransform = CommonMethodNameTransforms.Identity });
+		}
+		else
+		{
+			nerdbankRpc.AddRpcTarget<IEventInteropContract>(source, new JsonRpcTargetOptions { EventNameTransform = CommonMethodNameTransforms.Identity });
+			proxy = streamRpc.Attach<IEventInteropContract>();
+		}
+
+		TaskCompletionSource<(object? Sender, int Value)> received = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		proxy.Changed += (sender, value) => received.SetResult((sender, value));
+		if (nerdbankClient)
+		{
+			streamRpc.StartListening();
+			source.Raise(42);
+			nerdbankRpc.Start();
+		}
+		else
+		{
+			nerdbankRpc.Start();
+			source.Raise(42);
+			streamRpc.StartListening();
+		}
+
+		Assert.Equal((proxy, 42), await received.Task.WithCancellation(this.TimeoutToken));
+	}
+
 	[Test]
 	public async Task Primitives_NerdbankClient()
 	{
@@ -344,6 +391,13 @@ public class StreamJsonRpcInteropTests : TestBase
 			await pipe.Output.CompleteAsync();
 			return count;
 		}
+	}
+
+	private sealed class EventInteropSource : IEventInteropContract
+	{
+		public event EventHandler<int>? Changed;
+
+		internal void Raise(int value) => this.Changed?.Invoke(this, value);
 	}
 
 	private sealed class Counter : ICounter
