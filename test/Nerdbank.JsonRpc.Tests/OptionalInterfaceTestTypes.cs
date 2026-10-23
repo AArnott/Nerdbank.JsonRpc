@@ -21,6 +21,10 @@ internal partial interface IOptionalInterfaceService
 	Task<ISiblingCapabilityObject> GetSiblingObjectAsync(CancellationToken cancellationToken);
 
 	Task<ILegacyOptionalObject> GetLegacyObjectAsync(bool optional, CancellationToken cancellationToken);
+
+	Task<IWitnessOptionalObject> GetWitnessObjectAsync(CancellationToken cancellationToken);
+
+	Task<IInheritedOptionalObject> GetInheritedObjectAsync(bool derived, CancellationToken cancellationToken);
 }
 
 [RpcMarshalable]
@@ -94,8 +98,46 @@ internal partial interface IClientCapability : ICommonCapability
 {
 }
 
+[RpcMarshalable]
+[RpcMarshalableOptionalInterface(1, typeof(IWitnessOptionalCapability))]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IWitnessOptionalObject : IDisposable
+{
+}
+
+internal interface IWitnessOptionalCapability
+{
+	Task<int> WitnessValueAsync(CancellationToken cancellationToken);
+}
+
+[RpcMarshalable]
+[RpcMarshalableOptionalInterface(7, typeof(IBaseOptionalCapability))]
+[RpcMarshalableOptionalInterface(-9, typeof(IDerivedOptionalCapability))]
+[JsonRpcProxyInterfaceGroup(typeof(IDerivedOptionalCapability))]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IInheritedOptionalObject : IDisposable
+{
+}
+
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IBaseOptionalCapability
+{
+	Task<int> BaseValueAsync(CancellationToken cancellationToken);
+}
+
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IDerivedOptionalCapability : IBaseOptionalCapability
+{
+	Task<int> DerivedValueAsync(CancellationToken cancellationToken);
+}
+
 internal sealed class OptionalInterfaceService : IOptionalInterfaceService
 {
+	public Task<IWitnessOptionalObject> GetWitnessObjectAsync(CancellationToken cancellationToken) => Task.FromResult<IWitnessOptionalObject>(new WitnessOptionalObject());
+
+	public Task<IInheritedOptionalObject> GetInheritedObjectAsync(bool derived, CancellationToken cancellationToken)
+		=> Task.FromResult<IInheritedOptionalObject>(derived ? new DerivedOptionalObject() : new BaseOptionalObject());
+
 	public Task<ILegacyOptionalObject> GetLegacyObjectAsync(bool optional, CancellationToken cancellationToken)
 		=> Task.FromResult<ILegacyOptionalObject>(optional ? new LegacyOptionalObject() : new LegacyObject());
 
@@ -175,5 +217,28 @@ internal sealed class OptionalInterfaceService : IOptionalInterfaceService
 
 	private sealed class LegacyOptionalObject : LegacyObject, ILegacyCapability
 	{
+	}
+
+	private sealed class WitnessOptionalObject : IWitnessOptionalObject, IWitnessOptionalCapability
+	{
+		public Task<int> WitnessValueAsync(CancellationToken cancellationToken) => Task.FromResult(42);
+
+		public void Dispose()
+		{
+		}
+	}
+
+	private class BaseOptionalObject : IInheritedOptionalObject, IBaseOptionalCapability
+	{
+		public Task<int> BaseValueAsync(CancellationToken cancellationToken) => Task.FromResult(1);
+
+		public void Dispose()
+		{
+		}
+	}
+
+	private sealed class DerivedOptionalObject : BaseOptionalObject, IDerivedOptionalCapability
+	{
+		public Task<int> DerivedValueAsync(CancellationToken cancellationToken) => Task.FromResult(2);
 	}
 }

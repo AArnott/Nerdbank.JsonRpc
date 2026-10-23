@@ -237,6 +237,45 @@ public class ClientProxyTests
 	}
 
 	[Test]
+	[Arguments(false, false)]
+	[Arguments(false, true)]
+	[Arguments(true, false)]
+	[Arguments(true, true)]
+	public void RootAndBatchGroupsCoverInheritedEnabledCapabilities(bool batch, bool sharedBase)
+	{
+		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
+		using JsonRpc rpc = new(new MockJsonRpcPipeChannel(transport));
+		using JsonRpcBatch rpcBatch = rpc.CreateBatch();
+		JsonRpcProxyOptions options = new() { EnabledInterfaces = [sharedBase ? typeof(IClientCapability) : typeof(IUnknownDerivedSubtractCapability)] };
+		IGroupedInheritanceRoot client = batch ? rpcBatch.Attach<IGroupedInheritanceRoot>(options) : rpc.Attach<IGroupedInheritanceRoot>(options);
+		Assert.Equal(!sharedBase, client.As<ISubtractCapability>() is not null);
+		Assert.Null(client.As<IUnknownDerivedSubtractCapability>());
+		Assert.Null(client.As<IDerivedSubtractCapability>());
+		if (sharedBase)
+		{
+			Assert.NotNull(client.As<ICommonCapability>());
+		}
+	}
+
+	[Test]
+	public async Task WitnessBackedGroupedMethodsAndEventsUsePrimaryProvider()
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(new JsonRpcMessagePackChannel(clientPipe));
+		using JsonRpc serverRpc = new(new JsonRpcMessagePackChannel(serverPipe));
+		WitnessCapability target = new();
+		serverRpc.AddRpcTarget<IWitnessCapability>(target, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.IWitnessCapability);
+		IWitnessCapability client = clientRpc.Attach<IWitnessGroupedRoot>().As<IWitnessCapability>()!;
+		TaskCompletionSource<int> received = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		client.WitnessChanged += value => received.TrySetResult(value.Value);
+		serverRpc.Start();
+		clientRpc.Start();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		Assert.Equal(42, (await client.EchoWitnessAsync(new WitnessPayload { Value = 42 }, cts.Token)).Value);
+		Assert.Equal(42, await received.Task.WithCancellation(cts.Token));
+	}
+
+	[Test]
 	public void OptionsRejectInvalidEnabledInterfaces()
 	{
 		Assert.Throws<ArgumentException>(() => new JsonRpcProxyOptions { EnabledInterfaces = [typeof(string)] });
@@ -275,6 +314,17 @@ public class ClientProxyTests
 		public Task<ExternalPayload> EchoAsync(ExternalPayload value, CancellationToken cancellationToken)
 		{
 			this.ExternalChanged?.Invoke(value);
+			return Task.FromResult(value);
+		}
+	}
+
+	private sealed class WitnessCapability : IWitnessCapability
+	{
+		public event Action<WitnessPayload>? WitnessChanged;
+
+		public Task<WitnessPayload> EchoWitnessAsync(WitnessPayload value, CancellationToken cancellationToken)
+		{
+			this.WitnessChanged?.Invoke(value);
 			return Task.FromResult(value);
 		}
 	}

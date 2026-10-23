@@ -188,6 +188,38 @@ internal interface ISecondOperation
 	Task<int> PingAsync(CancellationToken cancellationToken);
 }
 
+[GenerateJsonRpcProxy]
+[JsonRpcProxyInterfaceGroup(typeof(IWitnessCapability))]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IWitnessGroupedRoot
+{
+}
+
+internal interface IWitnessCapability
+{
+	event Action<WitnessPayload>? WitnessChanged;
+
+	Task<WitnessPayload> EchoWitnessAsync(WitnessPayload value, CancellationToken cancellationToken);
+}
+
+[GenerateJsonRpcProxy]
+[JsonRpcProxyInterfaceGroup]
+[JsonRpcProxyInterfaceGroup(typeof(ISubtractCapability))]
+[JsonRpcProxyInterfaceGroup(typeof(IDerivedSubtractCapability))]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IGroupedInheritanceRoot
+{
+}
+
+internal interface IUnknownDerivedSubtractCapability : ISubtractCapability
+{
+}
+
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface IDerivedSubtractCapability : ISubtractCapability, ICommonCapability
+{
+}
+
 internal sealed class Calculator : ICalculator
 {
 	internal TaskCompletionSource<int> NotificationReceived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

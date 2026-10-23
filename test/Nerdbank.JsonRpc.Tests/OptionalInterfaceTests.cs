@@ -248,6 +248,45 @@ public class OptionalInterfaceTests
 		Assert.Equal(optional, proxy is Nerdbank.JsonRpc.TestContracts.ILegacyCapability);
 	}
 
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task WitnessBackedOptionalMethodsUsePrimaryProvider(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
+		serverRpc.Start();
+		clientRpc.Start();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		using IWitnessOptionalObject proxy = await clientRpc.Attach<IOptionalInterfaceService>().GetWitnessObjectAsync(cts.Token);
+		Assert.Equal(42, await proxy.As<IWitnessOptionalCapability>()!.WitnessValueAsync(cts.Token));
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, false)]
+	[Arguments(JsonRpcEncoding.Json, true)]
+	[Arguments(JsonRpcEncoding.MessagePack, true)]
+	public async Task DerivedOptionalGroupsCoverInheritedAdvertisements(JsonRpcEncoding encoding, bool derived)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
+		serverRpc.Start();
+		clientRpc.Start();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		using IInheritedOptionalObject proxy = await clientRpc.Attach<IOptionalInterfaceService>().GetInheritedObjectAsync(derived, cts.Token);
+		Assert.Equal(1, await proxy.As<IBaseOptionalCapability>()!.BaseValueAsync(cts.Token));
+		Assert.Equal(derived, proxy.As<IDerivedOptionalCapability>() is not null);
+		if (derived)
+		{
+			Assert.Equal(2, await proxy.As<IDerivedOptionalCapability>()!.DerivedValueAsync(cts.Token));
+		}
+	}
+
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
 		=> encoding == JsonRpcEncoding.Json
 			? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited)

@@ -119,9 +119,11 @@ For marshalable contracts, each additional interface in a group must be declared
 For ordinary root contracts, groups can add other supported RPC interfaces without marshalable annotations.
 Each additional interface requires generated PolyType method shapes for its argument and result types, as with a composite contract.
 Grouped methods and events use their owning contract's shape provider, including when that contract is defined in a referenced assembly.
+When an additional contract uses witness-generated shapes instead of implementing PolyType's shape-provider interface itself, its members use the primary contract's provider; ensure that provider includes the required shapes.
 
-When attaching a root proxy, the enabled-interface list selects the smallest generated group covering the known enabled interfaces; with a null list, the smallest generated group is selected.
+When attaching a root proxy, the enabled-interface list selects the smallest generated group covering the known enabled interfaces, including inherited capabilities; with a null list, the smallest generated group is selected.
 When receiving a marshalable object, the advertised optional interfaces select the smallest covering group instead.
+A marshalable group containing a derived optional interface also includes its declared optional base interfaces and their wire identifiers.
 An exact match is preferred, but a superset is accepted, so `is` and direct casts can yield false positives; use the generated capability-query extensions.
 If no group covers the required interfaces, proxy creation fails with an error identifying the missing group configuration.
 This bounds the default output to two proxy classes rather than generating every combination.

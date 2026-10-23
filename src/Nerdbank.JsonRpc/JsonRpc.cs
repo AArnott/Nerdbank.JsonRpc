@@ -2354,9 +2354,14 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				return CreateLegacyProxy(this.LegacyProxyType!, client, options);
 			}
 
-			IReadOnlyList<Type>? enabled = options.EnabledInterfaces;
+			Type[]? enabled = options.EnabledInterfaces is { } configured
+				? [
+					.. this.Factories.SelectMany(static factory => factory.AdditionalInterfaces).Distinct()
+						.Where(type => configured.Any(type.IsAssignableFrom)),
+				]
+				: null;
 			JsonRpcProxyFactoryAttribute? factory = enabled is null ? this.Factories[0] : this.Factories.FirstOrDefault(candidate =>
-				enabled.All(type => type.IsAssignableFrom(this.InterfaceType) || !this.Factories.Any(other => other.AdditionalInterfaces.Any(type.IsAssignableFrom)) || candidate.AdditionalInterfaces.Any(type.IsAssignableFrom)));
+				enabled.All(type => type.IsAssignableFrom(this.InterfaceType) || candidate.AdditionalInterfaces.Any(type.IsAssignableFrom)));
 			return factory is not null
 				? factory.CreateProxy(client, options)
 				: throw new NotSupportedException("No generated proxy group covers the enabled interfaces. Add a JsonRpcProxyInterfaceGroupAttribute containing them.");

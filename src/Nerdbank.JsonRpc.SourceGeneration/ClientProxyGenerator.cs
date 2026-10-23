@@ -268,7 +268,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 						continue;
 					}
 
-					optionalMethods.Add(CreateMethodInfo(method, methodShapeAttribute, optionalInterface, interfaceId));
+					optionalMethods.Add(CreateMethodInfo(method, methodShapeAttribute, GetShapeProvider(optionalInterface, interfaceSymbol), interfaceId));
 				}
 
 				optionalInterfaces.Add(new(interfaceId, optionalInterface, optionalMethods.ToImmutable()));
@@ -324,11 +324,22 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 						}
 						else
 						{
-							groupMethods.Add(CreateMethodInfo(method, methodShapeAttribute, additionalInterface, optionalInterfaceId: null) with { ExplicitImplementation = true });
+							groupMethods.Add(CreateMethodInfo(method, methodShapeAttribute, GetShapeProvider(additionalInterface, interfaceSymbol), optionalInterfaceId: null) with { ExplicitImplementation = true });
 						}
 					}
 
 					group.Add(new(null, additionalInterface, groupMethods.ToImmutable()));
+				}
+			}
+
+			if (isMarshalable)
+			{
+				foreach (OptionalInterfaceInfo inherited in optionalInterfaces.Where(optional => group.Any(item => item.Symbol.AllInterfaces.Contains(optional.Symbol, SymbolEqualityComparer.Default))).ToArray())
+				{
+					if (!group.Any(item => SymbolEqualityComparer.Default.Equals(item.Symbol, inherited.Symbol)))
+					{
+						group.Add(inherited);
+					}
 				}
 			}
 
@@ -396,6 +407,13 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			}
 		}
 	}
+
+	private static INamedTypeSymbol GetShapeProvider(INamedTypeSymbol contract, INamedTypeSymbol primaryContract)
+		=> contract.GetAttributes().Any(static attribute => attribute.AttributeClass?.ToDisplayString() == KnownApis.GenerateShapeAttribute
+				|| (attribute.AttributeClass is { Name: KnownApis.TypeShapeProviderAttributeName } providerAttribute && providerAttribute.ContainingAssembly.Name == KnownApis.PolyTypeAssembly))
+			|| contract.AllInterfaces.Any(type => IsShapeableInterface(type) && SymbolEqualityComparer.Default.Equals(type.TypeArguments[0], contract))
+			? contract
+			: primaryContract;
 
 	private static bool IsShapeableInterface(INamedTypeSymbol type)
 		=> type.MetadataName == KnownApis.IShapeableMetadataName && type.ContainingNamespace.ToDisplayString() == KnownApis.PolyTypeNamespace && type.ContainingAssembly.Name == KnownApis.PolyTypeAssembly;
@@ -635,7 +653,9 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			ImmutableArray<OptionalInterfaceInfo> implemented = info.ProxyGroups[index];
 			ImmutableArray<MethodInfo>.Builder methods = ImmutableArray.CreateBuilder<MethodInfo>();
 			HashSet<string> methodSignatures = new(StringComparer.Ordinal);
-			foreach (MethodInfo method in info.Methods.Concat(implemented.SelectMany(static additional => additional.Methods)))
+
+			// Prefer a declared optional base's wire ID for inherited methods, even in a derived-only group.
+			foreach (MethodInfo method in info.Methods.Concat(implemented.OrderBy(static additional => additional.Symbol.AllInterfaces.Length).SelectMany(static additional => additional.Methods)))
 			{
 				string signature = GetMethodSignatureKey(method.Symbol);
 				if (method.ExplicitImplementation)
@@ -643,14 +663,14 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 					signature += "|" + method.Symbol.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 				}
 
-				if (method.OptionalInterfaceId is int id)
+				if (method.OptionalInterfaceId is not null)
 				{
 					if (info.Methods.Any(baseMethod => GetMethodSignatureKey(baseMethod.Symbol) == signature))
 					{
 						continue;
 					}
 
-					signature += "|" + id + "|" + method.Symbol.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+					signature += "|" + method.Symbol.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 				}
 
 				if (methodSignatures.Add(signature))
@@ -874,16 +894,22 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			optionalInterfaces = optionalInterfaces.OrderBy(static item => item.InterfaceId).ToImmutableArray();
 		}
 
+		string[] additionalTypes = optionalInterfaces.SelectMany(static item => item.Symbol.AllInterfaces.Concat([item.Symbol]))
+			.Where(static type => !IsShapeableInterface(type))
+			.Select(static type => type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+			.Distinct(StringComparer.Ordinal).OrderBy(static type => type, StringComparer.Ordinal).ToArray();
+		int interfaceCount = isMarshalable ? optionalInterfaces.Length : additionalTypes.Length;
+
 		builder.Append("internal sealed class ").Append(factoryName).Append(" : global::Nerdbank.JsonRpc.");
 		builder.AppendLine(isMarshalable ? "JsonRpcOptionalProxyFactoryAttribute" : "JsonRpcProxyFactoryAttribute");
 		builder.OpenBlock();
-		if (!optionalInterfaces.IsEmpty)
+		if (interfaceCount > 0)
 		{
 			builder.Append("public ").Append(factoryName).Append("()").AppendLine();
 			using (builder.Indent())
 			{
 				builder.Append(": base(");
-				for (int i = 0; i < optionalInterfaces.Length; i++)
+				for (int i = 0; i < interfaceCount; i++)
 				{
 					if (i > 0)
 					{
@@ -896,7 +922,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 					}
 					else
 					{
-						builder.Append("typeof(").Append(optionalInterfaces[i].Symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append(")");
+						builder.Append("typeof(").Append(additionalTypes[i]).Append(")");
 					}
 				}
 
@@ -919,7 +945,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		INamedTypeSymbol provider = GetProxyEvents(info.Symbol).Any(candidate => SymbolEqualityComparer.Default.Equals(candidate, @event))
 			? info.Symbol
 			: additionalInterfaces.First(item => GetProxyEvents(item.Symbol).Any(candidate => SymbolEqualityComparer.Default.Equals(candidate, @event))).Symbol;
-		return provider.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+		return GetShapeProvider(provider, info.Symbol).ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 	}
 
 	private static bool IsBclEventHandler(INamedTypeSymbol type)
@@ -1250,6 +1276,8 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		internal const string GenerateJsonRpcProxyAttribute = "Nerdbank.JsonRpc.GenerateJsonRpcProxyAttribute";
 		internal const string RpcMarshalableAttribute = "Nerdbank.JsonRpc.RpcMarshalableAttribute";
 		internal const string RpcMarshalableOptionalInterfaceAttribute = "Nerdbank.JsonRpc.RpcMarshalableOptionalInterfaceAttribute";
+		internal const string GenerateShapeAttribute = "PolyType.GenerateShapeAttribute";
+		internal const string TypeShapeProviderAttributeName = "TypeShapeProviderAttribute";
 		internal const string MethodShapeAttribute = "PolyType.MethodShapeAttribute";
 		internal const string EventShapeAttribute = "PolyType.EventShapeAttribute";
 		internal const string TypeShapeResolver = "PolyType.Abstractions.TypeShapeResolver";
