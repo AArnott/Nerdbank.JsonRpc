@@ -231,7 +231,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	}
 
 	private static IEnumerable<IEventSymbol> GetProxyEvents(INamedTypeSymbol interfaceSymbol)
-		=> interfaceSymbol.AllInterfaces.Concat([interfaceSymbol]).SelectMany(static type => type.GetMembers().OfType<IEventSymbol>());
+		=> interfaceSymbol.AllInterfaces.Concat([interfaceSymbol]).SelectMany(static type => type.GetMembers().OfType<IEventSymbol>()).Where(static @event => @event.DeclaredAccessibility != Accessibility.Private);
 
 	private static IEnumerable<IMethodSymbol> GetProxyMethods(INamedTypeSymbol interfaceSymbol)
 	{
@@ -646,7 +646,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			string field = GetGeneratedMemberName(info, "NerdbankJsonRpc_Event" + i);
 			builder.AppendLine();
 			builder.Append("private event ").Append(handlerType).Append("? ").Append(field).AppendLine(";");
-			builder.Append("event ").Append(@event.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat.AddMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier))).Append(" ").Append(@event.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append(".@").Append(@event.Name).AppendLine();
+			builder.Append("event ").Append(@event.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat.AddMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier))).Append(" ").Append(@event.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat.AddMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier))).Append(".@").Append(@event.Name).AppendLine();
 			builder.OpenBlock();
 			builder.Append("add => this.").Append(field).AppendLine(" += value;");
 			builder.Append("remove => this.").Append(field).AppendLine(" -= value;");

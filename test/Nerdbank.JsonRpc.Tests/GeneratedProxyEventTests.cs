@@ -173,6 +173,30 @@ public class GeneratedProxyEventTests : TestBase
 		}
 	}
 
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task InheritedGenericEventsPreserveNullableArguments(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		INullableProxyEvents proxy = clientRpc.Attach<INullableProxyEvents>();
+		TaskCompletionSource<string?> received = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		proxy.Changed += value => received.SetResult(value);
+		clientRpc.Start();
+		serverRpc.Start();
+		JsonRpcValue arguments;
+		using (JsonRpcArgumentsBuilder builder = serverRpc.CreateArguments(named: false, count: 1, this.TimeoutToken))
+		{
+			builder.Add("value", (string?)null, PolyType.SourceGenerator.TypeShapeProvider_Nerdbank_JsonRpc_Tests.Default.String);
+			arguments = builder.Build();
+		}
+
+		await serverRpc.NotifyAsync("changed", arguments, this.TimeoutToken);
+		Assert.Null(await received.Task.WithCancellation(this.TimeoutToken));
+	}
+
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)
 		=> encoding == JsonRpcEncoding.Json ? new JsonRpcJsonChannel(pipe, new Nerdbank.Json.JsonSerializer(), JsonRpcJsonFraming.NewlineDelimited) : new JsonRpcMessagePackChannel(pipe);
 

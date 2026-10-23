@@ -18,6 +18,28 @@ using Xunit;
 public class ClientProxyGeneratorTests
 {
 	[Test]
+	public async Task PrivateEventsAreExcludedFromValidationAndEmission()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System;
+			using Nerdbank.JsonRpc;
+
+			internal interface IBaseEvents
+			{
+				private event Func<int> Hidden { add { } remove { } }
+			}
+
+			[GenerateJsonRpcProxy]
+			internal partial interface IPrivateEvents : IBaseEvents
+			{
+				private event Action Hidden { add { } remove { } }
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, CompilerDiagnostics.Warnings);
+	}
+
+	[Test]
 	public async Task EventsCompileWithInheritedGenericDelegatesAndEscapedNames()
 	{
 		const string Source = /* lang=c#-test */ """

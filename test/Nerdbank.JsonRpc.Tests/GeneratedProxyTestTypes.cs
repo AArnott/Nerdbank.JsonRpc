@@ -103,6 +103,17 @@ internal partial interface IProxyEvents : IProxyEventBase
 	event Action<int, string>? Pair;
 }
 
+internal interface INullableProxyEventBase<T>
+{
+	event Action<T>? Changed;
+}
+
+[GenerateJsonRpcProxy]
+[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+internal partial interface INullableProxyEvents : INullableProxyEventBase<string?>
+{
+}
+
 internal sealed class Calculator : ICalculator
 {
 	internal TaskCompletionSource<int> NotificationReceived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
