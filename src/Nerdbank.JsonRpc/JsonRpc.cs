@@ -265,6 +265,55 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <summary>Gets the <see cref="System.Threading.SynchronizationContext"/> that dispatch should use, falling back to a thread pool context that imposes no ordering when <see cref="SynchronizationContext"/> is <see langword="null"/>.</summary>
 	private SynchronizationContext DispatchSynchronizationContext => this.SynchronizationContext ?? UnorderedDispatchSynchronizationContext;
 
+	/// <summary>Registers notification receivers for source-generated proxy events.</summary>
+	/// <param name="client">The connection or batch that owns the proxy.</param>
+	/// <param name="events">The wire names, instance forwarding delegates, and cached dispatch metadata.</param>
+	/// <remarks>This infrastructure API is intended for generated code. Register and subscribe before <see cref="Start"/> to avoid losing early notifications.</remarks>
+	[System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+	public static void RegisterProxyEvents(IJsonRpcClient client, (string Name, Delegate Handler, JsonRpcProxyEventRegistration Registration)[] events)
+	{
+		Requires.NotNull(client);
+		Requires.NotNull(events);
+		JsonRpc owner = client switch
+		{
+			JsonRpc rpc => rpc,
+			JsonRpcBatch batch => batch.Owner,
+			_ => throw new NotSupportedException("This client does not support receiving proxy events."),
+		};
+		lock (owner.targetRegistrationSync)
+		{
+			owner.ThrowIfClosed();
+			for (int i = 0; i < events.Length; i++)
+			{
+				(string name, Delegate handler, JsonRpcProxyEventRegistration registration) = events[i];
+				Requires.NotNull(handler);
+				Requires.NotNull(registration);
+				if (string.IsNullOrEmpty(name))
+				{
+					throw new InvalidOperationException("A proxy event name transform returned a null or empty name.");
+				}
+
+				if (owner.handlers.ContainsKey(name))
+				{
+					throw new InvalidOperationException($"The JSON-RPC method name '{name}' is already registered.");
+				}
+
+				for (int j = 0; j < i; j++)
+				{
+					if (StringComparer.Ordinal.Equals(events[j].Name, name))
+					{
+						throw new InvalidOperationException($"The JSON-RPC method name '{name}' is already registered.");
+					}
+				}
+			}
+
+			foreach ((string name, Delegate handler, JsonRpcProxyEventRegistration registration) in events)
+			{
+				owner.handlers[name] = (handler, registration.Invoker);
+			}
+		}
+	}
+
 	/// <inheritdoc/>
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default)
 	{
@@ -449,6 +498,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <typeparam name="T">The RPC contract interface to proxy.</typeparam>
 	/// <param name="options">Options controlling argument encoding for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <typeparamref name="T"/>.</returns>
+	/// <remarks>Attach and subscribe to proxy events before calling <see cref="Start"/> to avoid losing early notifications. Attaching does not start the connection.</remarks>
 	public T Attach<T>(JsonRpcProxyOptions? options = null) => AttachCore<T>(this, options);
 
 	/// <summary>
@@ -458,6 +508,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <param name="options">Options controlling argument encoding for this proxy.</param>
 	/// <returns>A generated proxy instance that implements <paramref name="interfaceType"/>.</returns>
 	/// <remarks>
+	/// Attach and subscribe to proxy events before calling <see cref="Start"/> to avoid losing early notifications.
 	/// The generated proxy factory is looked up once per interface and cached.
 	/// When the interface is known at compile time, <see cref="Attach{T}(JsonRpcProxyOptions?)"/> is slightly faster
 	/// because it avoids the dictionary lookup.

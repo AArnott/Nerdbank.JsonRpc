@@ -78,6 +78,8 @@ This pins execution to one logical processor and retains outliers. Inspect the w
 
 Compare baseline and candidate with the same runtime, parameters, operation counts, and CPU affinity. For allocation optimizations, use sampled allocation stacks for attribution and `Allocated` bytes per operation for the quantitative result. Repeat comparisons when scheduling or multimodal distributions obscure latency changes. Keep generated reports and traces outside source control; record the measured result and important tradeoffs in the change description.
 
+`ProxyEventAttachmentBenchmarks` measures connection construction, generated event proxy attachment, and disposal, including allocations. Its warmed measurements exercise reuse of the generated proxy's static event dispatch metadata.
+
 ## Releases
 
 Use `nbgv tag` to create a tag for a particular commit that you mean to release.

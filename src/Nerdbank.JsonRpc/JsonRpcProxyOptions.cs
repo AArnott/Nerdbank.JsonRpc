@@ -11,6 +11,7 @@ namespace Nerdbank.JsonRpc;
 public sealed record JsonRpcProxyOptions
 {
 	private Func<string, string> methodNameTransform = CommonMethodNameTransforms.Default;
+	private Func<string, string> eventNameTransform = CommonMethodNameTransforms.CamelCase;
 
 	/// <summary>Gets a shared instance with default settings.</summary>
 	public static JsonRpcProxyOptions Default { get; } = new();
@@ -34,5 +35,15 @@ public sealed record JsonRpcProxyOptions
 	{
 		get => this.methodNameTransform;
 		init => this.methodNameTransform = Requires.NotNull(value);
+	}
+
+	/// <summary>Gets the transform from CLR event names to incoming notification names.</summary>
+	/// <value>A non-null function, defaulting to <see cref="CommonMethodNameTransforms.CamelCase"/>.</value>
+	/// <remarks>An explicit <see cref="EventShapeAttribute.Name"/> bypasses this transform. Subscribe before starting the connection to avoid losing early notifications.</remarks>
+	/// <exception cref="ArgumentNullException">Thrown when set to <see langword="null"/>.</exception>
+	public Func<string, string> EventNameTransform
+	{
+		get => this.eventNameTransform;
+		init => this.eventNameTransform = Requires.NotNull(value);
 	}
 }

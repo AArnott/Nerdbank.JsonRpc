@@ -43,6 +43,9 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 
 	AsyncEnumerableManager IArgumentsBuilderContext.AsyncEnumerables => this.owner.AsyncEnumerables;
 
+	/// <summary>Gets the connection that receives events for this batch's proxies.</summary>
+	internal JsonRpc Owner => this.owner;
+
 	/// <inheritdoc/>
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default)
 	{

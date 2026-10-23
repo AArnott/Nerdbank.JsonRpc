@@ -18,6 +18,131 @@ using Xunit;
 public class ClientProxyGeneratorTests
 {
 	[Test]
+	public async Task PrivateEventsAreExcludedFromValidationAndEmission()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System;
+			using Nerdbank.JsonRpc;
+
+			internal interface IBaseEvents
+			{
+				private event Func<int> Hidden { add { } remove { } }
+			}
+
+			[GenerateJsonRpcProxy]
+			internal partial interface IPrivateEvents : IBaseEvents
+			{
+				private event Action Hidden { add { } remove { } }
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(Source, CompilerDiagnostics.Warnings);
+	}
+
+	[Test]
+	public async Task EventsCompileWithInheritedGenericDelegatesAndEscapedNames()
+	{
+		const string Source = /* lang=c#-test */ """
+			#nullable enable
+			using System;
+			using Nerdbank.JsonRpc;
+			using PolyType;
+
+			internal interface IBaseEvents<T>
+			{
+				event EventHandler<T>? Changed;
+			}
+
+			[GenerateJsonRpcProxy]
+			[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+			internal partial interface IEvents : IBaseEvents<int>
+			{
+				event Action @event;
+
+				[EventShape(Name = "explicit.name")]
+				event Action<int, string?>? Renamed;
+
+				event Action? NerdbankJsonRpc_Event0;
+			}
+			""";
+
+		string generatedPath = System.IO.Path.Combine("Nerdbank.JsonRpc.SourceGeneration", "Nerdbank.JsonRpc.SourceGeneration.ClientProxyGenerator", "EventsProxy.g.cs");
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(
+			Source,
+			CompilerDiagnostics.Warnings,
+			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 10, 269, 10, 293)
+				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<IEvents>", "T", "IEvents"),
+			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 11, 258, 11, 282)
+				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<IEvents>", "T", "IEvents"),
+			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 12, 272, 12, 296)
+				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<IEvents>", "T", "IEvents"),
+			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 13, 258, 13, 282)
+				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<IEvents>", "T", "IEvents"));
+	}
+
+	[Test]
+	[Arguments("Func<Task>", false)]
+	[Arguments("Func<int>", false)]
+	[Arguments("ByRefHandler", false)]
+	[Arguments("RefLikeHandler", false)]
+	[Arguments("Action", true)]
+	public async Task UnsupportedEventDelegatesProduceDiagnosticsAndNoProxy(string handlerType, bool isStatic)
+	{
+		string source = /* lang=c#-test */ $$"""
+			using System;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			internal delegate void ByRefHandler(ref int value);
+
+			internal delegate void RefLikeHandler(Span<int> value);
+
+			[GenerateJsonRpcProxy]
+			internal partial interface IEvents
+			{
+				{{(isStatic ? "static abstract " : string.Empty)}}event {{handlerType}} {|#0:Changed|};
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(source, CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(0)
+			.WithArguments("IEvents", "proxy events must be instance events with synchronous, void-returning delegates and by-value, non-ref-like parameters"));
+	}
+
+	[Test]
+	[Arguments("IRemoteObject")]
+	[Arguments("IRemoteObject[]")]
+	[Arguments("System.Collections.Generic.IReadOnlyList<IRemoteObject[]>")]
+	public async Task EventsCannotAcceptRpcMarshalableInterfaceParameters(string parameterType)
+	{
+		string source = /* lang=c#-test */ $$"""
+			using System;
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			[RpcMarshalable]
+			internal partial interface IRemoteObject : IDisposable
+			{
+				Task CallAsync();
+			}
+
+			internal interface IBaseEvents
+			{
+				event Action<{{parameterType}}> {|#0:Changed|};
+			}
+
+			[GenerateJsonRpcProxy]
+			internal partial interface IEvents : IBaseEvents
+			{
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(source, CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001")
+			.WithLocation(0)
+			.WithArguments("IEvents", "proxy events cannot accept RPC-marshalable interface parameters"));
+	}
+
+	[Test]
 	public async Task UnsupportedMethodSignaturesProduceDiagnosticsAndNoProxy()
 	{
 		const string Source = /* lang=c#-test */ """
@@ -438,14 +563,16 @@ public class ClientProxyGeneratorTests
 	}
 
 	[Test]
-	public async Task UnchangedOutputsAreCachedAndOnlyChangedProxyIsRegenerated()
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task UnchangedOutputsAreCachedAndOnlyChangedProxyIsRegenerated(bool changeEvent)
 	{
 		const string Contracts = /* lang=c#-test */ """
 			using System.Threading.Tasks;
 			using Nerdbank.JsonRpc;
 
 			[GenerateJsonRpcProxy]
-			internal partial interface IFirst { }
+			internal partial interface IFirst { event System.Action Changed; }
 
 			[GenerateJsonRpcProxy]
 			internal partial interface ISecond { }
@@ -458,6 +585,8 @@ public class ClientProxyGeneratorTests
 			internal partial interface IFirst
 			{
 				Task<int> GetAsync();
+
+				event System.Action<int> Changed;
 			}
 
 			[GenerateJsonRpcProxy]
@@ -503,7 +632,8 @@ public class ClientProxyGeneratorTests
 			throw new InvalidOperationException("Generated source must use deterministic LF newlines.");
 		}
 
-		SyntaxTree changedTree = CSharpSyntaxTree.ParseText(ChangedContracts, parseOptions, "Contracts.cs");
+		string changedSource = changeEvent ? Contracts.Replace("System.Action Changed", "System.Action<int> Changed") : ChangedContracts;
+		SyntaxTree changedTree = CSharpSyntaxTree.ParseText(changedSource, parseOptions, "Contracts.cs");
 		CSharpCompilation compilationWithChangedProxy = compilationWithUnrelatedSource.ReplaceSyntaxTree(contractsTree, changedTree);
 		driver = driver.RunGenerators(compilationWithChangedProxy);
 		GeneratorRunResult changedRun = driver.GetRunResult().Results.Single();
