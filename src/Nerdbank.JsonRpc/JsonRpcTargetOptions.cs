@@ -35,6 +35,22 @@ public sealed record JsonRpcTargetOptions
 	}
 
 	/// <summary>
+	/// Gets a value indicating whether named arguments may omit target method parameters or include names that do not match any parameter.
+	/// </summary>
+	/// <value>The default is <see langword="false"/>.</value>
+	/// <remarks>
+	/// <para>
+	/// When <see langword="true"/>, named arguments that do not match any target method parameter are ignored.
+	/// Parameters without a corresponding named argument receive their declared default value, or the default value for their parameter type when no default is declared.
+	/// Parameters annotated with <c>[ParameterShape(IsRequired = true)]</c> must have a corresponding named argument.
+	/// </para>
+	/// <para>
+	/// This option does not affect positional arguments.
+	/// </para>
+	/// </remarks>
+	public bool AllowFlexibleNamedArgumentMatching { get; init; }
+
+	/// <summary>
 	/// Gets a value indicating whether events raised on the target object should be relayed to the remote party
 	/// via a JSON-RPC notification.
 	/// </summary>
