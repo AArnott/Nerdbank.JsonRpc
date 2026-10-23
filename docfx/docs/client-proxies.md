@@ -29,6 +29,8 @@ When calling through the interface, the C# compiler supplies omitted arguments u
 When an incoming request omits optional arguments, the server uses the defaults from the contract type registered with <xref:Nerdbank.JsonRpc.JsonRpc.AddRpcTarget*>.
 Register the interface as the target contract to use its defaults, even if the implementation declares no defaults.
 
+By default, a request using named arguments must name only parameters the target declares, and must supply every parameter that has no default. Set <xref:Nerdbank.JsonRpc.JsonRpcTargetOptions.AllowFlexibleNamedArgumentMatching> to `true` when registering a target to ignore unrecognized argument names and to supply `default` for omitted parameters that have no declared default. Parameters annotated with `[ParameterShape(IsRequired = true)]` must still be supplied. Positional arguments are unaffected.
+
 The proxy resolves its type-shape provider once and caches the shapes it needs.
 Event argument binding and dispatch metadata is cached in static fields on the generated proxy class and shared across instances.
 Each instance retains its own subscriptions and transformed event names; connections and serializers are not captured by the shared metadata. <xref:Nerdbank.JsonRpc.JsonRpc.Attach*> and <xref:Nerdbank.JsonRpc.JsonRpcBatch.Attach*> accept an optional immutable <xref:Nerdbank.JsonRpc.JsonRpcProxyOptions> record for per-proxy argument encoding:

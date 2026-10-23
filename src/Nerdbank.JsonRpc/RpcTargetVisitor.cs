@@ -26,6 +26,8 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 
 	private delegate void SpecialParameterSetter<TParameterType, TArgumentState>(in TParameterType reader, ref TArgumentState state);
 
+	private delegate void DefaultSetter<TArgumentState>(ref TArgumentState state);
+
 	public override object? VisitObject<T>(IObjectTypeShape<T> objectShape, object? state = null)
 	{
 		JsonRpcTargetOptions options = state as JsonRpcTargetOptions ?? JsonRpcTargetOptions.Default;
@@ -34,7 +36,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 		foreach (IMethodShape method in objectShape.Methods)
 		{
 			string rpcMethodName = GetRpcMethodName(method, options);
-			MethodInvoker invoker = (MethodInvoker)method.Accept(this)!;
+			MethodInvoker invoker = (MethodInvoker)method.Accept(this, options)!;
 			if (!methodInvokers.TryAdd(rpcMethodName, invoker))
 			{
 				throw new InvalidOperationException($"Multiple methods on '{typeof(T)}' map to the JSON-RPC method name '{rpcMethodName}'. Assign each an explicit name via [MethodShape(Name = \"...\")] or configure a different {nameof(JsonRpcTargetOptions)}.{nameof(JsonRpcTargetOptions.MethodNameTransform)}.");
@@ -109,7 +111,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 	}
 
 	public override object? VisitMethod<TDeclaringType, TArgumentState, TResult>(IMethodShape<TDeclaringType, TArgumentState, TResult> methodShape, object? state = null)
-		=> this.CreateMethodInvoker(methodShape.Parameters, methodShape.GetArgumentStateConstructor(), methodShape.GetMethodInvoker(), methodShape.ReturnType);
+		=> this.CreateMethodInvoker(methodShape.Parameters, methodShape.GetArgumentStateConstructor(), methodShape.GetMethodInvoker(), methodShape.ReturnType, allowFlexibleNamedArgumentMatching: (state as JsonRpcTargetOptions)?.AllowFlexibleNamedArgumentMatching ?? false);
 
 	public override object? VisitParameter<TArgumentState, TParameterType>(IParameterShape<TArgumentState, TParameterType> parameterShape, object? state = null)
 	{
@@ -153,10 +155,32 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 	/// <param name="returnType">The result shape.</param>
 	/// <param name="isEvent">Whether all parameters are ordinary serialized values.</param>
 	/// <param name="parameterOffset">The number of omitted leading parameters.</param>
+	/// <param name="allowFlexibleNamedArgumentMatching">Whether to ignore unknown named arguments and default missing ones.</param>
 	/// <returns>The dispatch callback.</returns>
-	internal MethodInvoker CreateMethodInvoker<TDeclaringType, TArgumentState, TResult>(IReadOnlyList<IParameterShape> parameters, Func<TArgumentState> argStateCtor, MethodInvoker<TDeclaringType, TArgumentState, TResult> invoker, ITypeShape<TResult> returnType, bool isEvent = false, int parameterOffset = 0)
+	internal MethodInvoker CreateMethodInvoker<TDeclaringType, TArgumentState, TResult>(IReadOnlyList<IParameterShape> parameters, Func<TArgumentState> argStateCtor, MethodInvoker<TDeclaringType, TArgumentState, TResult> invoker, ITypeShape<TResult> returnType, bool isEvent = false, int parameterOffset = 0, bool allowFlexibleNamedArgumentMatching = false)
 		where TArgumentState : IArgumentState
 	{
+		// Parameters that must be supplied by name even in flexible mode, otherwise a default-value setter to apply when omitted.
+		List<(int Index, DefaultSetter<TArgumentState> Setter)> defaultSetters = [];
+		List<int> attributeRequired = [];
+		if (allowFlexibleNamedArgumentMatching)
+		{
+			for (int i = 0; i < parameters.Count; i++)
+			{
+				IParameterShape parameter = parameters[i];
+				bool hasRequiredAttribute = HasRequiredAttribute(parameter);
+				if (hasRequiredAttribute && !parameter.IsRequired)
+				{
+					attributeRequired.Add(i);
+				}
+				else if (parameter.IsRequired && !hasRequiredAttribute
+					&& parameter.Accept(DefaultParameterVisitor.Instance) is DefaultSetter<TArgumentState> defaultSetter)
+				{
+					defaultSetters.Add((i, defaultSetter));
+				}
+			}
+		}
+
 		SpecialParameterSetter<CancellationToken, TArgumentState>? setCancellationToken = null;
 		SpecialParameterSetter<DispatchRequest, TArgumentState>? setDispatchRequest = null;
 		Memory<ParameterSetter<TArgumentState>> parameterSetters = new ParameterSetter<TArgumentState>[parameters.Count];
@@ -203,6 +227,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			bool isError = false;
 			TArgumentState argState;
 			ArgumentList values = default;
+			bool flexible = false;
 			try
 			{
 				try
@@ -212,6 +237,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 					if (dispatch.Request.Arguments.HasValue)
 					{
 						(bool named, values) = dispatch.UserDataSerializer.ReadArguments(dispatch.Request);
+						flexible = allowFlexibleNamedArgumentMatching && named;
 						if (!named && values.Count > parameterSetters.Length)
 						{
 							return new DispatchResponse
@@ -231,6 +257,11 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 								StringEncoding.GetEncodedStringBytes(values[i].Name!, out ReadOnlyMemory<byte> utf8Name, out _);
 								if (!parameterNameToIndex.TryGetValue(utf8Name.Span, out IParameterShape? parameterShape))
 								{
+									if (flexible)
+									{
+										continue;
+									}
+
 									return new DispatchResponse
 									{
 										Response = dispatch.Request.Id is RequestId id
@@ -247,10 +278,22 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 						}
 					}
 
+					// Omitted arguments are defaulted in flexible mode, but only for named arguments.
+					if (flexible)
+					{
+						foreach ((int index, DefaultSetter<TArgumentState> setDefault) in defaultSetters)
+						{
+							if (!argState.IsArgumentSet(index))
+							{
+								setDefault(ref argState);
+							}
+						}
+					}
+
 					setCancellationToken?.Invoke(dispatch.CancellationToken, ref argState);
 					setDispatchRequest?.Invoke(dispatch, ref argState);
 
-					if (!argState.AreRequiredArgumentsSet)
+					if (!argState.AreRequiredArgumentsSet || (flexible && attributeRequired.Any(index => !argState.IsArgumentSet(index))))
 					{
 						return new DispatchResponse
 						{
@@ -350,6 +393,9 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 		}
 	}
 
+	private static bool HasRequiredAttribute(IParameterShape parameter)
+		=> parameter.AttributeProvider?.GetCustomAttribute<ParameterShapeAttribute>(inherit: false) is { IsRequired: true };
+
 	/// <summary>
 	/// Determines the JSON-RPC method name that dispatches to the given method, honoring an explicit
 	/// <see cref="MethodShapeAttribute.Name"/> if present and otherwise applying the configured method name transform.
@@ -447,6 +493,27 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 		catch (Exception ex)
 		{
 			jsonRpc.LogApplicationError(ex);
+		}
+	}
+
+	/// <summary>Visits a parameter to produce a setter that assigns <see langword="default"/> for it.</summary>
+	private sealed class DefaultParameterVisitor : TypeShapeVisitor
+	{
+		internal static readonly DefaultParameterVisitor Instance = new();
+
+		private DefaultParameterVisitor()
+		{
+		}
+
+		public override object? VisitParameter<TArgumentState, TParameterType>(IParameterShape<TArgumentState, TParameterType> parameterShape, object? state = null)
+		{
+			if (typeof(TParameterType) == typeof(CancellationToken) || typeof(TParameterType) == typeof(DispatchRequest))
+			{
+				return null;
+			}
+
+			Setter<TArgumentState, TParameterType> setter = parameterShape.GetSetter();
+			return new DefaultSetter<TArgumentState>((ref TArgumentState argState) => setter(ref argState, default!));
 		}
 	}
 
