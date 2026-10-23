@@ -26,19 +26,173 @@ public class OptionalInterfaceTests
 		IOptionalObject basic = await client.GetObjectAsync(0, CancellationToken.None);
 		Assert.False(basic is ISubtractCapability);
 		Assert.False(basic is IMultiplyCapability);
+		IClientProxy basicProxy = Assert.IsAssignableFrom<IClientProxy>(basic);
+		Assert.True(basicProxy.Is(typeof(IOptionalObject)));
+		Assert.True(basicProxy.Is(typeof(IDisposable)));
+		Assert.Null(basicProxy.As<ISubtractCapability>());
+		Assert.Null(basicProxy.As<IMultiplyCapability>());
 
 		IOptionalObject subtract = await client.GetObjectAsync(1, CancellationToken.None);
 		ISubtractCapability subtractCapability = Assert.IsAssignableFrom<ISubtractCapability>(subtract);
-		Assert.False(subtract is IMultiplyCapability);
+		Assert.True(subtract is IMultiplyCapability);
+		Assert.Null(subtract.As<IMultiplyCapability>());
+		Assert.True(subtract.Is(typeof(ISubtractCapability)));
 		Assert.Equal(7, await subtractCapability.CalculateAsync(3, CancellationToken.None));
 
 		IOptionalObject all = await client.GetObjectAsync(3, CancellationToken.None);
+		IClientProxy allProxy = Assert.IsAssignableFrom<IClientProxy>(all);
+		Assert.True(allProxy.Is(typeof(IOptionalObject)));
+		Assert.Same(all, allProxy.As<ISubtractCapability>());
+		Assert.Same(all, allProxy.As<IMultiplyCapability>());
 		Assert.Equal(7, await Assert.IsAssignableFrom<ISubtractCapability>(all).CalculateAsync(3, CancellationToken.None));
 		Assert.Equal(30, await Assert.IsAssignableFrom<IMultiplyCapability>(all).CalculateAsync(3, CancellationToken.None));
 
 		basic.Dispose();
 		subtract.Dispose();
 		all.Dispose();
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task ServerQueriesCapabilitiesOfMarshaledArguments(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
+		serverRpc.Start();
+		clientRpc.Start();
+		IOptionalInterfaceService client = clientRpc.Attach<IOptionalInterfaceService>();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+
+		Assert.False(await client.HasMultiplyCapabilityAsync(new OptionalObject(), cts.Token));
+		Assert.True(await client.HasMultiplyCapabilityAsync(new AllOptionalObject(), cts.Token));
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, false)]
+	[Arguments(JsonRpcEncoding.Json, true)]
+	[Arguments(JsonRpcEncoding.MessagePack, true)]
+	public async Task MarshaledProxyOptionsCanRestrictAdvertisedCapabilities(JsonRpcEncoding encoding, bool emptyList)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding), new JsonRpcOptions
+		{
+			MarshaledProxy = new JsonRpcProxyOptions { EnabledInterfaces = emptyList ? [] : [typeof(ISubtractCapability)] },
+		});
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
+		serverRpc.Start();
+		clientRpc.Start();
+		IOptionalInterfaceService client = clientRpc.Attach<IOptionalInterfaceService>();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		using IOptionalObject all = await client.GetObjectAsync(3, cts.Token);
+		IClientProxy proxy = Assert.IsAssignableFrom<IClientProxy>(all);
+
+		Assert.True(all is IMultiplyCapability);
+		Assert.True(proxy.Is(typeof(IOptionalObject)));
+		Assert.True(proxy.Is(typeof(IDisposable)));
+		Assert.Same(all, proxy.As<IOptionalObject>());
+		Assert.Equal(!emptyList, proxy.As<ISubtractCapability>() is not null);
+		Assert.Null(proxy.As<IMultiplyCapability>());
+		Assert.Equal(30, await ((IMultiplyCapability)all).CalculateAsync(3, cts.Token));
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task ExplicitGroupsPreferExactMatchAndFallBackToSuperset(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
+		serverRpc.Start();
+		clientRpc.Start();
+		IOptionalInterfaceService client = clientRpc.Attach<IOptionalInterfaceService>();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		using IGroupedOptionalObject basic = await client.GetGroupedObjectAsync(0, cts.Token);
+		Assert.False(basic is ISubtractCapability);
+		Assert.False(basic is IMultiplyCapability);
+		using IGroupedOptionalObject subtract = await client.GetGroupedObjectAsync(1, cts.Token);
+		Assert.True(subtract is ISubtractCapability);
+		Assert.False(subtract is IMultiplyCapability);
+		Assert.Equal(7, await subtract.As<ISubtractCapability>()!.CalculateAsync(3, cts.Token));
+		using IGroupedOptionalObject multiply = await client.GetGroupedObjectAsync(2, cts.Token);
+		Assert.True(multiply is ISubtractCapability);
+		Assert.True(multiply is IMultiplyCapability);
+		Assert.False(multiply.Is(typeof(ISubtractCapability)));
+		Assert.Null(multiply.As<ISubtractCapability>());
+		Assert.Equal(30, await multiply.As<IMultiplyCapability>()!.CalculateAsync(3, cts.Token));
+		using IGroupedOptionalObject all = await client.GetGroupedObjectAsync(3, cts.Token);
+		Assert.Equal(7, await all.As<ISubtractCapability>()!.CalculateAsync(3, cts.Token));
+		Assert.Equal(30, await all.As<IMultiplyCapability>()!.CalculateAsync(3, cts.Token));
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task FullOnlyGroupCanRepresentObjectWithNoOptionalInterfaces(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
+		serverRpc.Start();
+		clientRpc.Start();
+		IOptionalInterfaceService client = clientRpc.Attach<IOptionalInterfaceService>();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		using IFullOnlyObject basic = await client.GetFullOnlyObjectAsync(false, cts.Token);
+		Assert.True(basic is IMultiplyCapability);
+		Assert.False(basic.Is(typeof(IMultiplyCapability)));
+		Assert.Null(basic.As<IMultiplyCapability>());
+		Assert.True(basic.Is(typeof(IDisposable)));
+		using IFullOnlyObject multiply = await client.GetFullOnlyObjectAsync(true, cts.Token);
+		Assert.Equal(30, await multiply.As<IMultiplyCapability>()!.CalculateAsync(3, cts.Token));
+	}
+
+	[Test]
+	public async Task MissingCoveringGroupReportsActionableError()
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, JsonRpcEncoding.Json));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, JsonRpcEncoding.Json));
+		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
+		serverRpc.Start();
+		clientRpc.Start();
+		IOptionalInterfaceService client = clientRpc.Attach<IOptionalInterfaceService>();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		Nerdbank.Json.JsonSerializationException exception = await Assert.ThrowsAsync<Nerdbank.Json.JsonSerializationException>(() => client.GetIncompleteObjectAsync(cts.Token));
+		Assert.IsType<NotSupportedException>(exception.InnerException);
+		Assert.Contains(nameof(JsonRpcProxyInterfaceGroupAttribute), exception.Message);
+		Assert.Contains("42", exception.Message);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task RestrictionsPreserveSharedInheritedCapabilities(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding), new JsonRpcOptions
+		{
+			MarshaledProxy = new() { EnabledInterfaces = [typeof(IClientCapability)] },
+		});
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
+		serverRpc.Start();
+		clientRpc.Start();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		using ISiblingCapabilityObject proxy = await clientRpc.Attach<IOptionalInterfaceService>().GetSiblingObjectAsync(cts.Token);
+		Assert.True(proxy.Is(typeof(ISiblingCapabilityObject)));
+		Assert.True(proxy.Is(typeof(IDisposable)));
+		Assert.Same(proxy, proxy.As<ISiblingCapabilityObject>());
+		Assert.False(proxy.Is(typeof(IServerCapability)));
+		Assert.False(proxy.Is(typeof(IClientCapability)));
+		Assert.True(proxy.Is(typeof(ICommonCapability)));
+		Assert.Equal(42, await proxy.As<ICommonCapability>()!.ReadAsync(cts.Token));
 	}
 
 	[Test]
@@ -70,8 +224,142 @@ public class OptionalInterfaceTests
 
 		IOptionalObject result = await resultTask.WithCancellation(cts.Token);
 		Assert.IsAssignableFrom<ISubtractCapability>(result);
-		Assert.False(result is IMultiplyCapability);
+		Assert.True(result is IMultiplyCapability);
+		Assert.Null(result.As<IMultiplyCapability>());
 		result.Dispose();
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, false)]
+	[Arguments(JsonRpcEncoding.Json, true)]
+	[Arguments(JsonRpcEncoding.MessagePack, true)]
+	public async Task LegacyMetadataPreservesBaseOnlyProxyForEmptyAdvertisement(JsonRpcEncoding encoding, bool optional)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
+		serverRpc.Start();
+		clientRpc.Start();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		using Nerdbank.JsonRpc.TestContracts.ILegacyOptionalObject proxy = await clientRpc.Attach<IOptionalInterfaceService>().GetLegacyObjectAsync(optional, cts.Token);
+		Assert.False(proxy is IClientProxy);
+		Assert.Equal(optional, proxy is Nerdbank.JsonRpc.TestContracts.ILegacyCapability);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task WitnessBackedOptionalMethodsUsePrimaryProvider(JsonRpcEncoding encoding)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
+		serverRpc.Start();
+		clientRpc.Start();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		using IWitnessOptionalObject proxy = await clientRpc.Attach<IOptionalInterfaceService>().GetWitnessObjectAsync(cts.Token);
+		Assert.Equal(42, await proxy.As<IWitnessOptionalCapability>()!.WitnessValueAsync(cts.Token));
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, false)]
+	[Arguments(JsonRpcEncoding.Json, true)]
+	[Arguments(JsonRpcEncoding.MessagePack, true)]
+	public async Task DerivedOptionalGroupsCoverInheritedAdvertisements(JsonRpcEncoding encoding, bool derived)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
+		serverRpc.Start();
+		clientRpc.Start();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		using IInheritedOptionalObject proxy = await clientRpc.Attach<IOptionalInterfaceService>().GetInheritedObjectAsync(derived, cts.Token);
+		Assert.Equal(1, await proxy.As<IBaseOptionalCapability>()!.BaseValueAsync(cts.Token));
+		Assert.Equal(derived, proxy.As<IDerivedOptionalCapability>() is not null);
+		if (derived)
+		{
+			Assert.Equal(2, await proxy.As<IDerivedOptionalCapability>()!.DerivedValueAsync(cts.Token));
+		}
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, false, false)]
+	[Arguments(JsonRpcEncoding.Json, true, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, false, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, true, false)]
+	[Arguments(JsonRpcEncoding.Json, false, true)]
+	[Arguments(JsonRpcEncoding.Json, true, true)]
+	[Arguments(JsonRpcEncoding.MessagePack, false, true)]
+	[Arguments(JsonRpcEncoding.MessagePack, true, true)]
+	public async Task SharedInheritedMethodsUseAdvertisedSiblingRoute(JsonRpcEncoding encoding, bool right, bool restrictToCommon)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding), new JsonRpcOptions
+		{
+			MarshaledProxy = new() { EnabledInterfaces = restrictToCommon ? [typeof(ICommonCapability)] : null },
+		});
+		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
+		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
+		serverRpc.Start();
+		clientRpc.Start();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		using ISiblingRouteObject proxy = await clientRpc.Attach<IOptionalInterfaceService>().GetSiblingRouteObjectAsync(right, cts.Token);
+		Assert.True(proxy is IServerCapability);
+		Assert.True(proxy is IClientCapability);
+		Assert.Equal(!restrictToCommon && !right, proxy.As<IServerCapability>() is not null);
+		Assert.Equal(!restrictToCommon && right, proxy.As<IClientCapability>() is not null);
+		Assert.Equal(right ? 2 : 1, await proxy.As<ICommonCapability>()!.ReadAsync(cts.Token));
+		if (!restrictToCommon)
+		{
+			int value = right
+				? await proxy.As<IClientCapability>()!.ReadAsync(cts.Token)
+				: await proxy.As<IServerCapability>()!.ReadAsync(cts.Token);
+			Assert.Equal(right ? 2 : 1, value);
+		}
+	}
+
+	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task SharedInheritedMethodsUseExactAdvertisedLeafId(bool restrictToBase)
+	{
+		(MockChannel<JsonRpcMessage> transport, MockChannel<JsonRpcMessage> remote) = MockChannel<JsonRpcMessage>.CreatePair();
+		using JsonRpc rpc = new(new MockJsonRpcPipeChannel(transport), new JsonRpcOptions
+		{
+			MarshaledProxy = new() { EnabledInterfaces = restrictToBase ? [typeof(IBaseOptionalCapability)] : null },
+		});
+		rpc.Start();
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+		Task<ILeafRouteObject> resultTask = rpc.Attach<IOptionalInterfaceService>().GetLeafRouteObjectAsync(cts.Token);
+		JsonRpcRequest request = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(cts.Token));
+		using Sequence<byte> buffer = new();
+		MessagePackWriter writer = new(buffer);
+		writer.WriteMapHeader(4);
+		writer.Write("__jsonrpc_marshaled");
+		writer.Write(1);
+		writer.Write("handle");
+		writer.Write(1L);
+		writer.Write("lifetime");
+		writer.Write("explicit");
+		writer.Write("optionalInterfaces");
+		writer.WriteArrayHeader(1);
+		writer.Write(3);
+		writer.Flush();
+		await remote.Writer.WriteAsync(new JsonRpcResult { Id = request.Id!.Value, Result = (RawMessagePack)buffer.AsReadOnlySequence.ToArray() }, cts.Token);
+		using ILeafRouteObject proxy = await resultTask.WithCancellation(cts.Token);
+		Assert.True(proxy.Is(typeof(IBaseOptionalCapability)));
+		Assert.Equal(!restrictToBase, proxy.Is(typeof(IDerivedOptionalCapability)));
+		Assert.Equal(!restrictToBase, proxy.Is(typeof(ILeafOptionalCapability)));
+		Task<int> valueTask = proxy.As<IBaseOptionalCapability>()!.BaseValueAsync(cts.Token);
+		JsonRpcRequest invocation = Assert.IsType<JsonRpcRequest>(await remote.Reader.ReadAsync(cts.Token));
+		await remote.Writer.WriteAsync(new JsonRpcResult { Id = invocation.Id!.Value, Result = (RawMessagePack)new byte[] { 42 } }, cts.Token);
+		Assert.Equal(42, await valueTask.WithCancellation(cts.Token));
+		Assert.Equal("$/invokeProxy/1/3.baseValue", invocation.Method);
 	}
 
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)

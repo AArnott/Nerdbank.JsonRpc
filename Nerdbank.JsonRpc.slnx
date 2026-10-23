@@ -33,6 +33,7 @@
     <Project Path="test/Benchmarks/Benchmarks.csproj" Id="ed5946fd-7801-431e-85b6-c34fad22c4f3" />
     <Project Path="test/Nerdbank.JsonRpc.SourceGeneration.Tests/Nerdbank.JsonRpc.SourceGeneration.Tests.csproj" />
     <Project Path="test/Nerdbank.JsonRpc.StreamJsonRpc.Tests/Nerdbank.JsonRpc.StreamJsonRpc.Tests.csproj" />
+    <Project Path="test/Nerdbank.JsonRpc.TestContracts/Nerdbank.JsonRpc.TestContracts.csproj" />
     <Project Path="test/Nerdbank.JsonRpc.Tests/Nerdbank.JsonRpc.Tests.csproj" />
   </Folder>
 </Solution>

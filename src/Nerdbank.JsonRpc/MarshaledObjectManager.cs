@@ -138,22 +138,38 @@ internal class MarshaledObjectManager(JsonRpc owner)
 				.Where(attribute => advertisedInterfaces.Contains(attribute.InterfaceId))
 				.Select(attribute => attribute.InterfaceId),
 		];
-		JsonRpcOptionalProxyFactoryAttribute? optionalProxyFactory = knownAdvertisedInterfaces.Count == 0 ? null : MarshalableCache<T>.OptionalProxyFactories
-			.SingleOrDefault(attribute => attribute.InterfaceIds.Count == knownAdvertisedInterfaces.Count && attribute.InterfaceIds.All(knownAdvertisedInterfaces.Contains));
-		if (knownAdvertisedInterfaces.Count > 0 && optionalProxyFactory is null)
+		JsonRpcOptionalProxyFactoryAttribute? optionalProxyFactory = MarshalableCache<T>.OptionalProxyFactories
+			.Where(attribute => knownAdvertisedInterfaces.All(attribute.InterfaceIds.Contains))
+			.OrderBy(static attribute => attribute.InterfaceIds.Count)
+			.FirstOrDefault();
+		if (knownAdvertisedInterfaces.Count == 0 && optionalProxyFactory is { InterfaceIds.Count: > 0 }
+			&& typeof(T).GetCustomAttributes<JsonRpcProxyFactoryAttribute>(inherit: false).Any(static factory => factory.AdditionalInterfaces.Count == 0))
+		{
+			// Older generators describe the base-only proxy only through the root factory metadata.
+			optionalProxyFactory = null;
+		}
+
+		if (optionalProxyFactory is null && knownAdvertisedInterfaces.Count > 0)
 		{
 			string advertisedIds = string.Join(", ", advertisedInterfaces.OrderBy(id => id));
 			string declaredInterfaces = string.Join(", ", MarshalableCache<T>.OptionalInterfaces
 				.OrderBy(attribute => attribute.InterfaceId)
 				.Select(attribute => $"{attribute.InterfaceId} ({attribute.OptionalInterface.FullName ?? attribute.OptionalInterface.Name})"));
 			throw new NotSupportedException(
-				$"No generated proxy supports the advertised optional interfaces on '{shape.Type}'. Advertised optional interface IDs: {advertisedIds}. Declared optional interfaces on the contract: {declaredInterfaces}. This usually means the proxy source and the contract were generated from mismatched source-generator/package versions. Regenerate the proxies or update the source generator package so it emits {nameof(JsonRpcOptionalProxyFactoryAttribute)}.");
+				$"No generated proxy supports the advertised optional interfaces on '{shape.Type}'. Advertised optional interface IDs: {advertisedIds}. Declared optional interfaces on the contract: {declaredInterfaces}. Add a {nameof(JsonRpcProxyInterfaceGroupAttribute)} covering the advertised interfaces, or regenerate proxies with matching source-generator/package versions that emit {nameof(JsonRpcOptionalProxyFactoryAttribute)}.");
 		}
 
-		MarshaledObjectProxyClient client = new(owner, handle, callScopedHandle);
+		Type[] supportedInterfaces = [
+			typeof(T),
+			.. MarshalableCache<T>.OptionalInterfaces
+				.Where(attribute => knownAdvertisedInterfaces.Contains(attribute.InterfaceId))
+				.Select(static attribute => attribute.OptionalInterface),
+		];
+		JsonRpcProxyOptions configuredOptions = owner.Options.MarshaledProxy;
+		MarshaledObjectProxyClient client = new(owner, handle, callScopedHandle, supportedInterfaces, knownAdvertisedInterfaces);
 		T proxy = optionalProxyFactory is not null
-			? JsonRpc.CastProxy<T>(optionalProxyFactory.CreateProxy(client, owner.Options.MarshaledProxy))
-			: JsonRpc.AttachCore<T>(client, owner.Options.MarshaledProxy);
+			? JsonRpc.CastProxy<T>(optionalProxyFactory.CreateProxy(client, configuredOptions))
+			: JsonRpc.AttachCore<T>(client, configuredOptions);
 		RemoteHandles.Add(proxy!, new(this, handle, callScopedLifetime, callScopedHandle));
 		return proxy;
 	}

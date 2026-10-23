@@ -21,6 +21,23 @@ public static class JsonRpcExtensions
 		"It is recommended to switch to statically resolved IShapeable<T> APIs or upgrade your app to .NET 9 or later.";
 #endif
 
+	/// <summary>Tests an exact advertised optional-interface identifier for source-generated proxy routing.</summary>
+	/// <param name="client">The RPC client used by the generated proxy.</param>
+	/// <param name="interfaceId">The optional-interface wire identifier.</param>
+	/// <returns>Whether the marshaled-object client received this exact identifier in the peer's advertisement.</returns>
+	/// <remarks>This source-generator support API does not perform inheritance-aware capability queries.</remarks>
+	/// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> is null.</exception>
+	[EditorBrowsable(EditorBrowsableState.Never)]
+	public static bool IsOptionalInterfaceAdvertised(IJsonRpcClient client, int interfaceId)
+		=> Requires.NotNull(client) is MarshaledObjectProxyClient marshaled && marshaled.IsOptionalInterfaceAdvertised(interfaceId);
+
+	/// <summary>Returns a proxy as an interface only when that interface is enabled on the remote object.</summary>
+	/// <typeparam name="T">The contract interface type.</typeparam>
+	/// <param name="proxy">The proxy to query, or <see langword="null"/>.</param>
+	/// <returns>The same proxy typed as <typeparamref name="T"/>, or <see langword="null"/> if it is null or the interface is not enabled.</returns>
+	public static T? As<T>(this IClientProxy? proxy)
+		where T : class => proxy?.Is(typeof(T)) is true ? (T)(object)proxy : null;
+
 	/// <summary>Adds an exception type by resolving its source-generated shape dynamically.</summary>
 	/// <typeparam name="TException">The allowed exception type.</typeparam>
 	/// <param name="self">The mapping to update.</param>

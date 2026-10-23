@@ -1,13 +1,22 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using Microsoft;
+
 namespace Nerdbank.JsonRpc;
 
-internal sealed class MarshaledObjectProxyClient(JsonRpc owner, long handle, MarshaledObjectManager.CallScopedHandle callScopedHandle) : IJsonRpcClient
+internal sealed class MarshaledObjectProxyClient(JsonRpc owner, long handle, MarshaledObjectManager.CallScopedHandle callScopedHandle, IReadOnlyList<Type> supportedInterfaces, IReadOnlyCollection<int> advertisedInterfaceIds) : IJsonRpcClient, IClientProxy
 {
 	private int disposed;
 
 	public JsonRpcSerializer Serializer => owner.UserDataSerializer;
+
+	/// <inheritdoc/>
+	bool IClientProxy.Is(Type type)
+	{
+		Requires.NotNull(type);
+		return type.IsInterface && supportedInterfaces.Any(type.IsAssignableFrom);
+	}
 
 	public JsonRpcArgumentsBuilder CreateArguments(bool named, int count, CancellationToken cancellationToken = default)
 	{
@@ -42,6 +51,11 @@ internal sealed class MarshaledObjectProxyClient(JsonRpc owner, long handle, Mar
 		this.ThrowIfDisposed();
 		return owner.NotifyAsync(this.GetMethodName(method), arguments, cancellationToken);
 	}
+
+	/// <summary>Tests whether the peer advertised an exact optional-interface wire identifier.</summary>
+	/// <param name="interfaceId">The optional-interface wire identifier.</param>
+	/// <returns>Whether this identifier was advertised, without considering interface inheritance.</returns>
+	internal bool IsOptionalInterfaceAdvertised(int interfaceId) => advertisedInterfaceIds.Contains(interfaceId);
 
 	private string GetMethodName(string method) => $"$/invokeProxy/{handle}/{method}";
 
