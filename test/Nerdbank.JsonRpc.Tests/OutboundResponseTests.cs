@@ -54,7 +54,7 @@ public class OutboundResponseTests : TestBase
 			}
 			else
 			{
-				long code = i % 3 == 1 ? JsonRpcErrorCode.InternalError : JsonRpcErrorCode.RequestCancelled;
+				JsonRpcErrorCode code = i % 3 == 1 ? JsonRpcErrorCode.InternalError : JsonRpcErrorCode.RequestCancelled;
 				JsonRpcError error = new() { Id = request.Id!.Value, Error = new() { Code = code, Message = "expected" } };
 				await fixture.Remote.Writer.WriteAsync(error, this.TimeoutToken);
 				if (code == JsonRpcErrorCode.RequestCancelled)

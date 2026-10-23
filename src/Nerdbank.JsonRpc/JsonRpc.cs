@@ -465,8 +465,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			},
 			["errors"] = new JsonArray
 			{
-				(JsonNode?)new JsonObject { ["code"] = JsonRpcErrorCode.InvalidParams, ["message"] = "Invalid params" },
-				(JsonNode?)new JsonObject { ["code"] = JsonRpcErrorCode.InternalError, ["message"] = "Internal error" },
+				(JsonNode?)new JsonObject { ["code"] = (long)JsonRpcErrorCode.InvalidParams, ["message"] = "Invalid params" },
+				(JsonNode?)new JsonObject { ["code"] = (long)JsonRpcErrorCode.InternalError, ["message"] = "Internal error" },
 			},
 		});
 
@@ -832,8 +832,13 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// <param name="exception">The application exception.</param>
 	/// <param name="code">The JSON-RPC error code.</param>
 	/// <returns>The error details to send to the peer.</returns>
-	internal JsonRpcErrorDetails CreateApplicationError(Exception exception, long code)
+	internal JsonRpcErrorDetails CreateApplicationError(Exception exception, JsonRpcErrorCode code)
 	{
+		if (exception is JsonRpcException rpcException && exception is not RemoteInvocationException)
+		{
+			return rpcException.ErrorDetails;
+		}
+
 		JsonRpcValue? encodedData = null;
 		RemoteExceptionData? data = null;
 		if (this.Options.IncludeExceptionDetails)
@@ -1294,11 +1299,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	private static JsonArray CreateOpenRpcErrors(JsonRpcMethodDescription method)
 	{
 		JsonArray errors = [];
-		errors.Add((JsonNode?)new JsonObject { ["code"] = JsonRpcErrorCode.InvalidParams, ["message"] = "Invalid params" });
-		errors.Add((JsonNode?)new JsonObject { ["code"] = JsonRpcErrorCode.InternalError, ["message"] = "Internal error" });
+		errors.Add((JsonNode?)new JsonObject { ["code"] = (long)JsonRpcErrorCode.InvalidParams, ["message"] = "Invalid params" });
+		errors.Add((JsonNode?)new JsonObject { ["code"] = (long)JsonRpcErrorCode.InternalError, ["message"] = "Internal error" });
 		if (method.SupportsCancellation)
 		{
-			errors.Add((JsonNode?)new JsonObject { ["code"] = JsonRpcErrorCode.RequestCancelled, ["message"] = "Request cancelled" });
+			errors.Add((JsonNode?)new JsonObject { ["code"] = (long)JsonRpcErrorCode.RequestCancelled, ["message"] = "Request cancelled" });
 		}
 
 		return errors;

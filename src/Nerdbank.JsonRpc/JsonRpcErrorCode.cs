@@ -3,16 +3,30 @@
 
 namespace Nerdbank.JsonRpc;
 
-public static class JsonRpcErrorCode
+/// <summary>Well-known JSON-RPC error codes.</summary>
+public enum JsonRpcErrorCode : long
 {
-	public const int ParseError = -32700;
-	public const int InvalidRequest = -32600;
-	public const int MethodNotFound = -32601;
-	public const int InvalidParams = -32602;
-	public const int InternalError = -32603;
+	/// <summary>The server could not parse the request.</summary>
+	ParseError = -32700,
+
+	/// <summary>The request is not a valid JSON-RPC request object.</summary>
+	InvalidRequest = -32600,
+
+	/// <summary>The requested method does not exist or is unavailable.</summary>
+	MethodNotFound = -32601,
+
+	/// <summary>The request parameters are invalid.</summary>
+	InvalidParams = -32602,
+
+	/// <summary>An internal JSON-RPC error occurred.</summary>
+	InternalError = -32603,
+
+	/// <summary>An exception occurred while invoking a JSON-RPC method.</summary>
+	InvocationError = -32000,
 
 	/// <summary>A marshaled object or async enumerator identified by a token no longer exists.</summary>
-	public const int NoMarshaledObjectFound = -32001;
+	NoMarshaledObjectFound = -32001,
 
-	public const int RequestCancelled = -32800;
+	/// <summary>The request was canceled.</summary>
+	RequestCancelled = -32800,
 }

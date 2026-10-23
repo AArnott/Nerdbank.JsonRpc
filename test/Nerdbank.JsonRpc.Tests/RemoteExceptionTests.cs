@@ -157,6 +157,20 @@ public partial class RemoteExceptionTests : TestBase
 	[Test]
 	[Arguments(JsonRpcEncoding.Json)]
 	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task JsonRpcException_SendsApplicationDefinedErrorDetails(JsonRpcEncoding encoding)
+	{
+		using Fixture fixture = new(encoding, new JsonRpcOptions { IncludeExceptionDetails = false });
+
+		RemoteInvocationException exception = await Assert.ThrowsAsync<RemoteInvocationException>(
+			() => fixture.Client.RequestAsync("FailWithApplicationError", EmptyParameters(encoding), this.TimeoutToken).AsTask());
+
+		Assert.Equal((JsonRpcErrorCode)123, exception.ErrorDetails.Code);
+		Assert.Equal("The requested resource is unavailable.", exception.Message);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
 	public async Task DisabledDetails_CancellationResponseIsGeneric(JsonRpcEncoding encoding)
 	{
 		RecordingLogger logger = new();
@@ -248,7 +262,7 @@ public partial class RemoteExceptionTests : TestBase
 		server.AddRpcTarget(new FailingService(), new JsonRpcTargetOptions { MethodNameTransform = CommonMethodNameTransforms.Identity });
 
 		JsonObject method = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(server.GetOpenRpcDocument()["methods"]!).Where(item => item?["name"]?.GetValue<string>() == "FailCustom")));
-		JsonObject internalError = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(method["errors"]!).Where(item => item?["code"]?.GetValue<int>() == (int)JsonRpcErrorCode.InternalError)));
+		JsonObject internalError = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(method["errors"]!).Where(item => item?["code"]?.GetValue<long>() == (long)JsonRpcErrorCode.InternalError)));
 		Assert.False(internalError.ContainsKey("x-exceptionPayloads"));
 		JsonObject exceptionDescription = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(method["x-exceptionPayloads"]!)));
 		JsonObject schema = Assert.IsType<JsonObject>(exceptionDescription["schema"]);
@@ -296,7 +310,7 @@ public partial class RemoteExceptionTests : TestBase
 		server.AddRpcTarget(new FailingService(), new JsonRpcTargetOptions { MethodNameTransform = CommonMethodNameTransforms.Identity });
 
 		JsonObject method = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(server.GetOpenRpcDocument()["methods"]!).Where(item => item?["name"]?.GetValue<string>() == "FailRecursive")));
-		JsonObject internalError = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(method["errors"]!).Where(item => item?["code"]?.GetValue<int>() == (int)JsonRpcErrorCode.InternalError)));
+		JsonObject internalError = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(method["errors"]!).Where(item => item?["code"]?.GetValue<long>() == (long)JsonRpcErrorCode.InternalError)));
 		Assert.False(internalError.ContainsKey("x-exceptionPayloads"));
 		JsonObject exceptionDescription = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(method["x-exceptionPayloads"]!)));
 		JsonObject schema = Assert.IsType<JsonObject>(exceptionDescription["schema"]);
@@ -565,6 +579,8 @@ public partial class RemoteExceptionTests : TestBase
 		internal TaskCompletionSource<bool> CancellationStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
 		public void Fail() => throw new InvalidOperationException("The remote operation failed.", new FormatException("Nested failure."));
+
+		public void FailWithApplicationError() => throw new JsonRpcException(new JsonRpcErrorDetails { Code = (JsonRpcErrorCode)123, Message = "The requested resource is unavailable." });
 
 		public void FailCustom() => throw new MappingException("Custom failure.", 42);
 

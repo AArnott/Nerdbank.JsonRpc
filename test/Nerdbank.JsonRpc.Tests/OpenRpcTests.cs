@@ -34,7 +34,7 @@ public class OpenRpcTests : TestBase
 		JsonObject discovery = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(document["methods"]!).Where(item => item?["name"]?.GetValue<string>() == "rpc.discover")));
 		Assert.Empty(Assert.IsType<JsonArray>(discovery["params"]));
 		Assert.Equal("http://json-schema.org/draft-07/schema#", Property(Property(Property(discovery, "result"), "schema"), "$schema").GetValue<string>());
-		Assert.Equal(JsonRpcErrorCode.InvalidParams, Property(Element(Property(method, "errors"), 0), "code").GetValue<int>());
+		Assert.Equal((long)JsonRpcErrorCode.InvalidParams, Property(Element(Property(method, "errors"), 0), "code").GetValue<long>());
 	}
 
 	[Test]

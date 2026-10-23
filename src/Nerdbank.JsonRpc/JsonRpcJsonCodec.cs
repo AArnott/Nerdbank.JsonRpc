@@ -244,7 +244,7 @@ internal static class JsonRpcJsonCodec
 	private static JsonRpcErrorDetails ReadError(byte[] frame, Token error)
 	{
 		bool hasCode = false, hasMessage = false, hasData = false;
-		long code = 0;
+		JsonRpcErrorCode code = default;
 		string? message = null;
 		JsonRpcValue data = default;
 		Utf8JsonReader reader = new(error.GetSpan(frame));
@@ -255,10 +255,12 @@ internal static class JsonRpcJsonCodec
 			{
 				SetOnce(ref hasCode);
 				reader.Read();
-				if (reader.TokenType != JsonTokenType.Number || !IsIntegerToken(reader.ValueSpan) || !reader.TryGetInt64(out code))
+				if (reader.TokenType != JsonTokenType.Number || !IsIntegerToken(reader.ValueSpan) || !reader.TryGetInt64(out long numericCode))
 				{
 					throw new ProtocolViolationException("JSON-RPC error code must be an integer.");
 				}
+
+				code = (JsonRpcErrorCode)numericCode;
 			}
 			else if (reader.ValueTextEquals("message"u8))
 			{
@@ -325,7 +327,7 @@ internal static class JsonRpcJsonCodec
 		{
 			writer.WritePropertyName("error");
 			writer.WriteStartObject();
-			writer.WriteNumber("code", error.Error.Code);
+			writer.WriteNumber("code", (long)error.Error.Code);
 			writer.WriteString("message", error.Error.Message);
 			if (error.Error.Data is { HasValue: true } data)
 			{

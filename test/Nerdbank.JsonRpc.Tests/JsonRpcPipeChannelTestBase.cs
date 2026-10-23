@@ -49,10 +49,11 @@ public abstract class JsonRpcPipeChannelTestBase : TestBase
 		msgpackWriter.WriteNil();
 		msgpackWriter.Flush();
 
-		JsonRpcError sent = new() { Id = 1, Error = new JsonRpcErrorDetails { Code = 123, Message = "msg", Data = JsonRpcValue.FromMessagePack((RawMessagePack)new byte[] { 42 }) } };
+		JsonRpcError sent = new() { Id = 1, Error = new JsonRpcErrorDetails { Code = (JsonRpcErrorCode)123, Message = "msg", Data = JsonRpcValue.FromMessagePack((RawMessagePack)new byte[] { 42 }) } };
 		await this.pair.Alice.Writer.WriteAsync(sent, this.TimeoutToken);
 
 		JsonRpcError recv = Assert.IsAssignableFrom<JsonRpcError>(await this.pair.Bob.Reader.ReadAsync(this.TimeoutToken));
+		Assert.Equal(123L, (long)recv.Error.Code);
 		Assert.Equal(sent.Error.Message, recv.Error.Message);
 		Assert.Equal(sent.Error.Data, recv.Error.Data);
 	}
