@@ -42,12 +42,17 @@ MessagePack is the default encoding. By default each MessagePack message is prec
 ## Features
 
 - **Strongly typed RPC:** Register server targets and issue typed requests or notifications.
-- **Generated client proxies:** Use interface-backed clients with positional or named arguments.
-- **MessagePack or JSON:** Select MessagePack or UTF-8 JSON; choose length-header or self-delimiting framing for MessagePack, and newline-delimited or `Content-Length` framing for JSON.
-- **Batching:** Send independent requests and notifications in one JSON-RPC payload.
-- **Robust protocol behavior:** Propagate cancellation and distinguish malformed protocol messages from application value failures.
-- **Ordered dispatch:** Inbound requests start executing in the order they were sent, while still running concurrently and on the thread pool. Configurable via `JsonRpc.SynchronizationContext`.
-- **Deadlock mitigation:** Propagate `JoinableTaskFactory` context across processes, compatible with StreamJsonRpc.
+- **Generated client proxies:** Use interface-backed clients with positional or named arguments. [Learn about client proxies](https://aarnott.github.io/Nerdbank.JsonRpc/docs/client-proxies.html).
+- **MessagePack or JSON:** Select MessagePack or UTF-8 JSON; choose length-header or self-delimiting framing for MessagePack, and newline-delimited or `Content-Length` framing for JSON. [Compare encodings and framing](https://aarnott.github.io/Nerdbank.JsonRpc/docs/encodings.html).
+- **OpenRPC discovery:** Describe registered methods, parameters, results, and errors with serializer-generated JSON Schemas, locally or remotely through `rpc.discover`, using either encoding. [Discover an API](https://aarnott.github.io/Nerdbank.JsonRpc/docs/openrpc.html).
+- **Method name transforms:** Map CLR method names to camelCase wire names by default, specify explicit names, and interoperate with StreamJsonRpc. [Configure method naming](https://aarnott.github.io/Nerdbank.JsonRpc/docs/method-naming.html).
+- **Events as notifications:** Raise events on registered targets to send JSON-RPC notifications to the remote party. [Send events as notifications](https://aarnott.github.io/Nerdbank.JsonRpc/docs/events.html).
+- **Batching:** Send independent requests and notifications in one JSON-RPC payload. [Send a batch](https://aarnott.github.io/Nerdbank.JsonRpc/docs/batching.html).
+- **By-reference marshaling:** Marshal interfaces, `IObserver<T>`, `IProgress<T>`, streams, pipes, and `IAsyncEnumerable<T>` by reference instead of by value. [Marshal objects by reference](https://aarnott.github.io/Nerdbank.JsonRpc/docs/rpc-marshalable-interfaces.html).
+- **Cancellation and failure handling:** Propagate cancellation and distinguish malformed protocol envelopes from application-value conversion failures. [Understand protocol behavior](https://aarnott.github.io/Nerdbank.JsonRpc/docs/protocol-behavior.html).
+- **Ordered dispatch:** Inbound requests start executing in the order they were sent, while still running concurrently on the thread pool. Configure this behavior with `JsonRpc.SynchronizationContext`; [learn about dispatch order and concurrency](https://aarnott.github.io/Nerdbank.JsonRpc/docs/protocol-behavior.html#dispatch-order-and-concurrency).
+- **Main-thread deadlock mitigation:** Propagate `JoinableTaskFactory` context across processes, compatible with StreamJsonRpc. [Learn more](https://aarnott.github.io/Nerdbank.JsonRpc/docs/protocol-behavior.html#deadlock-mitigation-with-joinabletaskfactory).
+- **Security guidance:** Learn how to authenticate connections and protect resources; the application is responsible for authenticating peers before attaching JSON-RPC. [Review security considerations](https://aarnott.github.io/Nerdbank.JsonRpc/docs/security.html).
 
 ## Documentation
 
