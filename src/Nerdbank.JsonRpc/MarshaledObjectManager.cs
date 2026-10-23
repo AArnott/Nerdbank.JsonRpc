@@ -140,23 +140,20 @@ internal class MarshaledObjectManager(JsonRpc owner)
 		];
 		JsonRpcOptionalProxyFactoryAttribute? optionalProxyFactory = knownAdvertisedInterfaces.Count == 0 ? null : MarshalableCache<T>.OptionalProxyFactories
 			.SingleOrDefault(attribute => attribute.InterfaceIds.Count == knownAdvertisedInterfaces.Count && attribute.InterfaceIds.All(knownAdvertisedInterfaces.Contains));
-#pragma warning disable CS0618 // Support proxy metadata emitted by previous versions of the source generator.
-		JsonRpcOptionalProxyImplementationAttribute? legacyOptionalProxy = knownAdvertisedInterfaces.Count == 0 ? null : MarshalableCache<T>.LegacyOptionalProxyImplementations
-			.SingleOrDefault(attribute => attribute.InterfaceIds.Count == knownAdvertisedInterfaces.Count && attribute.InterfaceIds.All(knownAdvertisedInterfaces.Contains));
-#pragma warning restore CS0618
-		if (knownAdvertisedInterfaces.Count > 0 && optionalProxyFactory is null && legacyOptionalProxy is null)
+		if (knownAdvertisedInterfaces.Count > 0 && optionalProxyFactory is null)
 		{
-			throw new NotSupportedException($"No generated proxy supports the advertised optional interfaces on '{shape.Type}'.");
+			string advertisedIds = string.Join(", ", advertisedInterfaces.OrderBy(id => id));
+			string declaredInterfaces = string.Join(", ", MarshalableCache<T>.OptionalInterfaces
+				.OrderBy(attribute => attribute.InterfaceId)
+				.Select(attribute => $"{attribute.InterfaceId} ({attribute.OptionalInterface.FullName ?? attribute.OptionalInterface.Name})"));
+			throw new NotSupportedException(
+				$"No generated proxy supports the advertised optional interfaces on '{shape.Type}'. Advertised optional interface IDs: {advertisedIds}. Declared optional interfaces on the contract: {declaredInterfaces}. This usually means the proxy source and the contract were generated from mismatched source-generator/package versions. Regenerate the proxies or update the source generator package so it emits {nameof(JsonRpcOptionalProxyFactoryAttribute)}.");
 		}
 
 		MarshaledObjectProxyClient client = new(owner, handle, callScopedHandle);
-
-		// Prefer explicit legacy metadata when present. Old assemblies have no factory attributes, but this also makes the compatibility behavior deterministic if both are applied.
-		T proxy = legacyOptionalProxy is not null
-			? JsonRpc.CastProxy<T>(JsonRpc.CreateLegacyProxy(legacyOptionalProxy.ProxyType, client, owner.Options.MarshaledProxy))
-			: optionalProxyFactory is not null
-				? JsonRpc.CastProxy<T>(optionalProxyFactory.CreateProxy(client, owner.Options.MarshaledProxy))
-				: JsonRpc.AttachCore<T>(client, owner.Options.MarshaledProxy);
+		T proxy = optionalProxyFactory is not null
+			? JsonRpc.CastProxy<T>(optionalProxyFactory.CreateProxy(client, owner.Options.MarshaledProxy))
+			: JsonRpc.AttachCore<T>(client, owner.Options.MarshaledProxy);
 		RemoteHandles.Add(proxy!, new(this, handle, callScopedLifetime, callScopedHandle));
 		return proxy;
 	}
@@ -975,11 +972,6 @@ internal class MarshaledObjectManager(JsonRpc owner)
 
 		/// <summary>The generated factories for proxies of <typeparamref name="T"/> that also implement optional interfaces.</summary>
 		internal static readonly JsonRpcOptionalProxyFactoryAttribute[] OptionalProxyFactories = [.. typeof(T).GetCustomAttributes<JsonRpcOptionalProxyFactoryAttribute>()];
-
-#pragma warning disable CS0618 // Support proxy metadata emitted by previous versions of the source generator.
-		/// <summary>Legacy proxy metadata for optional-interface variants.</summary>
-		internal static readonly JsonRpcOptionalProxyImplementationAttribute[] LegacyOptionalProxyImplementations = [.. typeof(T).GetCustomAttributes<JsonRpcOptionalProxyImplementationAttribute>()];
-#pragma warning restore CS0618
 	}
 
 	private sealed class LocalObjectLease(object value)
