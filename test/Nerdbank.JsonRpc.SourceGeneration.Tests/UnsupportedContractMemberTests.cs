@@ -7,6 +7,27 @@ using Verify = CSharpContractAnalyzerVerifier;
 public class UnsupportedContractMemberTests
 {
 	[Test]
+	public async Task ConcreteStaticHelpersAreExcludedFromTargetOnlyAnalysis()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+			using PolyType;
+
+			interface IBase { static int Count() => 0; }
+			[JsonRpcContract(GenerateProxy = false)]
+			[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]
+			partial interface IService : IBase
+			{
+				Task CreateAsync();
+				static Task Create() => Task.CompletedTask;
+			}
+			""";
+
+		await Verify.VerifyAsync(Source);
+	}
+
+	[Test]
 	[Arguments("")]
 	[Arguments("(GenerateProxy = false)")]
 	public async Task PropertiesAreUnsupportedRegardlessOfProxyGeneration(string options)

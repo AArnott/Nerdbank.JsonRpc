@@ -396,7 +396,9 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				continue;
 			}
 
-			foreach (IMethodSymbol method in currentInterface.GetMembers().OfType<IMethodSymbol>().Where(static method => method.MethodKind == MethodKind.Ordinary && method.DeclaredAccessibility != Accessibility.Private))
+			foreach (IMethodSymbol method in currentInterface.GetMembers().OfType<IMethodSymbol>().Where(static method =>
+				method.MethodKind == MethodKind.Ordinary && method.DeclaredAccessibility != Accessibility.Private
+				&& (!method.IsStatic || method.IsAbstract)))
 			{
 				if (method.ExplicitInterfaceImplementations.Any(static implementation => IsShapeableInterface(implementation.ContainingType)))
 				{

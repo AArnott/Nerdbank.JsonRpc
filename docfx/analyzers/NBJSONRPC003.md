@@ -13,7 +13,8 @@ Default interface property implementations are allowed because they execute loca
 When <xref:Nerdbank.JsonRpc.JsonRpcContractAttribute.GenerateProxy?displayProperty=nameWithType> is `false`, this rule also validates method signatures and event delegates.
 When generating a proxy, the source generator reports these signature and event restrictions as [NBJSONRPC001](NBJSONRPC001.md), avoiding duplicate diagnostics.
 Supported methods return `Task`, `Task<T>`, `ValueTask`, `ValueTask<T>`, `IAsyncEnumerable<T>`, or `void` for notifications.
-Methods must not be static or generic, and parameters must not be `params`, by-reference, ref-like, or pointers.
+RPC methods must not be static or generic, and parameters must not be `params`, by-reference, ref-like, or pointers.
+Concrete static interface helpers are excluded from proxy generation and contract analysis; static abstract methods remain unsupported.
 Cancellation tokens must appear last.
 Notifications cannot carry RPC-marshalable interfaces.
 Events must be instance events with synchronous, void-returning delegates and supported by-value parameters.

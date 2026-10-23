@@ -21,6 +21,51 @@ using Xunit;
 public class ClientProxyGeneratorTests
 {
 	[Test]
+	public async Task ConcreteStaticHelpersDoNotSuppressProxyGeneration()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			interface IBase
+			{
+				static int Count() => 0;
+			}
+
+			[JsonRpcContract]
+			partial interface IService : IBase
+			{
+				static Task CreateAsync() => Task.CompletedTask;
+			}
+			""";
+
+		GeneratorRunResult result = await RunGeneratorAsync(Source);
+		if (GetProxyClasses(result).Length != 1 || result.GeneratedSources.Any(static source => source.SourceText.ToString().Contains("CreateAsync")))
+		{
+			throw new InvalidOperationException("Static helpers should neither suppress proxy generation nor be emitted as proxy methods.");
+		}
+	}
+
+	[Test]
+	public async Task StaticAbstractMethodsStillPreventProxyGeneration()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+			[JsonRpcContract]
+			partial interface IService
+			{
+				static abstract Task {|#0:CreateAsync|}();
+			}
+			""";
+
+		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(
+			Source,
+			CSharpSourceGeneratorVerifier.Diagnostic("NBJSONRPC001").WithLocation(0)
+				.WithArguments("IService.CreateAsync()", "static methods are not supported"));
+	}
+
+	[Test]
 	[Arguments("")]
 	[Arguments("(GenerateProxy = true)")]
 	public async Task ContractGeneratesProxyByDefault(string options)

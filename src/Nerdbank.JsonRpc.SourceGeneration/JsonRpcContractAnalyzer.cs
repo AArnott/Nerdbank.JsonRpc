@@ -110,6 +110,7 @@ public sealed class JsonRpcContractAnalyzer : DiagnosticAnalyzer
 				}
 
 				if (member is not IMethodSymbol { MethodKind: MethodKind.Ordinary } method
+					|| (method.IsStatic && !method.IsAbstract)
 					|| (isMarshalable && type.ToDisplayString() == KnownApis.IDisposable)
 					|| method.ExplicitInterfaceImplementations.Any(static implementation => implementation.ContainingType.MetadataName == KnownApis.IShapeableMetadataName && implementation.ContainingNamespace.ToDisplayString() == KnownApis.PolyTypeNamespace))
 				{
