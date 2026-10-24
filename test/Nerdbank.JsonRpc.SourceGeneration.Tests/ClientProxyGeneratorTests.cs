@@ -3,20 +3,12 @@
 
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
-using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Testing;
-using Nerdbank.JsonRpc;
 using Nerdbank.JsonRpc.SourceGeneration;
-using Nerdbank.MessagePack;
-using Nerdbank.Streams;
-using PolyType;
-using TUnit.Core;
-using Xunit;
 
 public class ClientProxyGeneratorTests
 {
@@ -849,9 +841,8 @@ public class ClientProxyGeneratorTests
 			}
 			""";
 
-		CSharpParseOptions parseOptions = new(LanguageVersion.Preview);
-		ImmutableArray<MetadataReference> references = await CSharpSourceGeneratorVerifier.Net10.ResolveAsync(LanguageNames.CSharp, CancellationToken.None);
-		references = references.Add(MetadataReference.CreateFromFile(typeof(JsonRpcContractAttribute).Assembly.Location));
+		CSharpParseOptions parseOptions = TestCompilationResources.ParseOptions;
+		ImmutableArray<MetadataReference> references = await TestCompilationResources.GetContractReferencesAsync();
 		MetadataReference first = Compile("FirstContracts", FirstContract, references, generate: true);
 		MetadataReference second = Compile("SecondContracts", SecondContract, references.Add(first), generate: true);
 		Compile("Consumer", Consumer, references.Add(first).Add(second), generate: false);
@@ -862,7 +853,7 @@ public class ClientProxyGeneratorTests
 				name,
 				[CSharpSyntaxTree.ParseText(source, parseOptions)],
 				metadata,
-				new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+				TestCompilationResources.CompilationOptions.WithNullableContextOptions(NullableContextOptions.Enable));
 			if (generate)
 			{
 				GeneratorDriver driver = CSharpGeneratorDriver.Create(
@@ -918,19 +909,14 @@ public class ClientProxyGeneratorTests
 			internal partial interface ISecond { }
 			""";
 
-		CSharpParseOptions parseOptions = new(LanguageVersion.Preview);
+		CSharpParseOptions parseOptions = TestCompilationResources.ParseOptions;
 		SyntaxTree contractsTree = CSharpSyntaxTree.ParseText(Contracts, parseOptions, "Contracts.cs");
-		ImmutableArray<MetadataReference> references = await CSharpSourceGeneratorVerifier.Net10.ResolveAsync(LanguageNames.CSharp, CancellationToken.None);
-		references = references
-			.Add(MetadataReference.CreateFromFile(typeof(JsonRpcContractAttribute).Assembly.Location))
-			.Add(MetadataReference.CreateFromFile(typeof(MessagePackSerializer).Assembly.Location))
-			.Add(MetadataReference.CreateFromFile(typeof(Sequence<>).Assembly.Location))
-			.Add(MetadataReference.CreateFromFile(typeof(ITypeShape<>).Assembly.Location));
+		ImmutableArray<MetadataReference> references = await TestCompilationResources.GetGeneratorReferencesAsync();
 		CSharpCompilation compilation = CSharpCompilation.Create(
 			"IncrementalGeneratorTests",
 			[contractsTree],
 			references,
-			new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+			TestCompilationResources.CompilationOptions);
 		GeneratorDriver driver = CSharpGeneratorDriver.Create(
 			[new ClientProxyGenerator().AsSourceGenerator()],
 			parseOptions: parseOptions,
@@ -986,14 +972,13 @@ public class ClientProxyGeneratorTests
 
 	private static async Task<GeneratorRunResult> RunGeneratorAsync([StringSyntax("c#-test")] string source, bool publicExtensions = false)
 	{
-		CSharpParseOptions parseOptions = new(LanguageVersion.Preview);
-		ImmutableArray<MetadataReference> references = await CSharpSourceGeneratorVerifier.Net10.ResolveAsync(LanguageNames.CSharp, CancellationToken.None);
-		references = references.Add(MetadataReference.CreateFromFile(typeof(JsonRpcContractAttribute).Assembly.Location));
+		CSharpParseOptions parseOptions = TestCompilationResources.ParseOptions;
+		ImmutableArray<MetadataReference> references = await TestCompilationResources.GetContractReferencesAsync();
 		CSharpCompilation compilation = CSharpCompilation.Create(
 			"ProxyGroupTests",
 			[CSharpSyntaxTree.ParseText(source, parseOptions)],
 			references,
-			new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+			TestCompilationResources.CompilationOptions);
 		GeneratorDriver driver = CSharpGeneratorDriver.Create(
 			[new ClientProxyGenerator().AsSourceGenerator()],
 			parseOptions: parseOptions,
