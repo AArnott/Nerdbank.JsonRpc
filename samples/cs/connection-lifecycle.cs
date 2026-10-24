@@ -12,8 +12,8 @@ internal static class Examples
 {
     public static async Task ObserveCompletionAsync(JsonRpc rpc, ILogger logger)
     {
-        ArgumentNullException.ThrowIfNull(rpc);
-        ArgumentNullException.ThrowIfNull(logger);
+        Requires.NotNull(rpc);
+        Requires.NotNull(logger);
 
 #pragma warning disable VSTHRD003 // Completion is a task started by the transport, not this caller.
         #region observing-completion
@@ -48,8 +48,8 @@ internal static class Examples
 
     public static async Task ConfigureLoggingAsync(JsonRpcPipeChannel channel, ILogger logger)
     {
-        ArgumentNullException.ThrowIfNull(channel);
-        ArgumentNullException.ThrowIfNull(logger);
+        Requires.NotNull(channel);
+        Requires.NotNull(logger);
 
         #region connection-logging
         using IDisposable? scope = logger.BeginScope(new Dictionary<string, object>

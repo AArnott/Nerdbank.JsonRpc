@@ -26,8 +26,8 @@ public static class Example
     #region discovery-server
     public static void StartServer(JsonRpc rpc, IGroupedCalculator calculator)
     {
-        ArgumentNullException.ThrowIfNull(rpc);
-        ArgumentNullException.ThrowIfNull(calculator);
+        Requires.NotNull(rpc);
+        Requires.NotNull(calculator);
 
         List<string> capabilities = [];
         rpc.AddRpcTarget<IGroupedCalculator>(calculator);
@@ -45,7 +45,7 @@ public static class Example
     #region discovery-client
     public static async Task<IGroupedCalculator> ConnectAsync(JsonRpc rpc, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(rpc);
+        Requires.NotNull(rpc);
 
         IDiscovery discovery = rpc.Attach<IDiscovery>();
         rpc.Start();

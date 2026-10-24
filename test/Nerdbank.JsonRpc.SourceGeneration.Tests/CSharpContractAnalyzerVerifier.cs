@@ -28,7 +28,7 @@ internal static class CSharpContractAnalyzerVerifier
 		Test test = new()
 		{
 			TestCode = source,
-			ReferenceAssemblies = ReferenceAssemblies.Net.Net90,
+			ReferenceAssemblies = CSharpSourceGeneratorVerifier.Net10,
 		};
 		if (includeLibrary)
 		{

@@ -2,6 +2,8 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
+using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Testing;
@@ -14,6 +16,22 @@ using PolyType;
 
 internal static class CSharpSourceGeneratorVerifier
 {
+	internal static ReferenceAssemblies Net10
+	{
+		get
+		{
+			string refPackRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "packs", "Microsoft.NETCore.App.Ref");
+			string version = Directory.EnumerateDirectories(refPackRoot)
+				.Select(static directory => Path.GetFileName(directory))
+				.OfType<string>()
+				.Where(static name => name.StartsWith("10.", StringComparison.Ordinal))
+				.OrderByDescending(static name => Version.Parse(name.Split('-')[0]))
+				.FirstOrDefault() ?? throw new InvalidOperationException("No .NET 10 reference pack was found.");
+			string path = Path.Combine(refPackRoot, version, "ref", "net10.0");
+			return new ReferenceAssemblies("net10.0", new PackageIdentity("Microsoft.NETCore.App.Ref", version), path);
+		}
+	}
+
 	internal static DiagnosticResult Diagnostic(string diagnosticId)
 		=> new(diagnosticId, DiagnosticSeverity.Warning);
 
@@ -30,7 +48,7 @@ internal static class CSharpSourceGeneratorVerifier
 		{
 			CompilerDiagnostics = compilerDiagnostics,
 			TestCode = source,
-			ReferenceAssemblies = ReferenceAssemblies.Net.Net90,
+			ReferenceAssemblies = Net10,
 			TestBehaviors = validateGeneratedCode
 				? TestBehaviors.SkipGeneratedSourcesCheck
 				: TestBehaviors.SkipGeneratedCodeCheck | TestBehaviors.SkipGeneratedSourcesCheck,

@@ -89,7 +89,11 @@ public static class Example
         }
         catch (Exception connectionException)
         {
+#if NET
             await setupCancellation.CancelAsync();
+#else
+            setupCancellation.Cancel();
+#endif
             try
             {
                 (await listener).Dispose();

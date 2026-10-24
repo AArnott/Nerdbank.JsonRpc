@@ -17,7 +17,7 @@ internal static class Example
 {
     public static async Task RunAsync(JsonRpc rpc)
     {
-        ArgumentNullException.ThrowIfNull(rpc);
+        Requires.NotNull(rpc);
 
         #region sending-batch
         JsonRpcBatch batch = rpc.CreateBatch();
@@ -35,7 +35,7 @@ internal static class Example
 
     public static async Task RunDynamicAsync(JsonRpc rpc)
     {
-        ArgumentNullException.ThrowIfNull(rpc);
+        Requires.NotNull(rpc);
 
         #region dynamic-batch-results
         using JsonRpcBatch batch = rpc.CreateBatch();

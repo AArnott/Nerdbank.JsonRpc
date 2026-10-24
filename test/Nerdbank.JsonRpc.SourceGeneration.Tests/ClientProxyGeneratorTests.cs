@@ -850,7 +850,7 @@ public class ClientProxyGeneratorTests
 			""";
 
 		CSharpParseOptions parseOptions = new(LanguageVersion.Preview);
-		ImmutableArray<MetadataReference> references = await ReferenceAssemblies.Net.Net90.ResolveAsync(LanguageNames.CSharp, CancellationToken.None);
+		ImmutableArray<MetadataReference> references = await CSharpSourceGeneratorVerifier.Net10.ResolveAsync(LanguageNames.CSharp, CancellationToken.None);
 		references = references.Add(MetadataReference.CreateFromFile(typeof(JsonRpcContractAttribute).Assembly.Location));
 		MetadataReference first = Compile("FirstContracts", FirstContract, references, generate: true);
 		MetadataReference second = Compile("SecondContracts", SecondContract, references.Add(first), generate: true);
@@ -920,7 +920,7 @@ public class ClientProxyGeneratorTests
 
 		CSharpParseOptions parseOptions = new(LanguageVersion.Preview);
 		SyntaxTree contractsTree = CSharpSyntaxTree.ParseText(Contracts, parseOptions, "Contracts.cs");
-		ImmutableArray<MetadataReference> references = await ReferenceAssemblies.Net.Net90.ResolveAsync(LanguageNames.CSharp, CancellationToken.None);
+		ImmutableArray<MetadataReference> references = await CSharpSourceGeneratorVerifier.Net10.ResolveAsync(LanguageNames.CSharp, CancellationToken.None);
 		references = references
 			.Add(MetadataReference.CreateFromFile(typeof(JsonRpcContractAttribute).Assembly.Location))
 			.Add(MetadataReference.CreateFromFile(typeof(MessagePackSerializer).Assembly.Location))
@@ -987,7 +987,7 @@ public class ClientProxyGeneratorTests
 	private static async Task<GeneratorRunResult> RunGeneratorAsync([StringSyntax("c#-test")] string source, bool publicExtensions = false)
 	{
 		CSharpParseOptions parseOptions = new(LanguageVersion.Preview);
-		ImmutableArray<MetadataReference> references = await ReferenceAssemblies.Net.Net90.ResolveAsync(LanguageNames.CSharp, CancellationToken.None);
+		ImmutableArray<MetadataReference> references = await CSharpSourceGeneratorVerifier.Net10.ResolveAsync(LanguageNames.CSharp, CancellationToken.None);
 		references = references.Add(MetadataReference.CreateFromFile(typeof(JsonRpcContractAttribute).Assembly.Location));
 		CSharpCompilation compilation = CSharpCompilation.Create(
 			"ProxyGroupTests",
