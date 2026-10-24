@@ -1337,7 +1337,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	}
 
 	/// <summary>
-	/// Gets the generated factory or legacy proxy type for an RPC contract interface, searching only on first request.
+	/// Gets the generated factory for an RPC contract interface, searching only on first request.
 	/// </summary>
 	/// <param name="interfaceType">The RPC contract interface.</param>
 	/// <returns>The proxy registration, or <see langword="null"/> if <paramref name="interfaceType"/> has no generated proxy.</returns>
@@ -2290,7 +2290,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
-	/// <summary>Associates a contract interface with either a generated factory or legacy proxy metadata.</summary>
+	/// <summary>Associates a contract interface with its generated factories.</summary>
 	internal sealed class ProxyFactoryRegistration
 	{
 		/// <summary>Initializes a new instance of the <see cref="ProxyFactoryRegistration"/> class.</summary>
@@ -2310,7 +2310,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		/// <summary>Gets the source-generated factories, ordered by increasing group size.</summary>
 		internal JsonRpcProxyFactoryAttribute[] Factories { get; }
 
-		/// <summary>Creates a proxy using either its generated factory or legacy constructor metadata.</summary>
+		/// <summary>Creates a proxy using a generated factory.</summary>
 		/// <param name="client">The client the proxy sends requests through.</param>
 		/// <param name="options">Options controlling the proxy's behavior.</param>
 		/// <returns>The generated proxy instance.</returns>
