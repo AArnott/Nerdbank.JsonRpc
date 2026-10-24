@@ -2,7 +2,6 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO.Pipelines;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.Threading;
 using Nerdbank.Streams;
 
@@ -606,16 +605,6 @@ public class GeneratedProxyTests
 
 		ArgumentException ex = Assert.Throws<ArgumentException>(() => clientRpc.Attach(typeof(string)));
 		Assert.Contains("interface", ex.Message, StringComparison.OrdinalIgnoreCase);
-	}
-
-	[Test]
-	public void GeneratedProxy_AttachSupportsLegacyMetadata()
-	{
-		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
-		JsonRpc clientRpc = new(new MockJsonRpcPipeChannel(transport));
-
-		Assert.IsType<LegacyGeneratedProxy>(clientRpc.Attach(typeof(ILegacyGeneratedProxyContract)));
-		Assert.IsType<LegacyGeneratedProxy>(clientRpc.Attach<ILegacyGeneratedProxyContract>());
 	}
 
 	[Test]

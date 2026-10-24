@@ -3,9 +3,7 @@
 
 using System.Buffers;
 using System.IO.Pipelines;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.Threading;
-using Nerdbank.MessagePack;
 using Nerdbank.Streams;
 
 public class OptionalInterfaceTests
@@ -227,25 +225,6 @@ public class OptionalInterfaceTests
 		Assert.True(result is IMultiplyCapability);
 		Assert.Null(result.As<IMultiplyCapability>());
 		result.Dispose();
-	}
-
-	[Test]
-	[Arguments(JsonRpcEncoding.Json, false)]
-	[Arguments(JsonRpcEncoding.MessagePack, false)]
-	[Arguments(JsonRpcEncoding.Json, true)]
-	[Arguments(JsonRpcEncoding.MessagePack, true)]
-	public async Task LegacyMetadataPreservesBaseOnlyProxyForEmptyAdvertisement(JsonRpcEncoding encoding, bool optional)
-	{
-		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
-		using JsonRpc clientRpc = new(CreateChannel(clientPipe, encoding));
-		using JsonRpc serverRpc = new(CreateChannel(serverPipe, encoding));
-		serverRpc.AddRpcTarget<IOptionalInterfaceService>(new OptionalInterfaceService());
-		serverRpc.Start();
-		clientRpc.Start();
-		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
-		using Nerdbank.JsonRpc.TestContracts.ILegacyOptionalObject proxy = await clientRpc.Attach<IOptionalInterfaceService>().GetLegacyObjectAsync(optional, cts.Token);
-		Assert.False(proxy is IClientProxy);
-		Assert.Equal(optional, proxy is Nerdbank.JsonRpc.TestContracts.ILegacyCapability);
 	}
 
 	[Test]
