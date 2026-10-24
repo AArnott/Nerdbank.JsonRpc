@@ -33,7 +33,7 @@ public static class Example
     #region catch-remote-exception
     public static async Task HandleRemoteFailureAsync(JsonRpc rpc, JsonRpcValue arguments, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(rpc);
+        Requires.NotNull(rpc);
         try
         {
             await rpc.RequestAsync("DoWork", arguments, cancellationToken);

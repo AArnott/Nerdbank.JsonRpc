@@ -28,7 +28,7 @@ public static class MethodNamingExamples
     /// <returns>A configured RPC connection that has not yet been started.</returns>
     public static JsonRpc CreateMarshaledInteropRpc(JsonRpcPipeChannel channel)
     {
-        ArgumentNullException.ThrowIfNull(channel);
+        Requires.NotNull(channel);
 
         #region marshaled-interop-naming
         JsonRpcOptions options = new()
@@ -44,8 +44,8 @@ public static class MethodNamingExamples
 
     public static void Run(JsonRpc rpc, Calculator calculator, bool useIdentityTargetNaming = false)
     {
-        ArgumentNullException.ThrowIfNull(rpc);
-        ArgumentNullException.ThrowIfNull(calculator);
+        Requires.NotNull(rpc);
+        Requires.NotNull(calculator);
 
         #region default-target-naming
 

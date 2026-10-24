@@ -3,14 +3,9 @@
 
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Testing;
 using Microsoft.CodeAnalysis.Testing;
-using Nerdbank.JsonRpc;
 using Nerdbank.JsonRpc.SourceGeneration;
-using Nerdbank.MessagePack;
-using Nerdbank.Streams;
-using PolyType;
 
 internal static class CSharpSourceGeneratorVerifier
 {
@@ -30,7 +25,7 @@ internal static class CSharpSourceGeneratorVerifier
 		{
 			CompilerDiagnostics = compilerDiagnostics,
 			TestCode = source,
-			ReferenceAssemblies = ReferenceAssemblies.Net.Net90,
+			ReferenceAssemblies = TestCompilationResources.Net10,
 			TestBehaviors = validateGeneratedCode
 				? TestBehaviors.SkipGeneratedSourcesCheck
 				: TestBehaviors.SkipGeneratedCodeCheck | TestBehaviors.SkipGeneratedSourcesCheck,
@@ -38,10 +33,7 @@ internal static class CSharpSourceGeneratorVerifier
 
 		test.DisabledDiagnostics.Add("CS1701");
 		test.DisabledDiagnostics.Add("CS1702");
-		test.TestState.AdditionalReferences.Add(typeof(JsonRpcContractAttribute).Assembly);
-		test.TestState.AdditionalReferences.Add(typeof(MessagePackSerializer).Assembly);
-		test.TestState.AdditionalReferences.Add(typeof(Sequence<>).Assembly);
-		test.TestState.AdditionalReferences.Add(typeof(ITypeShape<>).Assembly);
+		test.TestState.AdditionalReferences.AddRange(TestCompilationResources.GeneratorAdditionalReferences);
 		test.ExpectedDiagnostics.AddRange(expected);
 		await test.RunAsync();
 	}
@@ -50,7 +42,7 @@ internal static class CSharpSourceGeneratorVerifier
 	{
 		public Test()
 		{
-			this.SolutionTransforms.Add(static (solution, projectId) => solution.WithProjectParseOptions(projectId, new CSharpParseOptions(LanguageVersion.Preview)));
+			this.SolutionTransforms.Add(static (solution, projectId) => solution.WithProjectParseOptions(projectId, TestCompilationResources.ParseOptions));
 		}
 	}
 }

@@ -5,12 +5,9 @@ using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CodeFixes;
-using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Testing;
 using Microsoft.CodeAnalysis.Testing;
-using Nerdbank.JsonRpc;
 using Nerdbank.JsonRpc.SourceGeneration;
-using PolyType;
 
 internal static class CSharpContractAnalyzerVerifier
 {
@@ -28,12 +25,12 @@ internal static class CSharpContractAnalyzerVerifier
 		Test test = new()
 		{
 			TestCode = source,
-			ReferenceAssemblies = ReferenceAssemblies.Net.Net90,
+			ReferenceAssemblies = TestCompilationResources.Net10,
 		};
 		if (includeLibrary)
 		{
-			test.TestState.AdditionalReferences.Add(typeof(JsonRpcContractAttribute).Assembly);
-			test.TestState.AdditionalReferences.Add(typeof(ITypeShape<>).Assembly);
+			test.TestState.AdditionalReferences.Add(TestCompilationResources.JsonRpcReference);
+			test.TestState.AdditionalReferences.Add(TestCompilationResources.PolyTypeReference);
 		}
 
 		test.ExpectedDiagnostics.AddRange(expected);
@@ -44,7 +41,7 @@ internal static class CSharpContractAnalyzerVerifier
 	{
 		public Test()
 		{
-			this.SolutionTransforms.Add(static (solution, projectId) => solution.WithProjectParseOptions(projectId, new CSharpParseOptions(LanguageVersion.Preview)));
+			this.SolutionTransforms.Add(static (solution, projectId) => solution.WithProjectParseOptions(projectId, TestCompilationResources.ParseOptions));
 		}
 	}
 

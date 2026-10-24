@@ -40,7 +40,7 @@ public static class ProxyOptions
 {
     public static void Run(JsonRpc rpc)
     {
-        ArgumentNullException.ThrowIfNull(rpc);
+        Requires.NotNull(rpc);
 
         #region proxy-options
         ICalculator positionalClient = rpc.Attach<ICalculator>();

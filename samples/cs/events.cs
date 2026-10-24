@@ -23,8 +23,8 @@ public static class EventsExamples
 {
     public static void Run(JsonRpc rpc, Watcher watcher, bool disableEventForwarding = false)
     {
-        ArgumentNullException.ThrowIfNull(rpc);
-        ArgumentNullException.ThrowIfNull(watcher);
+        Requires.NotNull(rpc);
+        Requires.NotNull(watcher);
 
         #region default-registration
 
@@ -51,8 +51,8 @@ public static class EventsExamples
     #region proxy-receiver-registration
     public static IWatcher AttachWatcher(JsonRpc rpc, EventHandler<decimal> priceChanged)
     {
-        ArgumentNullException.ThrowIfNull(rpc);
-        ArgumentNullException.ThrowIfNull(priceChanged);
+        Requires.NotNull(rpc);
+        Requires.NotNull(priceChanged);
 
         IWatcher watcher = rpc.Attach<IWatcher>();
         watcher.PriceChanged += priceChanged;
@@ -64,8 +64,8 @@ public static class EventsExamples
     #region remote-receiver-registration
     public static void RegisterReceiver(JsonRpc remoteRpc, WatcherEventReceiver receiver)
     {
-        ArgumentNullException.ThrowIfNull(remoteRpc);
-        ArgumentNullException.ThrowIfNull(receiver);
+        Requires.NotNull(remoteRpc);
+        Requires.NotNull(receiver);
 
         // On the remote party's JsonRpc instance, register a target whose methods match the
         // notifications' wire names and parameter shapes to receive them.
