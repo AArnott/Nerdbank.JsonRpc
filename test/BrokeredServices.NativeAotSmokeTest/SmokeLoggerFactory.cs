@@ -7,10 +7,8 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
-internal sealed class SmokeLoggerFactory(bool writeToConsole = false) : ILoggerFactory
+internal sealed class SmokeLoggerFactory : ILoggerFactory
 {
-	private readonly bool writeToConsole = writeToConsole;
-
 	internal ConcurrentQueue<string> Entries { get; } = new();
 
 	public ILogger CreateLogger(string categoryName) => new Logger(this, categoryName);
@@ -53,10 +51,6 @@ internal sealed class SmokeLoggerFactory(bool writeToConsole = false) : ILoggerF
 
 			string json = Encoding.UTF8.GetString(stream.ToArray());
 			owner.Entries.Enqueue(json);
-			if (owner.writeToConsole)
-			{
-				Console.WriteLine(json);
-			}
 		}
 	}
 }

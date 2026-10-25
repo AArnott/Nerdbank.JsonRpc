@@ -18,23 +18,32 @@ if (args.Length != 0)
 	}
 
 	JsonRpcEncoding encoding = Enum.Parse<JsonRpcEncoding>(requestedEncoding);
-	using SmokeLoggerFactory hostLogs = new(writeToConsole: true);
-	using BrokeredServiceContainer container = new() { LoggerFactory = hostLogs };
-	JsonRpcDescriptor<IAotCalculator> descriptor = CreateDescriptor(encoding);
-	container.Register(new(descriptor.Moniker, additionalInterfaceIds: descriptor.AdditionalInterfaces.Select(static contract => contract.Id).ToArray()));
-	using IDisposable registration = container.Proffer(descriptor, (_, _, _, _) => new(new AotCalculator()));
-	await using IpcRelayServiceBroker relay = new((IServiceBrokerWithMetadata)container.GetServiceBroker()) { Logger = hostLogs.CreateLogger<IpcRelayServiceBroker>() };
-	JsonRpcDescriptor<IRemoteServiceBroker> control = CreateControlDescriptor(encoding);
-	await using IIpcServer server = IpcServer.Create(
-		async (stream, token) =>
-		{
-			using JsonRpc rpc = control.CreateConnection(stream.UsePipe(cancellationToken: token));
-			control.AddRpcTarget(rpc, relay, []);
-			rpc.Start();
-			await rpc.Completion.WaitAsync(token);
-		},
-		new() { Name = endpoint });
-	await server.Completion.WaitAsync(cancellationToken);
+	using SmokeLoggerFactory hostLogs = new();
+	using (BrokeredServiceContainer container = new() { LoggerFactory = hostLogs })
+	{
+		JsonRpcDescriptor<IAotCalculator> descriptor = CreateDescriptor(encoding);
+		container.Register(new(descriptor.Moniker, additionalInterfaceIds: descriptor.AdditionalInterfaces.Select(static contract => contract.Id).ToArray()));
+		using IDisposable registration = container.Proffer(descriptor, (_, _, _, _) => new(new AotCalculator()));
+		await using IpcRelayServiceBroker relay = new((IServiceBrokerWithMetadata)container.GetServiceBroker()) { Logger = hostLogs.CreateLogger<IpcRelayServiceBroker>() };
+		JsonRpcDescriptor<IRemoteServiceBroker> control = CreateControlDescriptor(encoding);
+		await using IIpcServer server = IpcServer.Create(
+			async (stream, token) =>
+			{
+				using JsonRpc rpc = control.CreateConnection(stream.UsePipe(cancellationToken: token));
+				control.AddRpcTarget(rpc, relay, []);
+				rpc.Start();
+				await rpc.Completion.WaitAsync(token);
+			},
+			new() { Name = endpoint });
+		await server.Completion.WaitAsync(cancellationToken);
+	}
+
+	// Only the main thread writes stdout, after teardown, so process exit cannot truncate a background log write.
+	foreach (string entry in hostLogs.Entries.ToArray())
+	{
+		Console.WriteLine(entry);
+	}
+
 	return;
 }
 
