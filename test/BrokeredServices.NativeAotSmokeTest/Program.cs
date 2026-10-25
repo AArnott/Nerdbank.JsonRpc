@@ -26,7 +26,7 @@ if (args.Length != 0)
 		using IDisposable registration = container.Proffer(descriptor, (_, _, _, _) => new(new AotCalculator()));
 		await using IpcRelayServiceBroker relay = new(container.GetServiceBroker()) { Logger = hostLogs.CreateLogger<IpcRelayServiceBroker>() };
 		JsonRpcDescriptor<IRemoteServiceBroker> control = CreateControlDescriptor(encoding);
-		await using IIpcServer server = IpcServer.Create(
+		await using IpcServer server = IpcServer.Create(
 			async (stream, token) =>
 			{
 				using JsonRpc rpc = control.CreateConnection(stream.UsePipe(cancellationToken: token));

@@ -71,7 +71,7 @@ public static class BrokeredServiceExamples
         #region brokered-ipc-server
         await using IpcRelayServiceBroker relay = new(broker);
         JsonRpcDescriptor<IRemoteServiceBroker> control = FrameworkServices.RemoteServiceBroker;
-        await using IIpcServer listener = IpcServer.Create(
+        await using IpcServer listener = IpcServer.Create(
             async (stream, token) =>
             {
                 using JsonRpc rpc = control.CreateConnection(stream.UsePipe(cancellationToken: token));

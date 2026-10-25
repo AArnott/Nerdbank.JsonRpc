@@ -12,9 +12,9 @@ public sealed class IpcRelayServiceBroker : IRemoteServiceBroker, IDisposable, I
 {
 	private readonly IServiceBroker broker;
 	private readonly object syncObject = new();
-	private readonly Dictionary<Guid, IIpcServer> pending = [];
-	private readonly List<IIpcServer> servers = [];
-	private readonly Dictionary<IIpcServer, Task> cleanupTasks = [];
+	private readonly Dictionary<Guid, IpcServer> pending = [];
+	private readonly List<IpcServer> servers = [];
+	private readonly Dictionary<IpcServer, Task> cleanupTasks = [];
 	private bool disposed;
 
 	/// <summary>Initializes a new instance of the <see cref="IpcRelayServiceBroker"/> class.</summary>
@@ -96,7 +96,7 @@ public sealed class IpcRelayServiceBroker : IRemoteServiceBroker, IDisposable, I
 	public async Task CancelServiceRequestAsync(Guid requestId, CancellationToken cancellationToken)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
-		IIpcServer? server;
+		IpcServer? server;
 		Task? cleanup = null;
 		lock (this.syncObject)
 		{
@@ -124,7 +124,7 @@ public sealed class IpcRelayServiceBroker : IRemoteServiceBroker, IDisposable, I
 	/// <inheritdoc/>
 	public void Dispose()
 	{
-		IIpcServer[] snapshot;
+		IpcServer[] snapshot;
 		lock (this.syncObject)
 		{
 			if (this.disposed)
@@ -138,7 +138,7 @@ public sealed class IpcRelayServiceBroker : IRemoteServiceBroker, IDisposable, I
 		}
 
 		this.broker.AvailabilityChanged -= this.OnAvailabilityChanged;
-		foreach (IIpcServer server in snapshot)
+		foreach (IpcServer server in snapshot)
 		{
 			server.Dispose();
 		}
@@ -185,7 +185,7 @@ public sealed class IpcRelayServiceBroker : IRemoteServiceBroker, IDisposable, I
 
 		Guid id = Guid.NewGuid();
 		TaskCompletionSource<bool> published = new(TaskCreationOptions.RunContinuationsAsynchronously);
-		IIpcServer? server = null;
+		IpcServer? server = null;
 		try
 		{
 			server = IpcServer.Create(async (stream, token) =>
@@ -258,7 +258,7 @@ public sealed class IpcRelayServiceBroker : IRemoteServiceBroker, IDisposable, I
 		}
 	}
 
-	private async Task ExpireRequestAsync(Guid id, IIpcServer server, BrokeredServiceConnection connection, Task published)
+	private async Task ExpireRequestAsync(Guid id, IpcServer server, BrokeredServiceConnection connection, Task published)
 	{
 		using CancellationTokenSource timeout = new();
 		try

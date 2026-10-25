@@ -5,12 +5,11 @@ using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.VisualStudio.Threading;
 
 namespace Nerdbank.JsonRpc;
 
 /// <summary>A same-account IPC listener with explicitly observed connection callbacks.</summary>
-public sealed class IpcServer : IIpcServer
+public sealed class IpcServer : IDisposable, IAsyncDisposable
 {
 	private readonly CancellationTokenSource shutdown = new();
 	private readonly object syncObject = new();
@@ -37,17 +36,17 @@ public sealed class IpcServer : IIpcServer
 		this.Completion = this.ListenAsync();
 	}
 
-	/// <inheritdoc/>
+	/// <summary>Gets the endpoint name to pass to <see cref="IpcClient.ConnectAsync"/>.</summary>
 	public string Name { get; }
 
-	/// <inheritdoc/>
+	/// <summary>Gets a task that completes when listening and all accepted callbacks finish.</summary>
 	public Task Completion { get; }
 
 	/// <summary>Starts listening before returning the endpoint.</summary>
 	/// <param name="onConnected">A callback that owns the stream until it completes. The stream is then disposed.</param>
 	/// <param name="options">Listening options.</param>
 	/// <returns>The listening server.</returns>
-	public static IIpcServer Create(Func<Stream, CancellationToken, Task> onConnected, IpcServerOptions options = default)
+	public static IpcServer Create(Func<Stream, CancellationToken, Task> onConnected, IpcServerOptions options = default)
 		=> new IpcServer(onConnected ?? throw new ArgumentNullException(nameof(onConnected)), options);
 
 	/// <inheritdoc/>

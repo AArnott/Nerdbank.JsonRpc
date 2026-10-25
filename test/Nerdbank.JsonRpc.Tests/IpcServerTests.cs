@@ -62,7 +62,7 @@ public class IpcServerTests : TestBase
 			return;
 		}
 
-		await using IIpcServer server = IpcServer.Create((_, token) => Task.Delay(Timeout.Infinite, token));
+		await using IpcServer server = IpcServer.Create((_, token) => Task.Delay(Timeout.Infinite, token));
 		using Stream stream = await IpcClient.ConnectAsync(server.Name, this.TimeoutToken);
 		PipeSecurity security = Assert.IsAssignableFrom<NamedPipeClientStream>(stream).GetAccessControl();
 		using WindowsIdentity identity = WindowsIdentity.GetCurrent();
@@ -113,7 +113,7 @@ public class IpcServerTests : TestBase
 	[Arguments(true)]
 	public async Task ConnectsAndExchangesData(bool multiple)
 	{
-		await using IIpcServer server = IpcServer.Create(
+		await using IpcServer server = IpcServer.Create(
 			async (stream, token) =>
 			{
 				byte[] buffer = new byte[1];
@@ -136,7 +136,7 @@ public class IpcServerTests : TestBase
 	public async Task DisposalCancelsTheListenerAndAcceptedCallbacks()
 	{
 		TaskCompletionSource<bool> entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-		IIpcServer server = IpcServer.Create(async (stream, token) =>
+		IpcServer server = IpcServer.Create(async (stream, token) =>
 		{
 			entered.SetResult(true);
 			await Task.Delay(Timeout.Infinite, token);
@@ -162,7 +162,7 @@ public class IpcServerTests : TestBase
 	[Arguments(true)]
 	public async Task CallbackFailureFaultsCompletion(bool multiple)
 	{
-		IIpcServer server = IpcServer.Create((_, _) => Task.FromException(new InvalidOperationException("callback")), new IpcServerOptions { AllowMultipleClients = multiple });
+		IpcServer server = IpcServer.Create((_, _) => Task.FromException(new InvalidOperationException("callback")), new IpcServerOptions { AllowMultipleClients = multiple });
 		using Stream client = await IpcClient.ConnectAsync(server.Name, this.TimeoutToken);
 		await Assert.ThrowsAsync<InvalidOperationException>(() => server.Completion);
 		await Assert.ThrowsAsync<InvalidOperationException>(async () => await server.DisposeAsync());

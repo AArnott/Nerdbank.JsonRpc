@@ -63,7 +63,7 @@ Disposing the RPC connection also disposes its dedicated multiplexer, but never 
 
 General IPC helpers are in the root `Nerdbank.JsonRpc` namespace and can also be used without brokered services.
 Start a listener with <xref:Nerdbank.JsonRpc.IpcServer.Create*?displayProperty=nameWithType> and configure it with <xref:Nerdbank.JsonRpc.IpcServerOptions>.
-The returned <xref:Nerdbank.JsonRpc.IIpcServer> exposes the endpoint for <xref:Nerdbank.JsonRpc.IpcClient.ConnectAsync*?displayProperty=nameWithType>.
+The returned <xref:Nerdbank.JsonRpc.IpcServer> exposes the endpoint for <xref:Nerdbank.JsonRpc.IpcClient.ConnectAsync*?displayProperty=nameWithType>.
 The listener exists before its endpoint is returned.
 The connection callback owns the accepted stream until it completes, and the listener observes callback failures.
 Disposal cancels acceptance and active callbacks; asynchronous disposal waits for them to finish.
