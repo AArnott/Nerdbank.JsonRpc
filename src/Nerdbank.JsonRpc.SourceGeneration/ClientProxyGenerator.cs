@@ -601,6 +601,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 			builder.AppendLine();
 			RenderProxyClass(builder, info, GetGroupProxyName(info, index), factoryName, methods.ToImmutable(), implemented);
+			builder.AppendLine();
 		}
 
 		return builder.ToString();
@@ -613,20 +614,19 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			.Concat(optionalInterfaces.SelectMany(static item => GetProxyEvents(item.Symbol)))
 			.GroupBy(static @event => @event.ContainingType.ToDisplayString() + "." + @event.Name, StringComparer.Ordinal)
 			.Select(static group => group.First()).ToImmutableArray();
-		string enabledInterfacesField = GetGeneratedMemberName(info, "NerdbankJsonRpc_EnabledInterfaces");
-		bool needsMethodNameTransform = methods.Any(m => m.ExplicitRpcName is null && m.Kind is not ProxyMethodKind.Unsupported && !(info.IsMarshalable && IsDisposeMethod(m)));
-		string? methodNameTransformField = needsMethodNameTransform ? GetGeneratedMemberName(info, "NerdbankJsonRpc_MethodNameTransform") : null;
+		bool needsMethodNameTransform = methods.Any(m => m.ExplicitRpcName is null && m.Kind is not ProxyMethodKind.Unsupported && !IsAsyncDisposeMethod(m) && !(info.IsMarshalable && IsDisposeMethod(m)));
+		string? methodNameTransformField = needsMethodNameTransform ? "MethodNameTransform" : null;
 		ImmutableArray<string?> transformedRpcNameFields = methods
-			.Select((method, index) => method is { ExplicitRpcName: null, Kind: not ProxyMethodKind.Unsupported } && !(info.IsMarshalable && IsDisposeMethod(method)) ? GetGeneratedMemberName(info, $"NerdbankJsonRpc_TransformedRpcName{index}") : null)
+			.Select((method, index) => method is { ExplicitRpcName: null, Kind: not ProxyMethodKind.Unsupported } && !IsAsyncDisposeMethod(method) && !(info.IsMarshalable && IsDisposeMethod(method)) ? GetGeneratedMemberName(info, $"NerdbankJsonRpc_TransformedRpcName{index}") : null)
 			.ToImmutableArray();
 
-		builder.Append("internal sealed class ").Append(proxyName).Append(" : ").Append(info.InterfaceName);
+		builder.Append("internal sealed class ").Append(proxyName).Append(" : global::Nerdbank.JsonRpc.JsonRpcProxy, ").Append(info.InterfaceName);
 		foreach (OptionalInterfaceInfo optionalInterface in optionalInterfaces)
 		{
 			builder.Append(", ").Append(optionalInterface.Symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
 		}
 
-		builder.AppendLine(", global::Nerdbank.JsonRpc.IClientProxy");
+		builder.AppendLine();
 		builder.OpenBlock();
 		for (int i = 0; i < events.Length; i++)
 		{
@@ -638,15 +638,6 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				.Append(">(global::PolyType.Abstractions.TypeShapeResolver.")
 				.Append(info.HasStaticTypeShapeResolver ? KnownApis.TypeShapeResolve : KnownApis.TypeShapeResolveDynamicOrThrow)
 				.Append('<').Append(GetEventShapeProvider(info, optionalInterfaces, events[i])).AppendLine(">().Provider));");
-		}
-
-		builder.AppendLine("private readonly global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc;");
-		builder.AppendLine("private readonly bool useNamedArguments;");
-		builder.Append("private readonly global::System.Collections.Generic.IReadOnlyList<global::System.Type>? ").Append(enabledInterfacesField).AppendLine(";");
-
-		if (methodNameTransformField is string transformField)
-		{
-			builder.Append("private readonly global::System.Func<string, string> ").Append(transformField).AppendLine(";");
 		}
 
 		for (int i = 0; i < methods.Length; i++)
@@ -664,7 +655,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				.Append(shapeField.TypeName)
 				.Append("> ")
 				.Append(shapeField.FieldName)
-				.AppendLine(";");
+				.AppendLine(" = default!;");
 		}
 
 		if (shapeFields.Length > 0)
@@ -673,15 +664,12 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		}
 
 		builder.Append("internal ").Append(proxyName).Append("(global::Nerdbank.JsonRpc.IJsonRpcClient jsonRpc, global::Nerdbank.JsonRpc.JsonRpcProxyOptions options)").AppendLine();
-		builder.OpenBlock();
-		builder.AppendLine("this.jsonRpc = jsonRpc;");
-		builder.AppendLine("this.useNamedArguments = options.UseNamedArguments;");
-		builder.Append("this.").Append(enabledInterfacesField).AppendLine(" = options.EnabledInterfaces;");
-		if (needsMethodNameTransform)
+		using (builder.Indent())
 		{
-			builder.Append("this.").Append(methodNameTransformField).AppendLine(" = options.MethodNameTransform;");
+			builder.Append(": base(jsonRpc, options, typeof(").Append(info.InterfaceName).AppendLine("))");
 		}
 
+		builder.OpenBlock();
 		string[] shapeProviders = shapeFields.Select(static field => field.ProviderName).Distinct(StringComparer.Ordinal).ToArray();
 		for (int i = 0; i < shapeProviders.Length; i++)
 		{
@@ -735,44 +723,6 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		builder.CloseBlock();
 		builder.AppendLine();
-		builder.AppendLine("bool global::Nerdbank.JsonRpc.IClientProxy.Is(global::System.Type type)");
-		builder.OpenBlock();
-		builder.AppendLine("if (type is null)");
-		builder.OpenBlock();
-		builder.AppendLine("throw new global::System.ArgumentNullException(nameof(type));");
-		builder.CloseBlock();
-		builder.AppendLine();
-		builder.AppendLine("if (!type.IsInterface || type == typeof(global::Nerdbank.JsonRpc.IClientProxy) || !type.IsInstanceOfType(this))");
-		builder.OpenBlock();
-		builder.AppendLine("return false;");
-		builder.CloseBlock();
-		builder.AppendLine();
-		builder.Append("if (type.IsAssignableFrom(typeof(").Append(info.InterfaceName).AppendLine(")))");
-		builder.OpenBlock();
-		builder.AppendLine("return true;");
-		builder.CloseBlock();
-		builder.AppendLine();
-		builder.AppendLine("if (this.jsonRpc is global::Nerdbank.JsonRpc.IClientProxy remoteProxy && !remoteProxy.Is(type))");
-		builder.OpenBlock();
-		builder.AppendLine("return false;");
-		builder.CloseBlock();
-		builder.AppendLine();
-		builder.Append("if (this.").Append(enabledInterfacesField).AppendLine(" is null)");
-		builder.OpenBlock();
-		builder.AppendLine("return true;");
-		builder.CloseBlock();
-		builder.AppendLine();
-		builder.Append("foreach (global::System.Type enabledInterface in this.").Append(enabledInterfacesField).AppendLine(")");
-		builder.OpenBlock();
-		builder.AppendLine("if (type.IsAssignableFrom(enabledInterface))");
-		builder.OpenBlock();
-		builder.AppendLine("return true;");
-		builder.CloseBlock();
-		builder.CloseBlock();
-		builder.AppendLine();
-		builder.AppendLine("return false;");
-		builder.CloseBlock();
-		builder.AppendLine();
 		RenderProxyFactory(builder, proxyName, factoryName, optionalInterfaces, isMarshalable: false);
 		if (info.IsMarshalable)
 		{
@@ -782,8 +732,18 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		for (int i = 0; i < methods.Length; i++)
 		{
+			if (IsAsyncDisposeMethod(methods[i]))
+			{
+				continue;
+			}
+
 			builder.AppendLine();
-			RenderMethod(builder, methods[i], shapeFields, transformedRpcNameFields[i], methodNameTransformField, info.IsMarshalable);
+			RenderMethod(builder, methods[i], shapeFields, transformedRpcNameFields[i], methodNameTransformField, info.IsMarshalable, GetGeneratedMemberName(info, "NerdbankJsonRpc_Local" + i));
+		}
+
+		if (methods.Any(IsDisposeMethod))
+		{
+			builder.AppendLine("protected override void DisposeUnowned() => ((global::System.IDisposable)this).Dispose();");
 		}
 
 		for (int i = 0; i < events.Length; i++)
@@ -795,11 +755,12 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.Append("private event ").Append(handlerType).Append("? ").Append(field).AppendLine(";");
 			builder.Append("event ").Append(@event.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat.AddMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier))).Append(" ").Append(@event.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat.AddMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier))).Append(".@").Append(@event.Name).AppendLine();
 			builder.OpenBlock();
-			builder.Append("add => this.").Append(field).AppendLine(" += value;");
-			builder.Append("remove => this.").Append(field).AppendLine(" -= value;");
+			RenderProxyEventAccessor(builder, @event, field, add: true);
+			RenderProxyEventAccessor(builder, @event, field, add: false);
 			builder.CloseBlock();
 		}
 
+		RenderLocalMembers(builder, info, proxyName, methods);
 		builder.CloseBlock();
 	}
 
@@ -857,6 +818,268 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		builder.Append("public override object CreateProxy(global::Nerdbank.JsonRpc.IJsonRpcClient client, global::Nerdbank.JsonRpc.JsonRpcProxyOptions options) => new ")
 			.Append(proxyName)
 			.AppendLine("(client, options);");
+		if (!isMarshalable)
+		{
+			builder.Append("public override object CreateProxy(global::Nerdbank.JsonRpc.BrokeredServices.ServiceProxyContext context, global::System.Collections.Generic.IReadOnlyList<global::System.Type> enabled) => new ").Append(proxyName).AppendLine("(context, enabled);");
+		}
+
+		builder.CloseBlock();
+	}
+
+	private static string? GetLocalResultRetainer(ITypeSymbol? type)
+	{
+		if (type is not INamedTypeSymbol named)
+		{
+			return null;
+		}
+
+		if (named.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString() is "System.IO.Stream" or "System.IO.Pipelines.PipeReader" or "System.IO.Pipelines.PipeWriter" or "System.IO.Pipelines.IDuplexPipe")
+		{
+			return "Retain";
+		}
+
+		if (named.ConstructedFrom.ToDisplayString() == "System.IObserver<T>")
+		{
+			return "Retain";
+		}
+
+		if (named.ConstructedFrom.ToDisplayString() == "System.IProgress<T>")
+		{
+			return "RejectArgumentOnlyResult";
+		}
+
+		AttributeData? marshalable = GetLocalMarshalableAttribute(named);
+		return marshalable is null ? null : IsLocalCallScoped(marshalable) ? "RejectArgumentOnlyResult" : "RetainProxy";
+	}
+
+	private static AttributeData? GetLocalMarshalableAttribute(ITypeSymbol type)
+		=> type.GetAttributes().FirstOrDefault(static attribute => attribute.AttributeClass?.ToDisplayString() == KnownApis.RpcMarshalableAttribute);
+
+	private static bool IsLocalCallScoped(AttributeData attribute)
+		=> attribute.NamedArguments.Any(static argument => argument.Key == "CallScopedLifetime" && argument.Value.Value is true);
+
+	private static void RenderLocalCallbackCleanup(SourceWriter builder, IMethodSymbol method)
+	{
+		for (int parameterIndex = 0; parameterIndex < method.Parameters.Length; parameterIndex++)
+		{
+			ITypeSymbol parameterType = method.Parameters[parameterIndex].Type;
+			if (GetLocalMarshalableAttribute(parameterType) is not null
+				|| (parameterType is INamedTypeSymbol namedParameter && namedParameter.ConstructedFrom.ToDisplayString() is "System.IObserver<T>" or "System.IProgress<T>"))
+			{
+				builder.Append("__boundary").Append(parameterIndex).AppendLine("?.Dispose();");
+			}
+		}
+	}
+
+	private static void RenderLocalMembers(SourceWriter builder, InterfaceInfo info, string proxyName, ImmutableArray<MethodInfo> methods)
+	{
+		builder.Append("internal ").Append(proxyName).AppendLine("(global::Nerdbank.JsonRpc.BrokeredServices.ServiceProxyContext context, global::System.Collections.Generic.IReadOnlyList<global::System.Type> enabled)");
+		using (builder.Indent())
+		{
+			builder.Append(": base(context, typeof(").Append(info.InterfaceName).AppendLine("), enabled)");
+		}
+
+		builder.OpenBlock();
+		builder.CloseBlock();
+
+		foreach (MethodInfo method in methods)
+		{
+			if (IsDisposeMethod(method) || IsAsyncDisposeMethod(method))
+			{
+				continue;
+			}
+
+			bool notification = method.Kind == ProxyMethodKind.Notification;
+			bool enumerable = method.Kind == ProxyMethodKind.AsyncEnumerableOfT;
+			string returnType = method.Symbol.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat.AddMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier));
+			string contract = method.Symbol.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+			string parameters = string.Join(", ", method.Symbol.Parameters.Select(static (p, index) => $"{GetTypeName(p.Type, p.NullableAnnotation)} __arg{index}"));
+			string arguments = string.Join(", ", method.Symbol.Parameters.Select(static (_, index) => "__arg" + index));
+			string targetArguments = string.Join(", ", method.Symbol.Parameters.Select((p, index) =>
+				p.Type is INamedTypeSymbol named && named.IsGenericType && named.ConstructedFrom.ToDisplayString() is "System.IObserver<T>" or "System.IProgress<T>"
+					? "__callback" + index
+					: GetLocalMarshalableAttribute(p.Type) is not null ? "__callback" + index : "__arg" + index));
+			string token = method.HasCancellationToken ? "__arg" + (method.Symbol.Parameters.Length - 1)
+				: enumerable ? "__enumerationCancellation" : "global::System.Threading.CancellationToken.None";
+			bool subscription = method.Kind is ProxyMethodKind.TaskOfT or ProxyMethodKind.ValueTaskOfT
+				&& method.Symbol.ReturnType is INamedTypeSymbol { IsGenericType: true } resultType
+				&& resultType.TypeArguments[0].WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString() == "System.IDisposable";
+			ITypeSymbol? localResultType = method.Symbol.ReturnType is INamedTypeSymbol { IsGenericType: true } awaitable ? awaitable.TypeArguments[0] : null;
+			string? resultRetainer = GetLocalResultRetainer(localResultType);
+			string helper = GetGeneratedMemberName(info, "NerdbankJsonRpc_Local" + methods.IndexOf(method));
+			string? elementType = enumerable ? ((INamedTypeSymbol)method.Symbol.ReturnType).TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) : null;
+			builder.AppendLine();
+			builder.Append("private ");
+			if (!notification && !enumerable)
+			{
+				builder.Append("async ");
+			}
+
+			builder.Append(returnType).Append(" ").Append(helper).Append("(").Append(parameters).AppendLine(")");
+			builder.OpenBlock();
+			if (notification)
+			{
+				builder.Append("this.Context.ObserveNotification(this.").Append(helper).Append("Async(").Append(arguments).AppendLine("));");
+				builder.CloseBlock();
+				builder.Append("private async global::System.Threading.Tasks.ValueTask ").Append(helper).Append("Async(").Append(parameters).AppendLine(")");
+				builder.OpenBlock();
+			}
+			else if (enumerable)
+			{
+				builder.Append("return this.").Append(helper).Append("Async(").Append(arguments).AppendLine(");");
+				builder.CloseBlock();
+				string iteratorParameters = string.Join(", ", method.Symbol.Parameters.Select((p, index) =>
+					(p.Equals(method.Symbol.Parameters.Last(), SymbolEqualityComparer.Default) && method.HasCancellationToken ? "[global::System.Runtime.CompilerServices.EnumeratorCancellation] " : string.Empty)
+					+ $"{GetTypeName(p.Type, p.NullableAnnotation)} __arg{index}"));
+				if (!method.HasCancellationToken)
+				{
+					iteratorParameters += (iteratorParameters.Length == 0 ? string.Empty : ", ") + "[global::System.Runtime.CompilerServices.EnumeratorCancellation] global::System.Threading.CancellationToken __enumerationCancellation = default";
+				}
+
+				builder.Append("private async ").Append(returnType).Append(" ").Append(helper).Append("Async(").Append(iteratorParameters).AppendLine(")");
+				builder.OpenBlock();
+			}
+
+			builder.Append("using global::Nerdbank.JsonRpc.BrokeredServices.ServiceProxyLease __lease = await this.Context.RentAsync(").Append(token).AppendLine(").ConfigureAwait(false);");
+			for (int parameterIndex = 0; parameterIndex < method.Symbol.Parameters.Length; parameterIndex++)
+			{
+				ITypeSymbol parameterType = method.Symbol.Parameters[parameterIndex].Type;
+				string? builtIn = parameterType is INamedTypeSymbol namedParameter ? namedParameter.ConstructedFrom.ToDisplayString() : null;
+				AttributeData? attribute = GetLocalMarshalableAttribute(parameterType);
+				if (attribute is not null || builtIn is "System.IObserver<T>" or "System.IProgress<T>")
+				{
+					builder.Append("var __callback").Append(parameterIndex).Append(" = this.Context.").Append(attribute is null ? "Wrap" : "WrapProxy").Append("(__arg").Append(parameterIndex).Append(", out var __boundary").Append(parameterIndex).AppendLine(");");
+					bool scoped = builtIn == "System.IProgress<T>" || (attribute is not null && IsLocalCallScoped(attribute));
+					if (scoped)
+					{
+						builder.Append("using global::System.IDisposable? __callbackLifetime").Append(parameterIndex).Append(" = __boundary").Append(parameterIndex).AppendLine(";");
+					}
+				}
+			}
+
+			if (method.ExplicitImplementation || method.OptionalInterfaceId is not null)
+			{
+				builder.Append("if (!this.IsInterfaceEnabled(typeof(").Append(contract).AppendLine("), __lease))");
+				builder.OpenBlock();
+				builder.AppendLine("throw new global::System.NotSupportedException(\"This service implementation does not enable the requested interface.\");");
+				builder.CloseBlock();
+			}
+
+			if (enumerable)
+			{
+				builder.Append("global::System.Collections.Generic.IAsyncEnumerator<").Append(elementType!).AppendLine("> __enumerator;");
+			}
+
+			builder.AppendLine("try");
+			builder.OpenBlock();
+			if (enumerable)
+			{
+				builder.Append("__enumerator = ");
+			}
+			else if (method.Kind is ProxyMethodKind.TaskOfT or ProxyMethodKind.ValueTaskOfT)
+			{
+				builder.Append(subscription || resultRetainer is not null ? "var __subscription = await " : "return await ");
+			}
+			else if (!notification)
+			{
+				builder.Append("await ");
+			}
+
+			builder.Append("((").Append(contract).Append(")__lease.Target).").Append(EscapeIdentifier(method.Symbol.Name)).Append("(").Append(targetArguments).Append(")");
+			if (enumerable)
+			{
+				builder.Append(".GetAsyncEnumerator(").Append(token).Append(")");
+			}
+			else if (!notification)
+			{
+				builder.Append(".ConfigureAwait(false)");
+			}
+
+			builder.AppendLine(";");
+			if (subscription)
+			{
+				builder.Append("return this.Context.RetainSubscription(__subscription, __lease");
+				if (method.Symbol.Parameters.Any(static parameter => parameter.Type is INamedTypeSymbol named && named.ConstructedFrom.ToDisplayString() == "System.IObserver<T>")
+					&& !method.Symbol.Parameters.Any(static parameter => GetLocalMarshalableAttribute(parameter.Type) is { } attribute && IsLocalCallScoped(attribute)))
+				{
+					string replayArguments = string.Join(", ", method.Symbol.Parameters.Select((parameter, index) =>
+						method.HasCancellationToken && index == method.Symbol.Parameters.Length - 1 ? "__cancellationToken"
+							: parameter.Type is INamedTypeSymbol named && named.ConstructedFrom.ToDisplayString() == "System.IObserver<T>"
+								? "this.Context.Wrap(__arg" + index + ")"
+								: GetLocalMarshalableAttribute(parameter.Type) is not null ? "this.Context.WrapProxy(__arg" + index + ")" : "__arg" + index));
+					builder.Append(", async (__target, __cancellationToken) => await ((").Append(contract).Append(")__target).").Append(EscapeIdentifier(method.Symbol.Name)).Append("(").Append(replayArguments).Append(").ConfigureAwait(false)");
+				}
+
+				builder.AppendLine(");");
+			}
+			else if (resultRetainer is not null && !enumerable)
+			{
+				builder.Append("return this.Context.").Append(resultRetainer).AppendLine("(__subscription, __lease);");
+			}
+
+			builder.CloseBlock();
+			builder.AppendLine("catch (global::System.Exception __exception)");
+			builder.OpenBlock();
+			RenderLocalCallbackCleanup(builder, method.Symbol);
+			builder.AppendLine("throw this.Context.TranslateException(__exception);");
+			builder.CloseBlock();
+			if (enumerable)
+			{
+				builder.AppendLine("try");
+				builder.OpenBlock();
+				builder.AppendLine("while (true)");
+				builder.OpenBlock();
+				builder.Append(elementType!).AppendLine(" __current;");
+				builder.AppendLine("try");
+				builder.OpenBlock();
+				builder.AppendLine("if (!await __enumerator.MoveNextAsync().ConfigureAwait(false)) break;");
+				builder.AppendLine("__current = __enumerator.Current;");
+				builder.CloseBlock();
+				builder.AppendLine("catch (global::System.Exception __exception)");
+				builder.OpenBlock();
+				RenderLocalCallbackCleanup(builder, method.Symbol);
+				builder.AppendLine("throw this.Context.TranslateException(__exception);");
+				builder.CloseBlock();
+				builder.Append("yield return ").Append(resultRetainer is null ? "__current" : "this.Context." + resultRetainer + "(__current, __lease)").AppendLine(";");
+				builder.CloseBlock();
+				builder.CloseBlock();
+				builder.AppendLine("finally");
+				builder.OpenBlock();
+				builder.AppendLine("try");
+				builder.OpenBlock();
+				builder.AppendLine("await __enumerator.DisposeAsync().ConfigureAwait(false);");
+				builder.CloseBlock();
+				builder.AppendLine("catch (global::System.Exception __exception)");
+				builder.OpenBlock();
+				RenderLocalCallbackCleanup(builder, method.Symbol);
+				builder.AppendLine("throw this.Context.TranslateException(__exception);");
+				builder.CloseBlock();
+				builder.CloseBlock();
+			}
+
+			builder.CloseBlock();
+		}
+	}
+
+	private static void RenderProxyEventAccessor(SourceWriter builder, IEventSymbol @event, string field, bool add)
+	{
+		string contract = @event.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat.AddMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier));
+		IMethodSymbol invoke = ((INamedTypeSymbol)@event.Type).DelegateInvokeMethod!;
+		string eventParameters = string.Join(", ", invoke.Parameters.Select((_, index) => "__arg" + index));
+		string eventArguments = string.Join(", ", invoke.Parameters.Select((_, index) => index == 0 && IsBclEventHandler((INamedTypeSymbol)@event.Type) ? "this" : "__arg" + index));
+		builder.AppendLine(add ? "add" : "remove");
+		builder.OpenBlock();
+		builder.AppendLine("if (this.LocalContext is not null)");
+		builder.OpenBlock();
+		builder.Append("this.Context.UpdateEvent(");
+		AppendQuoted(builder, contract + "." + @event.Name);
+		builder.Append(", value, static (target, handler) => ((").Append(contract).Append(")target).").Append(EscapeIdentifier(@event.Name)).Append(" += handler, static (target, handler) => ((").Append(contract).Append(")target).").Append(EscapeIdentifier(@event.Name)).Append(" -= handler, ").Append(add ? "true" : "false");
+		builder.Append(", handler => (").Append(eventParameters).Append(") => { try { handler(").Append(eventArguments).AppendLine("); } catch (global::System.Exception __exception) { this.Context.ReportCallbackException(__exception); } });");
+		builder.CloseBlock();
+		builder.AppendLine("else");
+		builder.OpenBlock();
+		builder.Append("this.").Append(field).AppendLine(add ? " += value;" : " -= value;");
+		builder.CloseBlock();
 		builder.CloseBlock();
 	}
 
@@ -928,7 +1151,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 	private static void AppendResultRequestStart(SourceWriter builder, MethodInfo method)
 	{
-		builder.Append("return this.jsonRpc.RequestAsync");
+		builder.Append("return this.Client.RequestAsync");
 		if (GetNullableResultTypeName(method) is { } nullableResultTypeName)
 		{
 			builder.Append("<").Append(nullableResultTypeName).Append(">");
@@ -948,28 +1171,42 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, method.ShapeProvider, shapeFields)).Append(", ");
 	}
 
-	private static void RenderMethod(SourceWriter builder, MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields, string? transformedRpcNameField, string? methodNameTransformField, bool isMarshalable)
+	private static void RenderMethod(SourceWriter builder, MethodInfo method, ImmutableArray<ShapeFieldInfo> shapeFields, string? transformedRpcNameField, string? methodNameTransformField, bool isMarshalable, string localHelper)
 	{
 		string parameters = string.Join(", ", method.Symbol.Parameters.Select(static p => $"{GetTypeName(p.Type, p.NullableAnnotation)} {EscapeIdentifier(p.Name)}"));
 		string cancellationToken = method.HasCancellationToken ? EscapeIdentifier(method.Symbol.Parameters[^1].Name) : KnownApis.CancellationToken + ".None";
 
-		if (method.OptionalInterfaceId is null && !method.ExplicitImplementation)
-		{
-			builder.Append("public ");
-		}
-
 		builder.Append(method.Symbol.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat.AddMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier))).Append(' ');
-		if (method.OptionalInterfaceId is not null || method.ExplicitImplementation)
-		{
-			builder.Append(method.Symbol.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append('.');
-		}
+		builder.Append(method.Symbol.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append('.');
 
 		builder.Append(EscapeIdentifier(method.Symbol.Name)).Append('(').Append(parameters).AppendLine(")");
 		builder.OpenBlock();
 
+		if (IsDisposeMethod(method))
+		{
+			builder.AppendLine("if (this.TryDispose())");
+			builder.OpenBlock();
+			builder.AppendLine("return;");
+			builder.CloseBlock();
+		}
+		else
+		{
+			builder.AppendLine("if (this.LocalContext is not null)");
+			builder.OpenBlock();
+			builder.Append(method.Kind == ProxyMethodKind.Notification ? "this." : "return this.").Append(localHelper).Append("(");
+			builder.Append(string.Join(", ", method.Symbol.Parameters.Select(static parameter => EscapeIdentifier(parameter.Name))));
+			builder.AppendLine(");");
+			if (method.Kind == ProxyMethodKind.Notification)
+			{
+				builder.AppendLine("return;");
+			}
+
+			builder.CloseBlock();
+		}
+
 		if (isMarshalable && IsDisposeMethod(method))
 		{
-			builder.AppendLine("this.jsonRpc.NotifyAsync(\"dispose\", default, global::System.Threading.CancellationToken.None).Preserve();");
+			builder.AppendLine("this.Client.NotifyAsync(\"dispose\", default, global::System.Threading.CancellationToken.None).Preserve();");
 			builder.AppendLine("return;");
 			builder.CloseBlock();
 			return;
@@ -977,7 +1214,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		if (method.Kind is not ProxyMethodKind.Unsupported)
 		{
-			builder.Append("using global::Nerdbank.JsonRpc.JsonRpcArgumentsBuilder __argumentsBuilder = this.jsonRpc.CreateArguments(").Append("this.useNamedArguments, ").Append(method.PayloadParameters.Length).Append(", ").Append(cancellationToken).AppendLine(");");
+			builder.Append("using global::Nerdbank.JsonRpc.JsonRpcArgumentsBuilder __argumentsBuilder = this.Client.CreateArguments(").Append("this.UseNamedArguments, ").Append(method.PayloadParameters.Length).Append(", ").Append(cancellationToken).AppendLine(");");
 			foreach (IParameterSymbol parameter in method.PayloadParameters)
 			{
 				builder.Append("__argumentsBuilder.Add(");
@@ -1010,23 +1247,23 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 					builder.Append(cancellationToken).AppendLine(").AsTask();");
 					break;
 				case ProxyMethodKind.ValueTask:
-					builder.Append("return this.jsonRpc.RequestAsync(");
+					builder.Append("return this.Client.RequestAsync(");
 					AppendRpcMethodName(builder, method, transformedRpcNameField, methodNameTransformField).Append(", __arguments, ");
 					builder.Append(cancellationToken).AppendLine(");");
 					break;
 				case ProxyMethodKind.Task:
-					builder.Append("return this.jsonRpc.RequestAsync(");
+					builder.Append("return this.Client.RequestAsync(");
 					AppendRpcMethodName(builder, method, transformedRpcNameField, methodNameTransformField).Append(", __arguments, ");
 					builder.Append(cancellationToken).AppendLine(").AsTask();");
 					break;
 				case ProxyMethodKind.AsyncEnumerableOfT:
-					builder.Append("return global::Nerdbank.JsonRpc.JsonRpcEnumerableExtensions.RequestEnumerable(this.jsonRpc, ");
+					builder.Append("return global::Nerdbank.JsonRpc.JsonRpcEnumerableExtensions.RequestEnumerable(this.Client, ");
 					AppendRpcMethodName(builder, method, transformedRpcNameField, methodNameTransformField).Append(", __arguments, ");
 					builder.Append("this.").Append(GetShapeFieldName(method.ResultTypeName!, method.ShapeProvider, shapeFields)).Append(", ");
 					builder.Append(cancellationToken).AppendLine(");");
 					break;
 				case ProxyMethodKind.Notification:
-					builder.Append("this.jsonRpc.NotifyAsync(");
+					builder.Append("this.Client.NotifyAsync(");
 					if (isMarshalable && IsDisposeMethod(method))
 					{
 						AppendQuoted(builder, "dispose");
@@ -1055,6 +1292,9 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 	private static bool IsDisposeMethod(MethodInfo method)
 		=> method.Symbol.Name == KnownApis.Dispose && method.Symbol.ContainingType.ToDisplayString() == KnownApis.IDisposable && method.Symbol.Parameters.Length == 0;
 
+	private static bool IsAsyncDisposeMethod(MethodInfo method)
+		=> method.Symbol.Name == KnownApis.DisposeAsync && method.Symbol.ContainingType.ToDisplayString() == KnownApis.IAsyncDisposable && method.Symbol.Parameters.Length == 0;
+
 	/// <summary>
 	/// Appends a C# expression that evaluates to the JSON-RPC wire name for the given method: the exact
 	/// <see cref="MethodInfo.ExplicitRpcName"/> when set, or otherwise a cached, once-computed application of
@@ -1072,7 +1312,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.Append("((");
 			foreach (int route in method.OptionalRoutes.Where(route => route != interfaceId))
 			{
-				builder.Append("global::Nerdbank.JsonRpc.JsonRpcExtensions.IsOptionalInterfaceAdvertised(this.jsonRpc, ").Append(route).Append(") ? ");
+				builder.Append("global::Nerdbank.JsonRpc.JsonRpcExtensions.IsOptionalInterfaceAdvertised(this.Client, ").Append(route).Append(") ? ");
 				AppendQuoted(builder, route.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".");
 				builder.Append(" : ");
 			}

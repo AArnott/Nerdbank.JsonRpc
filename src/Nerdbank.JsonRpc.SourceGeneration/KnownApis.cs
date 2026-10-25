@@ -6,6 +6,24 @@ namespace Nerdbank.JsonRpc.SourceGeneration;
 /// <summary>Metadata and member names used by contract analysis and proxy generation.</summary>
 internal static class KnownApis
 {
+	/// <summary>The broker interface metadata name.</summary>
+	internal const string IServiceBroker = "Nerdbank.JsonRpc.BrokeredServices.IServiceBroker";
+
+	/// <summary>The cached broker client metadata name.</summary>
+	internal const string ServiceBrokerClient = "Nerdbank.JsonRpc.BrokeredServices.ServiceBrokerClient";
+
+	/// <summary>The rental metadata name within the cached broker client.</summary>
+	internal const string Rental = "Rental`1";
+
+	/// <summary>The proxy acquisition method name.</summary>
+	internal const string GetProxyAsync = "GetProxyAsync";
+
+	/// <summary>The asynchronous disposable interface metadata name.</summary>
+	internal const string IAsyncDisposable = "System.IAsyncDisposable";
+
+	/// <summary>The asynchronous disposal method name.</summary>
+	internal const string DisposeAsync = "DisposeAsync";
+
 	/// <summary>The proxy interface group attribute metadata name.</summary>
 	internal const string JsonRpcProxyInterfaceGroupAttribute = "Nerdbank.JsonRpc.JsonRpcProxyInterfaceGroupAttribute";
 

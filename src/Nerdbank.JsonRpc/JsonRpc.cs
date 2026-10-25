@@ -218,6 +218,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// </remarks>
 	public SynchronizationContext? SynchronizationContext { get; init; } = new NonConcurrentSynchronizationContext(sticky: false);
 
+	JsonRpc IJsonRpcClient.JsonRpc => this;
+
 	JsonRpcSerializer IJsonRpcClient.Serializer => this.userDataSerializer;
 
 	JsonRpcSerializer IArgumentsBuilderContext.Serializer => this.userDataSerializer;
@@ -247,6 +249,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	public bool IsDisposed => this.terminated;
 
 	internal CancellationToken DisposalToken => this.disposalSource.Token;
+
+	/// <summary>Gets a value indicating whether connection cleanup also disposes its dedicated multiplexer.</summary>
+	internal bool OwnsMultiplexingStream { get; init; }
 
 	/// <summary>Gets the channel used by this connection.</summary>
 	internal JsonRpcPipeChannel Channel => this.channel;
@@ -1337,7 +1342,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	}
 
 	/// <summary>
-	/// Gets the generated factory or legacy proxy type for an RPC contract interface, searching only on first request.
+	/// Gets the generated factory for an RPC contract interface, searching only on first request.
 	/// </summary>
 	/// <param name="interfaceType">The RPC contract interface.</param>
 	/// <returns>The proxy registration, or <see langword="null"/> if <paramref name="interfaceType"/> has no generated proxy.</returns>
@@ -2173,6 +2178,18 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			{
 				this.Logger.LogError(ex, "JSON-RPC enumerable cleanup failed; retaining the original shutdown cause.");
 			}
+
+			if (this.OwnsMultiplexingStream && this.MultiplexingStream is { } multiplexer)
+			{
+				try
+				{
+					await multiplexer.DisposeAsync().ConfigureAwait(false);
+				}
+				catch (Exception ex)
+				{
+					this.Logger.LogError(ex, "JSON-RPC multiplexer cleanup failed; retaining the original shutdown cause.");
+				}
+			}
 		}
 		finally
 		{
@@ -2290,7 +2307,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		}
 	}
 
-	/// <summary>Associates a contract interface with either a generated factory or legacy proxy metadata.</summary>
+	/// <summary>Associates a contract interface with its generated factories.</summary>
 	internal sealed class ProxyFactoryRegistration
 	{
 		/// <summary>Initializes a new instance of the <see cref="ProxyFactoryRegistration"/> class.</summary>
@@ -2310,7 +2327,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		/// <summary>Gets the source-generated factories, ordered by increasing group size.</summary>
 		internal JsonRpcProxyFactoryAttribute[] Factories { get; }
 
-		/// <summary>Creates a proxy using either its generated factory or legacy constructor metadata.</summary>
+		/// <summary>Creates a proxy using a generated factory.</summary>
 		/// <param name="client">The client the proxy sends requests through.</param>
 		/// <param name="options">Options controlling the proxy's behavior.</param>
 		/// <returns>The generated proxy instance.</returns>

@@ -73,6 +73,17 @@ public sealed class RemoteExceptionData
 		return Capture(exception, serializer, allowedTypes, 0, ref remainingNodes, ref remainingTypedExceptionBytes, logFailure);
 	}
 
+	/// <summary>Captures bounded diagnostics at a direct-call boundary without constructing a serializer.</summary>
+	/// <param name="exception">The local service failure.</param>
+	/// <param name="logFailure">Records failures while reading custom exception properties.</param>
+	/// <returns>The data-only snapshot, without a typed serialized payload.</returns>
+	internal static RemoteExceptionData CaptureLocal(Exception exception, Action<Exception> logFailure)
+	{
+		int remainingNodes = MaximumNodes;
+		int remainingTypedExceptionBytes = 0;
+		return Capture(exception, null, RemoteExceptionTypeMapping.Empty, 0, ref remainingNodes, ref remainingTypedExceptionBytes, logFailure);
+	}
+
 	/// <summary>Decodes a bounded snapshot from an untrusted wire value.</summary>
 	/// <param name="value">The encoded JSON or MessagePack value.</param>
 	/// <param name="logFailure">The callback that records malformed input, or <see langword="null"/>.</param>
@@ -209,7 +220,7 @@ public sealed class RemoteExceptionData
 		return JsonRpcValue.FromOwnedBytes(messagePackBuffer.AsReadOnlySequence.ToArray(), encoding);
 	}
 
-	private static RemoteExceptionData Capture(Exception exception, JsonRpcSerializer serializer, RemoteExceptionTypeMapping allowedTypes, int depth, ref int remainingNodes, ref int remainingTypedExceptionBytes, Action<Exception> logFailure)
+	private static RemoteExceptionData Capture(Exception exception, JsonRpcSerializer? serializer, RemoteExceptionTypeMapping allowedTypes, int depth, ref int remainingNodes, ref int remainingTypedExceptionBytes, Action<Exception> logFailure)
 	{
 		if (remainingNodes-- <= 0 || depth >= MaximumDepth)
 		{
@@ -260,7 +271,7 @@ public sealed class RemoteExceptionData
 		}
 
 		JsonRpcValue? typedException = null;
-		if (remainingTypedExceptionBytes > 0 && allowedTypes.TryGet(exception.GetType(), out RemoteExceptionTypeMapping.Entry? entry) && entry is not null)
+		if (remainingTypedExceptionBytes > 0 && serializer is not null && allowedTypes.TryGet(exception.GetType(), out RemoteExceptionTypeMapping.Entry? entry) && entry is not null)
 		{
 			try
 			{

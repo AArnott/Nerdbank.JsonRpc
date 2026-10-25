@@ -31,6 +31,8 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 	/// <summary>Gets the serializer used to encode arguments and decode results.</summary>
 	public JsonRpcSerializer Serializer => this.owner.UserDataSerializer;
 
+	JsonRpc IJsonRpcClient.JsonRpc => this.owner;
+
 	JsonRpcSerializer IJsonRpcClient.Serializer => this.Serializer;
 
 	JsonRpcSerializer IArgumentsBuilderContext.Serializer => this.Serializer;

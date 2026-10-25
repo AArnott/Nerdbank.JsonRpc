@@ -2,6 +2,9 @@
 
 The client proxy generator is included in the `Nerdbank.JsonRpc` NuGet package as a C# analyzer. It creates a typed implementation of an interface annotated with <xref:Nerdbank.JsonRpc.JsonRpcContractAttribute>. It uses PolyType-generated method shapes for arguments and results. [Getting Started](getting-started.md) shows the contract declaration and how to call <xref:Nerdbank.JsonRpc.JsonRpc.Attach*> on a connection to obtain the proxy; you do not need to construct the generated implementation yourself.
 
+Generated implementations derive from <xref:Nerdbank.JsonRpc.JsonRpcProxy>, which provides connection access, capability queries, and resource disposal.
+The same generated type and factory also support [direct local brokered-service calls](brokered-services/lifetimes.md#direct-local-invocation), including callback isolation and local exception policies, without serializing those calls.
+
 ## Choosing request return types
 
 For new RPC interfaces whose callers normally await each operation once, prefer <xref:System.Threading.Tasks.ValueTask`1> for requests with a result and <xref:System.Threading.Tasks.ValueTask> for requests without one. Generated proxies return these awaitables directly rather than converting them to Tasks. <xref:System.Threading.Tasks.Task`1> and <xref:System.Threading.Tasks.Task> are sensible choices when callers routinely share operations, await them repeatedly, or compose many operations, including in batching-heavy applications. Internal completion-source pooling benefits both return types; any additional savings from ValueTask depend on the request path and should be measured for your workload.
@@ -56,6 +59,9 @@ By default, generated proxies send requests under a transformed wire name (trail
 ## Testing remote interface availability
 
 Every newly generated proxy implements <xref:Nerdbank.JsonRpc.IClientProxy>, for root services, batches, and RPC-marshalable objects alike.
+Its <xref:Nerdbank.JsonRpc.IClientProxy.JsonRpc?displayProperty=nameWithType> property exposes the original connection, including for batch and RPC-marshalable proxies.
+Generated local brokered-service proxies implement the same interface but return `null` because they invoke their targets directly.
+Accessing the connection does not transfer ownership or change the proxy's configured lifetime.
 Use <xref:Nerdbank.JsonRpc.IClientProxy.Is(System.Type)> or <xref:Nerdbank.JsonRpc.JsonRpcExtensions.As``1(Nerdbank.JsonRpc.IClientProxy)> to query enabled contract interfaces rather than relying on a CLR cast when the generated proxy may expose more interfaces than the remote object supports.
 The generator also emits `Is(Type)` and `As<T>()` extension methods directly on the contract interfaces and their optional interfaces, so callers need not cast to <xref:Nerdbank.JsonRpc.IClientProxy>.
 These extensions use proxy capability metadata when present and ordinary CLR type checking for local implementations; null receivers return false or null.

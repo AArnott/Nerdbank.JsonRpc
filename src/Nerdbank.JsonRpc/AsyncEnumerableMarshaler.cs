@@ -26,8 +26,8 @@ internal static class AsyncEnumerableMarshaler
 	/// <param name="shape">The shape of the <see cref="IAsyncEnumerable{T}"/> type.</param>
 	/// <returns>The sequence.</returns>
 	/// <param name="callState">The scopes that apply to the message being read.</param>
-	internal static object Unmarshal<T>(AsyncEnumerableManager manager, JsonRpcValue value, ITypeShape<T> shape, RpcCallState? callState)
-		=> GetContract(shape).Unmarshal(manager, value, callState);
+	internal static T Unmarshal<T>(AsyncEnumerableManager manager, JsonRpcValue value, ITypeShape<T> shape, RpcCallState? callState)
+		=> (T)GetContract(shape).Unmarshal(manager, value, callState);
 
 	/// <summary>Tests whether a type is exactly <see cref="IAsyncEnumerable{T}"/>.</summary>
 	/// <param name="type">The candidate type.</param>

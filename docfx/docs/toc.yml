@@ -9,6 +9,23 @@ items:
   href: encodings.md
 - name: Generated client proxies
   href: client-proxies.md
+- name: Brokered services and IPC
+  href: brokered-services.md
+  items:
+  - name: Basic client and server setup
+    href: brokered-services/getting-started.md
+  - name: On-demand proffering
+    href: brokered-services/on-demand.md
+  - name: Optional interfaces
+    href: brokered-services/optional-interfaces.md
+  - name: Versioning services
+    href: brokered-services/versioning.md
+  - name: Host policy and extensibility
+    href: brokered-services/hosting.md
+  - name: Lifetimes, caching, and resilience
+    href: brokered-services/lifetimes.md
+  - name: Remote brokers and IPC
+    href: brokered-services/remote-brokers.md
 - name: RPC-marshalable interfaces
   href: rpc-marshalable-interfaces.md
 - name: Method name transforms

@@ -13,8 +13,15 @@ internal sealed class ObserverService : IObserverService
 
 	internal TestObserver OwnedObserver { get; } = new();
 
+	internal bool FailSubscriptions { get; init; }
+
 	public Task<IDisposable> SubscribeAsync(IObserver<int> observer, CancellationToken cancellationToken)
 	{
+		if (this.FailSubscriptions)
+		{
+			throw new InvalidOperationException("Subscription restoration failed.");
+		}
+
 		lock (this.sync)
 		{
 			this.Subscriber = observer;

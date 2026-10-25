@@ -25,6 +25,7 @@ public class OptionalInterfaceTests
 		Assert.False(basic is ISubtractCapability);
 		Assert.False(basic is IMultiplyCapability);
 		IClientProxy basicProxy = Assert.IsAssignableFrom<IClientProxy>(basic);
+		Assert.Same(clientRpc, basicProxy.JsonRpc);
 		Assert.True(basicProxy.Is(typeof(IOptionalObject)));
 		Assert.True(basicProxy.Is(typeof(IDisposable)));
 		Assert.Null(basicProxy.As<ISubtractCapability>());

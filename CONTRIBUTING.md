@@ -48,12 +48,21 @@ There may be tests that are known to be unstable or have special requirements. T
 To validate the shipping library with the NativeAOT compiler, run `dotnet publish test -c Release`.
 Then run `./tools/dotnet-test-cloud.ps1 -Configuration Release -IncludeNativeAOT`.
 The `test/AotCompatibilityTest` project roots the shipping assembly and is published by the traversal.
+It is a link-only compatibility check; its executable is not run.
+The separate `test/BrokeredServices.NativeAotSmokeTest` executable exercises generated local, cached, resilient, and cross-process brokered-service scenarios over JSON and MessagePack.
+It complements the TUnit functional tests with a dedicated entry point that launches its own NativeAOT apphost as a second process to validate the process boundary.
+The traversal publishes this smoke application, and the cloud test script executes it when `-IncludeNativeAOT` is specified.
 The runtime tests are also published and executed as NativeAOT on net10.0. With the current dependencies,
 the runtime suite passes on Windows using .NET SDK 10.0.402 and the .NET 10.0.13 NativeAOT toolchain.
 The StreamJsonRpc interoperability tests run in their own managed-only project because StreamJsonRpc
 requires dynamic code. The Roslyn-based generator tests also remain managed-only.
 Managed builds are RID-neutral by default and retain dynamic code, startup hooks, and event tracing for code coverage.
 Keep test projects in the solution as well as the traversal so managed testing continues to cover them.
+
+`Nerdbank.JsonRpc.NetStandard.Tests` explicitly references the netstandard2.0 shipping asset from a modern runtime host.
+It reuses the IPC tests, including Windows connection, owner/DACL enforcement, and pre-existing permissive-pipe rejection,
+so the native Windows implementation used by .NET 8/9 consumers is exercised rather than the net10.0 implementation.
+A build-time reference assertion guards against accidentally testing a different asset.
 
 ## Performance investigations
 

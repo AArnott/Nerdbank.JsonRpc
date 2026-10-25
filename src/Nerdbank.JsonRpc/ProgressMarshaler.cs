@@ -11,8 +11,15 @@ internal static class ProgressMarshaler
 	internal static JsonRpcValue Marshal<T>(ProgressManager manager, T progress, ITypeShape<T> shape, JsonRpcEncoding encoding, RpcCallState? callState)
 		=> ((ProgressContract)GetProgressContract(shape)).Marshal(manager, progress!, encoding, callState);
 
-	internal static object CreateProxy<T>(ProgressManager manager, JsonRpcValue token, ITypeShape<T> shape, RpcCallState? callState)
-		=> ((ProgressContract)GetProgressContract(shape)).Unmarshal(manager, token, callState);
+	/// <summary>Constructs a progress proxy matching the supplied contract shape.</summary>
+	/// <typeparam name="T">The progress contract.</typeparam>
+	/// <param name="manager">The connection's progress manager.</param>
+	/// <param name="token">The remote progress reference.</param>
+	/// <param name="shape">The progress contract shape.</param>
+	/// <param name="callState">The receiving call's lifetime scopes.</param>
+	/// <returns>The typed progress proxy.</returns>
+	internal static T CreateProxy<T>(ProgressManager manager, JsonRpcValue token, ITypeShape<T> shape, RpcCallState? callState)
+		=> (T)GetProgressContract(shape).Unmarshal(manager, token, callState);
 
 	private static ProgressContract GetProgressContract<T>(ITypeShape<T> shape)
 	{

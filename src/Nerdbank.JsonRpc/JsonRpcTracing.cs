@@ -61,7 +61,19 @@ internal static class JsonRpcTracing
 			ActivityContext.TryParse(traceParentValue, traceState, isRemote: true, out parentContext);
 		}
 
-		return StartActivity(request.Method, ActivityKind.Server, parentContext);
+		Activity? activity = StartActivity(request.Method, ActivityKind.Server, parentContext);
+		if (activity is null && parentContext != default)
+		{
+			activity = new Activity($"JSON-RPC {request.Method}")
+				.SetIdFormat(ActivityIdFormat.W3C)
+				.SetParentId(parentContext.TraceId, parentContext.SpanId, parentContext.TraceFlags);
+			activity.TraceStateString = parentContext.TraceState;
+			activity.SetTag("rpc.system", "jsonrpc");
+			activity.SetTag("rpc.method", request.Method);
+			activity.Start();
+		}
+
+		return activity;
 	}
 
 	private static Activity? StartActivity(string method, ActivityKind kind, ActivityContext parentContext = default)

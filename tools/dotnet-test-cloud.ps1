@@ -134,6 +134,13 @@ if ($isMTP) {
                 continue
             }
 
+            if ($nativeAotTest.IsSmokeTest -eq 'true') {
+                Write-Host "Running NativeAOT smoke tests from '$testExecutable'." -ForegroundColor Cyan
+                & $testExecutable
+                if ($LASTEXITCODE -ne 0) { $failedTests += 1 }
+                continue
+            }
+
             $nativeAotArgs = @(
                 ,'--treenode-filter=/**[Category!=FailsInCloudTest]'
                 ,'--diagnostic'
