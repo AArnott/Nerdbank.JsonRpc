@@ -92,6 +92,7 @@ public sealed class JsonRpcContractAnalyzer : DiagnosticAnalyzer
 
 			context.RegisterOperationAction(context => AnalyzeMarshalableInterfaceConversion(context, marshalableAttribute), OperationKind.Conversion);
 			context.RegisterOperationAction(context => AnalyzeMarshalableInterfaceTypeCheck(context, marshalableAttribute), OperationKind.IsType);
+			context.RegisterOperationAction(context => AnalyzeMarshalableInterfacePattern(context, marshalableAttribute), OperationKind.IsPattern);
 		});
 	}
 
@@ -113,7 +114,7 @@ public sealed class JsonRpcContractAnalyzer : DiagnosticAnalyzer
 		}
 		else
 		{
-			proxyType = invocation.Arguments.FirstOrDefault() is { Value: ITypeOfOperation typeOf } ? typeOf.TypeOperand : null;
+			proxyType = invocation.Arguments.FirstOrDefault(static argument => argument.Parameter?.Ordinal == 0) is { Value: ITypeOfOperation typeOf } ? typeOf.TypeOperand : null;
 		}
 
 		if (proxyType is null)
@@ -158,6 +159,25 @@ public sealed class JsonRpcContractAnalyzer : DiagnosticAnalyzer
 			context.ReportDiagnostic(Diagnostic.Create(PreferClientProxyTypeCheck, typeCheck.Syntax.GetLocation()));
 		}
 	}
+
+	private static void AnalyzeMarshalableInterfacePattern(OperationAnalysisContext context, INamedTypeSymbol? marshalableAttribute)
+	{
+		IIsPatternOperation patternCheck = (IIsPatternOperation)context.Operation;
+		if (GetMatchedType(patternCheck.Pattern) is ITypeSymbol target
+			&& AreDistinctMarshalableInterfaces(patternCheck.Value.Type, target, marshalableAttribute))
+		{
+			context.ReportDiagnostic(Diagnostic.Create(PreferClientProxyTypeCheck, patternCheck.Syntax.GetLocation()));
+		}
+	}
+
+	private static ITypeSymbol? GetMatchedType(IPatternOperation pattern)
+		=> pattern switch
+		{
+			IDeclarationPatternOperation { MatchedType: { } type } => type,
+			ITypePatternOperation { MatchedType: { } type } => type,
+			INegatedPatternOperation negated => GetMatchedType(negated.Pattern),
+			_ => null,
+		};
 
 	private static bool AreDistinctMarshalableInterfaces(ITypeSymbol? source, ITypeSymbol? target, INamedTypeSymbol? marshalableAttribute)
 		=> source is INamedTypeSymbol { TypeKind: TypeKind.Interface } sourceInterface

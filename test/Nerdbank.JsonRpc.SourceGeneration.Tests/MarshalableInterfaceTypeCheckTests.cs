@@ -25,6 +25,8 @@ public class MarshalableInterfaceTypeCheckTests
 					_ = {|#0:(ISecond)value|};
 					_ = {|#1:value as ISecond|};
 					_ = {|#2:value is ISecond|};
+					_ = {|#3:value is ISecond second|};
+					_ = {|#4:value is not ISecond|};
 				}
 			}
 			""";
@@ -33,7 +35,9 @@ public class MarshalableInterfaceTypeCheckTests
 			Source,
 			Verify.Diagnostic("NBJSONRPC050").WithLocation(0),
 			Verify.Diagnostic("NBJSONRPC050").WithLocation(1),
-			Verify.Diagnostic("NBJSONRPC050").WithLocation(2));
+			Verify.Diagnostic("NBJSONRPC050").WithLocation(2),
+			Verify.Diagnostic("NBJSONRPC050").WithLocation(3),
+			Verify.Diagnostic("NBJSONRPC050").WithLocation(4));
 	}
 
 	[Test]

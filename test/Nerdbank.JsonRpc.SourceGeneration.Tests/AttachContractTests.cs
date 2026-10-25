@@ -26,6 +26,7 @@ public class AttachContractTests
 	[Test]
 	[Arguments("rpc.Attach<string>()", "string")]
 	[Arguments("rpc.Attach(typeof(string))", "string")]
+	[Arguments("rpc.Attach(options: null, interfaceType: typeof(string))", "string")]
 	[Arguments("rpc.Attach<IGeneric<int>>()", "IGeneric<int>")]
 	public async Task AttachRequiresSupportedInterface(string attachExpression, string typeName)
 	{
@@ -41,6 +42,23 @@ public class AttachContractTests
 			""";
 
 		await Verify.VerifyAsync(source, Verify.Diagnostic("NBJSONRPC011", typeName).WithLocation(0));
+	}
+
+	[Test]
+	public async Task AttachByTypeRequiresAnnotatedInterfaceWhenArgumentsAreReordered()
+	{
+		const string Source = /* lang=c#-test */ """
+			using Nerdbank.JsonRpc;
+
+			interface IUnannotated { }
+
+			class C
+			{
+				void M(JsonRpc rpc) => {|#0:rpc.Attach(options: null, interfaceType: typeof(IUnannotated))|};
+			}
+			""";
+
+		await Verify.VerifyAsync(Source, Verify.Diagnostic("NBJSONRPC010", "IUnannotated").WithLocation(0));
 	}
 
 	[Test]
