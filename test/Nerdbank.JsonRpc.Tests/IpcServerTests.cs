@@ -149,6 +149,45 @@ public class IpcServerTests : TestBase
 	}
 
 	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task CancellationCallbackCanDisposeFromAnotherThread(bool multiple)
+	{
+		TaskCompletionSource<bool> entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		Task? reentrantDisposal = null;
+		IpcServer? serverInstance = null;
+		await using IpcServer server = IpcServer.Create(
+			async (_, token) =>
+			{
+				TaskCompletionSource<bool> canceled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+				using CancellationTokenRegistration registration = token.Register(() =>
+				{
+					try
+					{
+						reentrantDisposal = Task.Run(() => serverInstance!.Dispose());
+#pragma warning disable VSTHRD002 // Bound the synchronous cancellation callback so a locking regression fails instead of hanging.
+						Assert.True(reentrantDisposal.Wait(TimeSpan.FromSeconds(1)));
+#pragma warning restore VSTHRD002
+					}
+					finally
+					{
+						canceled.TrySetResult(true);
+					}
+				});
+				entered.SetResult(true);
+				await canceled.Task.WithCancellation(this.TimeoutToken);
+			},
+			new() { AllowMultipleClients = multiple });
+		serverInstance = server;
+		using Stream client = await IpcClient.ConnectAsync(server.Name, this.TimeoutToken);
+		await entered.Task.WithCancellation(this.TimeoutToken);
+		await Task.Run(server.Dispose).WithCancellation(this.TimeoutToken);
+		await server.Completion.WithCancellation(this.TimeoutToken);
+		Assert.NotNull(reentrantDisposal);
+		await reentrantDisposal.WithCancellation(this.TimeoutToken);
+	}
+
+	[Test]
 	public async Task ConnectionCancellationIsObserved()
 	{
 		using CancellationTokenSource cancellation = new();

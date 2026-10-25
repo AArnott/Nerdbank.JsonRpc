@@ -12,6 +12,7 @@ namespace Nerdbank.JsonRpc;
 public sealed class IpcServer : IDisposable, IAsyncDisposable
 {
 	private readonly CancellationTokenSource shutdown = new();
+	private readonly TaskCompletionSource<bool> shutdownCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
 	private readonly object syncObject = new();
 	private readonly HashSet<Stream> clients = [];
 	private readonly Func<Stream, CancellationToken, Task> callback;
@@ -52,6 +53,8 @@ public sealed class IpcServer : IDisposable, IAsyncDisposable
 	/// <inheritdoc/>
 	public void Dispose()
 	{
+		NamedPipeServerStream? pending;
+		Stream[] accepted;
 		lock (this.syncObject)
 		{
 			if (this.disposed != 0)
@@ -60,17 +63,27 @@ public sealed class IpcServer : IDisposable, IAsyncDisposable
 			}
 
 			this.disposed = 1;
+			pending = this.listener;
+			accepted = this.clients.ToArray();
+		}
+
+		try
+		{
+			this.shutdown.Cancel();
+		}
+		finally
+		{
 			try
 			{
-				this.shutdown.Cancel();
-			}
-			finally
-			{
-				this.listener?.Dispose();
-				foreach (Stream client in this.clients)
+				pending?.Dispose();
+				foreach (Stream client in accepted)
 				{
 					client.Dispose();
 				}
+			}
+			finally
+			{
+				this.shutdownCompleted.TrySetResult(true);
 			}
 		}
 	}
@@ -89,13 +102,23 @@ public sealed class IpcServer : IDisposable, IAsyncDisposable
 		List<Task> callbacks = [];
 		try
 		{
-			while (!this.shutdown.IsCancellationRequested)
+			while (true)
 			{
-				NamedPipeServerStream accepting = this.listener!;
+				NamedPipeServerStream accepting;
+				lock (this.syncObject)
+				{
+					if (this.disposed != 0)
+					{
+						break;
+					}
+
+					accepting = this.listener!;
+				}
+
 				await accepting.WaitForConnectionAsync(this.shutdown.Token).ConfigureAwait(false);
 				lock (this.syncObject)
 				{
-					if (this.shutdown.IsCancellationRequested)
+					if (this.disposed != 0)
 					{
 						// Closing the pending native handle is non-blocking and must occur while ownership is locked.
 #pragma warning disable VSTHRD103
@@ -141,9 +164,19 @@ public sealed class IpcServer : IDisposable, IAsyncDisposable
 			{
 				lock (this.syncObject)
 				{
+					if (this.disposed == 0)
+					{
+						this.shutdownCompleted.TrySetResult(true);
+					}
+
 					this.disposed = 1;
-					this.shutdown.Dispose();
 				}
+
+				// Cancellation executes user callbacks, which must finish before disposing their source.
+#pragma warning disable VSTHRD003
+				await this.shutdownCompleted.Task.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+				this.shutdown.Dispose();
 			}
 		}
 	}
