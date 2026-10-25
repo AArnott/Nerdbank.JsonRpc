@@ -1,10 +1,6 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-#if NET
-using System.Diagnostics.CodeAnalysis;
-#endif
-
 namespace Nerdbank.JsonRpc;
 
 /// <summary>Declares an optional interface that a marshalable object may implement.</summary>
@@ -20,13 +16,7 @@ public sealed class RpcMarshalableOptionalInterfaceAttribute : Attribute
 	/// <summary>Initializes a new instance of the <see cref="RpcMarshalableOptionalInterfaceAttribute"/> class.</summary>
 	/// <param name="interfaceId">The stable signed 32-bit protocol identifier for the optional interface.</param>
 	/// <param name="optionalInterface">The optional RPC interface type.</param>
-	public RpcMarshalableOptionalInterfaceAttribute(
-		int interfaceId,
-#if NET
-		[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)] Type optionalInterface)
-#else
-		Type optionalInterface)
-#endif
+	public RpcMarshalableOptionalInterfaceAttribute(int interfaceId, Type optionalInterface)
 	{
 		this.InterfaceId = interfaceId;
 		this.OptionalInterface = optionalInterface ?? throw new ArgumentNullException(nameof(optionalInterface));
@@ -40,8 +30,5 @@ public sealed class RpcMarshalableOptionalInterfaceAttribute : Attribute
 	public int InterfaceId { get; }
 
 	/// <summary>Gets the optional RPC interface type.</summary>
-#if NET
-	[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)]
-#endif
 	public Type OptionalInterface { get; }
 }
