@@ -13,8 +13,10 @@ internal sealed class RetainedServiceDuplexPipe : IDuplexPipe
 	/// <param name="lease">The active invocation lease.</param>
 	internal RetainedServiceDuplexPipe(IDuplexPipe pipe, ServiceProxyLease lease)
 	{
-		this.Input = new RetainedServicePipeReader(pipe.Input, lease.Retain());
-		this.Output = new RetainedServicePipeWriter(pipe.Output, lease.Retain());
+		PipeReader input = pipe.Input;
+		PipeWriter output = pipe.Output;
+		this.Input = new RetainedServicePipeReader(input, lease.Retain());
+		this.Output = new RetainedServicePipeWriter(output, lease.Retain());
 	}
 
 	/// <inheritdoc/>

@@ -1829,6 +1829,28 @@ public class BrokeredServiceTests : TestBase
 	}
 
 	[Test]
+	public async Task ThrowingReturnedPipeEndpointDoesNotRetainLocalService()
+	{
+		Pipe pipe = new();
+		LocalBoundaryService target = new() { ReturnedPipe = new ThrowingOutputPipe(pipe.Reader) };
+		ServiceProxyContext context = ServiceProxyContext.Own(target);
+		try
+		{
+			JsonRpcMessagePackDescriptor<ILocalBoundaryService> descriptor = new(new("throwing.pipe"), TypeShapeResolver.ResolveDynamicOrThrow<ILocalBoundaryService>());
+			ILocalBoundaryService proxy = descriptor.CreateLocalProxy(context, []);
+			await Assert.ThrowsAsync<RemoteInvocationException>(async () => await proxy.GetPipeAsync(this.TimeoutToken));
+			await Assert.IsAssignableFrom<System.IAsyncDisposable>(proxy).DisposeAsync().AsTask().WithCancellation(this.TimeoutToken);
+			Assert.True(target.Disposed);
+		}
+		finally
+		{
+			context.Dispose();
+			await pipe.Reader.CompleteAsync();
+			await pipe.Writer.CompleteAsync();
+		}
+	}
+
+	[Test]
 	[Arguments("reader")]
 	[Arguments("writer")]
 	[Arguments("duplex")]
@@ -3221,6 +3243,13 @@ public class BrokeredServiceTests : TestBase
 		}
 	}
 
+	private sealed class ThrowingOutputPipe(PipeReader input) : IDuplexPipe
+	{
+		public PipeReader Input => input;
+
+		public PipeWriter Output => throw new InvalidOperationException("Output acquisition failed.");
+	}
+
 	private sealed class LocalBoundaryService : ILocalBoundaryService, IDisposable
 	{
 		private readonly Pipe pipe = new();
@@ -3229,11 +3258,13 @@ public class BrokeredServiceTests : TestBase
 
 		internal bool Disposed { get; private set; }
 
+		internal IDuplexPipe? ReturnedPipe { get; init; }
+
 		public Task<PipeReader> GetReaderAsync(CancellationToken cancellationToken) => Task.FromResult(this.pipe.Reader);
 
 		public Task<PipeWriter> GetWriterAsync(CancellationToken cancellationToken) => Task.FromResult(this.pipe.Writer);
 
-		public Task<IDuplexPipe> GetPipeAsync(CancellationToken cancellationToken) => Task.FromResult<IDuplexPipe>(new DuplexPipe(this.pipe.Reader, this.pipe.Writer));
+		public Task<IDuplexPipe> GetPipeAsync(CancellationToken cancellationToken) => Task.FromResult(this.ReturnedPipe ?? new DuplexPipe(this.pipe.Reader, this.pipe.Writer));
 
 		public IAsyncEnumerable<int> EnumerateAsync(int failure, CancellationToken cancellationToken)
 			=> failure == 3 ? throw new InvalidOperationException("Enumerator acquisition failure") : this.IterateAsync(failure, cancellationToken);
