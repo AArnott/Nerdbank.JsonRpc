@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO.Pipelines;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.VisualStudio.Threading;
 using Nerdbank.Streams;
 
 namespace Nerdbank.JsonRpc.BrokeredServices;
@@ -184,7 +185,7 @@ public sealed class RemoteServiceBroker : IServiceBrokerWithMetadata, IDisposabl
 		where T : class
 	{
 		this.ThrowIfDisposed();
-		RemoteServiceConnectionInfo? info = await this.remote.RequestServiceChannelAsync(descriptor.Moniker, RemoteServiceActivationOptions.FromLocal(options), cancellationToken).ConfigureAwait(false);
+		RemoteServiceConnectionInfo? info = await this.RequestServiceChannelAsync(descriptor.Moniker, options, cancellationToken).ConfigureAwait(false);
 		if (info is null)
 		{
 			return null;
@@ -220,7 +221,7 @@ public sealed class RemoteServiceBroker : IServiceBrokerWithMetadata, IDisposabl
 	private async ValueTask<BrokeredServiceConnection?> GetConnectionCoreAsync(ServiceMoniker moniker, ServiceActivationOptions options, CancellationToken cancellationToken)
 	{
 		this.ThrowIfDisposed();
-		RemoteServiceConnectionInfo? info = await this.remote.RequestServiceChannelAsync(moniker, RemoteServiceActivationOptions.FromLocal(options), cancellationToken).ConfigureAwait(false);
+		RemoteServiceConnectionInfo? info = await this.RequestServiceChannelAsync(moniker, options, cancellationToken).ConfigureAwait(false);
 		if (info is null)
 		{
 			return null;
@@ -235,6 +236,71 @@ public sealed class RemoteServiceBroker : IServiceBrokerWithMetadata, IDisposabl
 		{
 			await this.CancelFailedRequestAsync(info.RequestId).ConfigureAwait(false);
 			throw;
+		}
+	}
+
+	private async Task<RemoteServiceConnectionInfo?> RequestServiceChannelAsync(ServiceMoniker moniker, ServiceActivationOptions options, CancellationToken cancellationToken)
+	{
+		if (this.multiplexer is null)
+		{
+			return await this.remote.RequestServiceChannelAsync(moniker, RemoteServiceActivationOptions.FromLocal(options), cancellationToken).ConfigureAwait(false);
+		}
+
+		// Control responses and channel offers may travel on independent transports.
+		HashSet<ulong> offered = [];
+		ulong? expected = null;
+		TaskCompletionSource<bool> arrived = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		void OnChannelOffered(object? sender, MultiplexingStream.ChannelOfferEventArgs args)
+		{
+			lock (offered)
+			{
+				offered.Add(args.QualifiedId.Id);
+				if (expected == args.QualifiedId.Id)
+				{
+					arrived.TrySetResult(true);
+				}
+			}
+		}
+
+		RemoteServiceConnectionInfo? info = null;
+		this.multiplexer.ChannelOffered += OnChannelOffered;
+		try
+		{
+			info = await this.remote.RequestServiceChannelAsync(moniker, RemoteServiceActivationOptions.FromLocal(options), cancellationToken).ConfigureAwait(false);
+			if (info?.MultiplexingChannelId is { } id)
+			{
+				lock (offered)
+				{
+					expected = id;
+					if (offered.Contains(id))
+					{
+						arrived.TrySetResult(true);
+					}
+				}
+
+#pragma warning disable VSTHRD003 // Both tasks are completed by asynchronous transport processing.
+				if (await Task.WhenAny(arrived.Task, this.multiplexer.Completion).WithCancellation(cancellationToken).ConfigureAwait(false) != arrived.Task)
+				{
+					await this.multiplexer.Completion.ConfigureAwait(false);
+					throw new EndOfStreamException("The multiplexer closed before the service channel was offered.");
+				}
+#pragma warning restore VSTHRD003
+			}
+
+			return info;
+		}
+		catch
+		{
+			if (info is not null)
+			{
+				await this.CancelFailedRequestAsync(info.RequestId).ConfigureAwait(false);
+			}
+
+			throw;
+		}
+		finally
+		{
+			this.multiplexer.ChannelOffered -= OnChannelOffered;
 		}
 	}
 

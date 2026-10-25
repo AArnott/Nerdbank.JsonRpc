@@ -15,6 +15,62 @@ using PolyType.Abstractions;
 public class BrokeredServiceTests : TestBase
 {
 	[Test]
+	[Arguments(0, false)]
+	[Arguments(1, false)]
+	[Arguments(2, false)]
+	[Arguments(0, true)]
+	[Arguments(1, true)]
+	[Arguments(2, true)]
+	public async Task MultiplexedAcquisitionWaitsForDelayedOffer(int outcome, bool rawConnection)
+	{
+		(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+		using DelayedWriteStream delayed = new(serverPipe.AsStream());
+		using MultiplexingStream clientMux = MultiplexingStream.Create(clientPipe.AsStream(), new() { ProtocolMajorVersion = 3 });
+		using MultiplexingStream serverMux = MultiplexingStream.Create(delayed, new() { ProtocolMajorVersion = 3 });
+		using BrokeredServiceContainer container = new();
+		container.Register(new(BrokeredTestServices.Calculator.Moniker));
+		using IDisposable proffer = container.Proffer(BrokeredTestServices.Calculator, () => new Calculator());
+		using MultiplexingRelayServiceBroker relay = new((IServiceBrokerWithMetadata)container.GetServiceBroker(), serverMux);
+		ObservedRemoteBroker remote = new(relay);
+		using RemoteServiceBroker broker = await RemoteServiceBroker.ConnectAsync(remote, clientMux, this.TimeoutToken);
+		using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
+		Task acquisition = AcquireAsync();
+		await remote.Responded.Task.WithCancellation(this.TimeoutToken);
+		Assert.False(acquisition.IsCompleted);
+		if (outcome == 1)
+		{
+			cancellation.Cancel();
+			await Assert.ThrowsAnyAsync<OperationCanceledException>(() => acquisition);
+			Assert.True(remote.Canceled);
+		}
+		else if (outcome == 2)
+		{
+			await clientMux.DisposeAsync();
+			await Assert.ThrowsAnyAsync<IOException>(() => acquisition);
+			Assert.True(remote.Canceled);
+		}
+		else
+		{
+			delayed.Release.TrySetResult(true);
+			await acquisition.WithCancellation(this.TimeoutToken);
+		}
+
+		async Task AcquireAsync()
+		{
+			if (rawConnection)
+			{
+				await using BrokeredServiceConnection? connection = await broker.GetConnectionAsync(BrokeredTestServices.Calculator.Moniker, cancellationToken: cancellation.Token);
+				Assert.NotNull(connection);
+				return;
+			}
+
+			IBrokeredCalculator proxy = (await broker.GetProxyAsync(BrokeredTestServices.Calculator, cancellationToken: cancellation.Token))!;
+			await using System.IAsyncDisposable lifetime = (System.IAsyncDisposable)proxy;
+			Assert.Equal(7, await proxy.AddAsync(3, 4, this.TimeoutToken));
+		}
+	}
+
+	[Test]
 	[Arguments(JsonRpcEncoding.Json)]
 	[Arguments(JsonRpcEncoding.MessagePack)]
 	public async Task AsyncDisposableContractReleasesRpcConnection(JsonRpcEncoding encoding)
@@ -2863,6 +2919,82 @@ public class BrokeredServiceTests : TestBase
 
 	private static JsonRpcDescriptor<IRemoteServiceBroker> CreateControlDescriptor(JsonRpcEncoding encoding)
 		=> CreateDescriptor<IRemoteServiceBroker>(FrameworkServices.RemoteServiceBroker.Moniker, encoding);
+
+	private sealed class ObservedRemoteBroker(IRemoteServiceBroker inner) : IRemoteServiceBroker
+	{
+		public event EventHandler<BrokeredServicesChangedEventArgs> AvailabilityChanged
+		{
+			add => inner.AvailabilityChanged += value;
+			remove => inner.AvailabilityChanged -= value;
+		}
+
+		public TaskCompletionSource<bool> Responded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public bool Canceled { get; private set; }
+
+		public Task<int> HandshakeAsync(RemoteServiceConnections connections, CancellationToken cancellationToken) => inner.HandshakeAsync(connections, cancellationToken);
+
+		public Task<IReadOnlyList<string>?> GetCapabilitiesAsync(ServiceMoniker moniker, CancellationToken cancellationToken) => inner.GetCapabilitiesAsync(moniker, cancellationToken);
+
+		public async Task<RemoteServiceConnectionInfo?> RequestServiceChannelAsync(ServiceMoniker moniker, RemoteServiceActivationOptions options, CancellationToken cancellationToken)
+		{
+			RemoteServiceConnectionInfo? info = await inner.RequestServiceChannelAsync(moniker, options, cancellationToken);
+			this.Responded.TrySetResult(true);
+			return info;
+		}
+
+		public Task CancelServiceRequestAsync(Guid requestId, CancellationToken cancellationToken)
+		{
+			this.Canceled = true;
+			return inner.CancelServiceRequestAsync(requestId, cancellationToken);
+		}
+	}
+
+	private sealed class DelayedWriteStream(Stream inner) : Stream
+	{
+		public TaskCompletionSource<bool> Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public override bool CanRead => true;
+
+		public override bool CanWrite => true;
+
+		public override bool CanSeek => false;
+
+		public override long Length => throw new NotSupportedException();
+
+		public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+		public override void Flush() => inner.Flush();
+
+		public override Task FlushAsync(CancellationToken cancellationToken) => inner.FlushAsync(cancellationToken);
+
+		public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+		public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => inner.ReadAsync(buffer, offset, count, cancellationToken);
+
+		public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+		public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+		{
+			await this.Release.Task.WithCancellation(cancellationToken);
+			await inner.WriteAsync(buffer, offset, count, cancellationToken);
+		}
+
+		public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+		public override void SetLength(long value) => throw new NotSupportedException();
+
+		protected override void Dispose(bool disposing)
+		{
+			if (disposing)
+			{
+				this.Release.TrySetCanceled();
+				inner.Dispose();
+			}
+
+			base.Dispose(disposing);
+		}
+	}
 
 	private sealed class AsyncLifetimeService : IAsyncLifetimeService
 	{

@@ -29,6 +29,7 @@ The client connects to that endpoint, adapts the broker, and acquires a typed pr
 
 The control protocol carries activation arguments, requested culture names, and stable capability identifiers, not local targets or setup delegates.
 Channel allocation pairs capabilities with the exact offering that supplied the pipe.
+When the control connection and service multiplexer use separate transports, the client waits for the matching channel offer even if its control response arrives first.
 Canceled, abandoned, and unclaimed requests release their activation; relay connection timeouts bound how long an endpoint can remain unclaimed.
 Callback-enabled activation is deferred until the client can receive callbacks; later activation failures close the service connection and are logged.
 For events that may arrive immediately after a remote connection starts, subscribe using <xref:Nerdbank.JsonRpc.BrokeredServices.ServiceActivationOptions.ConfigureProxy?displayProperty=nameWithType>.
