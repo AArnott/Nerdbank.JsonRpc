@@ -587,7 +587,6 @@ public class GeneratedProxyTests
 		Assert.Equal(5, await namedResult.WithCancellation(cts.Token));
 	}
 
-	#pragma warning disable NBJSONRPC010, NBJSONRPC011 // These tests verify Attach failures that the analyzers diagnose.
 	[Test]
 	public void GeneratedProxy_AttachRequiresGeneratedProxyMetadata()
 	{
@@ -646,7 +645,6 @@ public class GeneratedProxyTests
 		Assert.Contains("returned null", generic.Message);
 	}
 
-	#pragma warning restore NBJSONRPC010, NBJSONRPC011
 	[Test]
 	public void GeneratedProxy_AttachByTypeCreatesProxy()
 	{
