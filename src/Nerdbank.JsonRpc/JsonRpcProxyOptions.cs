@@ -18,6 +18,14 @@ public sealed record JsonRpcProxyOptions
 	/// <summary>Gets a shared instance with default settings.</summary>
 	public static JsonRpcProxyOptions Default { get; } = new();
 
+	/// <summary>Gets an optional resource owned by a generated root proxy.</summary>
+	/// <remarks>
+	/// Disposing the proxy disposes this resource. Leave null for caller-owned connections.
+	/// RPC-marshalable proxies retain their remote-object disposal semantics when this is null.
+	/// This setting adds no work to method invocation.
+	/// </remarks>
+	public IDisposable? Lifetime { get; init; }
+
 	/// <summary>Gets the additional contract interfaces considered enabled by <see cref="IClientProxy.Is"/>.</summary>
 	/// <value>
 	/// A list of enabled additional interfaces, or <see langword="null"/> (the default) to enable all contract interfaces implemented by the proxy.

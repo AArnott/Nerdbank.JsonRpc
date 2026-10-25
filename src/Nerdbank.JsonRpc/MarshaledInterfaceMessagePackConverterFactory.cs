@@ -31,7 +31,7 @@ internal sealed class MarshaledInterfaceMessagePackConverterFactory(MarshaledObj
 		private readonly bool typeIsProgress = typeof(T).IsGenericType && typeof(T).GetGenericTypeDefinition() == typeof(IProgress<>);
 
 		public override T? Read(ref MessagePackReader reader, SerializationContext context)
-			=> reader.TryReadNil() ? default : this.typeIsObserver ? (T)ObserverMarshaler.CreateProxy(manager, JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape, RpcCallState.Current) : this.typeIsProgress ? (T)ProgressMarshaler.CreateProxy(progress, JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape, RpcCallState.Current) : manager.UnmarshalMarshalable<T>(JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape, RpcCallState.Current);
+			=> reader.TryReadNil() ? default : this.typeIsObserver ? ObserverMarshaler.CreateProxy(manager, JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape, RpcCallState.Current) : this.typeIsProgress ? ProgressMarshaler.CreateProxy(progress, JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape, RpcCallState.Current) : manager.UnmarshalMarshalable<T>(JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape, RpcCallState.Current);
 
 		public override void Write(ref MessagePackWriter writer, in T? value, SerializationContext context)
 		{

@@ -29,7 +29,7 @@ internal sealed class AsyncEnumerableMessagePackConverterFactory(AsyncEnumerable
 	{
 		/// <inheritdoc/>
 		public override T? Read(ref MessagePackReader reader, SerializationContext context)
-			=> reader.TryReadNil() ? default : (T)AsyncEnumerableMarshaler.Unmarshal(manager, JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape, RpcCallState.Current);
+			=> reader.TryReadNil() ? default : AsyncEnumerableMarshaler.Unmarshal(manager, JsonRpcValue.FromMessagePack(reader.ReadRaw(context)), shape, RpcCallState.Current);
 
 		/// <inheritdoc/>
 		public override void Write(ref MessagePackWriter writer, in T? value, SerializationContext context)

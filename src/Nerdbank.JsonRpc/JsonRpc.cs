@@ -248,6 +248,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	internal CancellationToken DisposalToken => this.disposalSource.Token;
 
+	/// <summary>Gets a value indicating whether connection cleanup also disposes its dedicated multiplexer.</summary>
+	internal bool OwnsMultiplexingStream { get; init; }
+
 	/// <summary>Gets the channel used by this connection.</summary>
 	internal JsonRpcPipeChannel Channel => this.channel;
 
@@ -2172,6 +2175,18 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			catch (Exception ex)
 			{
 				this.Logger.LogError(ex, "JSON-RPC enumerable cleanup failed; retaining the original shutdown cause.");
+			}
+
+			if (this.OwnsMultiplexingStream && this.MultiplexingStream is { } multiplexer)
+			{
+				try
+				{
+					await multiplexer.DisposeAsync().ConfigureAwait(false);
+				}
+				catch (Exception ex)
+				{
+					this.Logger.LogError(ex, "JSON-RPC multiplexer cleanup failed; retaining the original shutdown cause.");
+				}
 			}
 		}
 		finally

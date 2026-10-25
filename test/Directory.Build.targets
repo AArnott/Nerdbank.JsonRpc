@@ -23,7 +23,7 @@
   <Import Project="$([MSBuild]::GetPathOfFileAbove($(MSBuildThisFile), $(MSBuildThisFileDirectory)..))" />
 
   <Target Name="GetNativeAOTTestVariants" Returns="@(_NativeAOTTest)"
-          Condition="'$(IsTestProject)' == 'true' and '$(PublishNativeAOTTests)' == 'true'">
+          Condition="('$(IsTestProject)' == 'true' and '$(PublishNativeAOTTests)' == 'true') or '$(IsNativeAOTSmokeTest)' == 'true'">
     <ItemGroup Condition="'$(TargetFramework)' == ''">
       <_TestFramework Include="$(TargetFrameworks)" />
     </ItemGroup>
@@ -46,6 +46,7 @@
     <ItemGroup>
       <_NativeAOTTestExecutable Include="$(MSBuildProjectFullPath)">
         <ProjectName>$(MSBuildProjectName)</ProjectName>
+        <IsSmokeTest>$(IsNativeAOTSmokeTest)</IsSmokeTest>
         <TargetFramework>$(TargetFramework)</TargetFramework>
         <ExecutablePath>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(PublishDir)', '$(AssemblyName)$(_NativeExecutableExtension)'))</ExecutablePath>
       </_NativeAOTTestExecutable>

@@ -14,8 +14,15 @@ internal static class ObserverMarshaler
 	internal static JsonRpcValue Marshal<T>(MarshaledObjectManager manager, T observer, ITypeShape<T> shape, JsonRpcEncoding encoding, RpcCallState? callState)
 		=> ((ObserverContract)GetObserverContract(shape)).Marshal(manager, observer!, encoding, callState);
 
-	internal static object CreateProxy<T>(MarshaledObjectManager manager, JsonRpcValue marker, ITypeShape<T> shape, RpcCallState? callState)
-		=> ((ObserverContract)GetObserverContract(shape)).Unmarshal(manager, marker, callState);
+	/// <summary>Constructs an observer proxy matching the supplied contract shape.</summary>
+	/// <typeparam name="T">The observer contract.</typeparam>
+	/// <param name="manager">The connection's object manager.</param>
+	/// <param name="marker">The remote observer reference.</param>
+	/// <param name="shape">The observer contract shape.</param>
+	/// <param name="callState">The receiving call's lifetime scopes.</param>
+	/// <returns>The typed observer proxy.</returns>
+	internal static T CreateProxy<T>(MarshaledObjectManager manager, JsonRpcValue marker, ITypeShape<T> shape, RpcCallState? callState)
+		=> (T)GetObserverContract(shape).Unmarshal(manager, marker, callState);
 
 	internal static TargetRegistration CreateRegistration<T>(ITypeShape<T> valueShape)
 	{

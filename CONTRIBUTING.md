@@ -48,6 +48,10 @@ There may be tests that are known to be unstable or have special requirements. T
 To validate the shipping library with the NativeAOT compiler, run `dotnet publish test -c Release`.
 Then run `./tools/dotnet-test-cloud.ps1 -Configuration Release -IncludeNativeAOT`.
 The `test/AotCompatibilityTest` project roots the shipping assembly and is published by the traversal.
+It is a link-only compatibility check; its executable is not run.
+The separate `test/BrokeredServices.NativeAotSmokeTest` executable exercises generated local, cached, resilient, and cross-process brokered-service scenarios over JSON and MessagePack.
+It complements the TUnit functional tests with a dedicated entry point that launches its own NativeAOT apphost as a second process to validate the process boundary.
+The traversal publishes this smoke application, and the cloud test script executes it when `-IncludeNativeAOT` is specified.
 The runtime tests are also published and executed as NativeAOT on net10.0. With the current dependencies,
 the runtime suite passes on Windows using .NET SDK 10.0.402 and the .NET 10.0.13 NativeAOT toolchain.
 The StreamJsonRpc interoperability tests run in their own managed-only project because StreamJsonRpc

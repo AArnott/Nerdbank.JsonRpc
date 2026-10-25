@@ -31,7 +31,7 @@ internal sealed class AsyncEnumerableJsonConverterFactory(AsyncEnumerableManager
 		public override T? Read(ref Nerdbank.Json.JsonReader reader, Nerdbank.Json.SerializationContext context)
 		{
 			string raw = reader.ReadRawValue();
-			return raw == "null" ? default : (T)AsyncEnumerableMarshaler.Unmarshal(manager, JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(raw)), shape, RpcCallState.Current);
+			return raw == "null" ? default : AsyncEnumerableMarshaler.Unmarshal(manager, JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(raw)), shape, RpcCallState.Current);
 		}
 
 		/// <inheritdoc/>

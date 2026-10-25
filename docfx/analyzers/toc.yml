@@ -7,3 +7,7 @@ items:
   href: NBJSONRPC002.md
 - name: "NBJSONRPC003: Unsupported contract member"
   href: NBJSONRPC003.md
+- name: "NBJSONRPC004: Dispose of brokered-service proxies"
+  href: NBJSONRPC004.md
+- name: "NBJSONRPC005: Do not store service rentals"
+  href: NBJSONRPC005.md

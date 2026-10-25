@@ -33,7 +33,7 @@ internal sealed class MarshaledInterfaceJsonConverterFactory(MarshaledObjectMana
 		public override T? Read(ref Nerdbank.Json.JsonReader reader, Nerdbank.Json.SerializationContext context)
 		{
 			string rawValue = reader.ReadRawValue();
-			return rawValue == "null" ? default : this.typeIsObserver ? (T)ObserverMarshaler.CreateProxy(manager, JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(rawValue)), shape, RpcCallState.Current) : this.typeIsProgress ? (T)ProgressMarshaler.CreateProxy(progress, JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(rawValue)), shape, RpcCallState.Current) : manager.UnmarshalMarshalable<T>(JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(rawValue)), shape, RpcCallState.Current);
+			return rawValue == "null" ? default : this.typeIsObserver ? ObserverMarshaler.CreateProxy(manager, JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(rawValue)), shape, RpcCallState.Current) : this.typeIsProgress ? ProgressMarshaler.CreateProxy(progress, JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(rawValue)), shape, RpcCallState.Current) : manager.UnmarshalMarshalable<T>(JsonRpcValue.FromJson(Encoding.UTF8.GetBytes(rawValue)), shape, RpcCallState.Current);
 		}
 
 		public override void Write(ref Nerdbank.Json.JsonWriter writer, in T? value, Nerdbank.Json.SerializationContext context)

@@ -165,13 +165,13 @@ public class ClientProxyGeneratorTests
 		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(
 			Source,
 			CompilerDiagnostics.Warnings,
-			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 10, 269, 10, 293)
+			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 13, 269, 13, 293)
 				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<IEvents>", "T", "IEvents"),
-			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 11, 258, 11, 282)
+			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 14, 258, 14, 282)
 				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<IEvents>", "T", "IEvents"),
-			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 12, 272, 12, 296)
+			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 15, 272, 15, 296)
 				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<IEvents>", "T", "IEvents"),
-			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 13, 258, 13, 282)
+			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 16, 258, 16, 282)
 				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<IEvents>", "T", "IEvents"));
 	}
 
@@ -634,7 +634,7 @@ public class ClientProxyGeneratorTests
 			Source,
 			CompilerDiagnostics.Warnings,
 			DiagnosticResult.CompilerError("CS0311")
-				.WithSpan(System.IO.Path.Combine("Nerdbank.JsonRpc.SourceGeneration", "Nerdbank.JsonRpc.SourceGeneration.ClientProxyGenerator", "CollidingLocalsProxy.g.cs"), 25, 107, 25, 140)
+				.WithSpan(System.IO.Path.Combine("Nerdbank.JsonRpc.SourceGeneration", "Nerdbank.JsonRpc.SourceGeneration.ClientProxyGenerator", "CollidingLocalsProxy.g.cs"), 30, 107, 30, 140)
 				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<ICollidingLocals>", "T", "ICollidingLocals"));
 	}
 
@@ -679,12 +679,12 @@ public class ClientProxyGeneratorTests
 			""";
 		GeneratorRunResult result = await RunGeneratorAsync(source);
 		ClassDeclarationSyntax[] proxies = GetProxyClasses(result);
-		if (proxies.Length != expectedProxyCount || proxies[0].BaseList!.Types.Count != 2)
+		if (proxies.Length != expectedProxyCount || proxies[0].BaseList!.Types.Count != 5)
 		{
 			throw new InvalidOperationException($"Expected {expectedProxyCount} proxies including a base-only proxy, got {proxies.Length}.");
 		}
 
-		if (optionalCount > 0 && proxies[1].BaseList!.Types.Count != optionalCount + 2)
+		if (optionalCount > 0 && proxies[1].BaseList!.Types.Count != optionalCount + 5)
 		{
 			throw new InvalidOperationException("The full proxy must implement every optional interface.");
 		}
@@ -713,7 +713,7 @@ public class ClientProxyGeneratorTests
 			""";
 		ClassDeclarationSyntax[] proxies = GetProxyClasses(await RunGeneratorAsync(source));
 		if (proxies.Length != (includeEmpty ? 3 : 2)
-			|| proxies.Count(proxy => proxy.BaseList!.Types.Count == 2) != (includeEmpty ? 1 : 0)
+			|| proxies.Count(proxy => proxy.BaseList!.Types.Count == 5) != (includeEmpty ? 1 : 0)
 			|| proxies.Any(proxy => proxy.BaseList!.Types.Any(type => type.ToString().Contains("IThird"))))
 		{
 			throw new InvalidOperationException("Only the distinct explicit groups should be emitted, without implicit base-only or full proxies.");

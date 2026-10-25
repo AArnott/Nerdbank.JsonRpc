@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Nerdbank.JsonRpc.TestContracts\Nerdbank.JsonRpc.TestContracts.csproj" />
+    <ProjectReference Include="..\Nerdbank.JsonRpc.BrokeredServiceContracts\Nerdbank.JsonRpc.BrokeredServiceContracts.csproj" />
     <ProjectReference Include="..\..\src\Nerdbank.JsonRpc\Nerdbank.JsonRpc.csproj" />
     <ProjectReference Include="..\..\src\Nerdbank.JsonRpc.SourceGeneration\Nerdbank.JsonRpc.SourceGeneration.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
