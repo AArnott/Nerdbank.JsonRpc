@@ -15,6 +15,43 @@ using PolyType.Abstractions;
 public class BrokeredServiceTests : TestBase
 {
 	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task OptionalInvocationUsesLeasedGenerationAfterInvalidation(bool supported)
+	{
+		Calculator target = new();
+		SequenceBroker broker = new(BrokeredTestServices.Descriptor.CreateLocalProxy(
+			ServiceProxyContext.Own(target), supported ? [BrokeredTestServices.Subtract] : []));
+		ResilientServiceProxy<IBrokeredCalculator>? owner = null;
+		LeaseCallbackDescriptor descriptor = new(() =>
+		{
+			broker.SignalChange();
+			Assert.NotNull(owner);
+			Assert.False(owner.IsAvailable);
+			Assert.False(((IClientProxy)owner.Proxy).Is(typeof(IBrokeredSubtract)));
+			Assert.False(target.Disposed);
+		})
+		{
+			AdditionalInterfaces = [BrokeredTestServices.Subtract],
+		};
+		await using ResilientServiceProxy<IBrokeredCalculator> resilient = await broker.GetResilientProxyAsync(descriptor, cancellationToken: this.TimeoutToken);
+		owner = resilient;
+		Assert.Equal(supported, ((IClientProxy)resilient.Proxy).Is(typeof(IBrokeredSubtract)));
+		IBrokeredSubtract optional = Assert.IsAssignableFrom<IBrokeredSubtract>(resilient.Proxy);
+		if (supported)
+		{
+			Assert.Equal(3, await optional.SubtractAsync(7, 4, this.TimeoutToken));
+		}
+		else
+		{
+			await Assert.ThrowsAsync<NotSupportedException>(async () => await optional.SubtractAsync(7, 4, this.TimeoutToken));
+		}
+
+		await resilient.DisposeAsync();
+		Assert.True(target.Disposed);
+	}
+
+	[Test]
 	public async Task NullLocalProxyFactoryReleasesActivationAndBorrowedCallback()
 	{
 		JsonRpcDescriptor<INullFactoryProxy> descriptor = JsonRpcUtf8Descriptor.Create<INullFactoryProxy>(new("null.local.proxy")) with
@@ -3112,6 +3149,41 @@ public class BrokeredServiceTests : TestBase
 		internal bool Disposed { get; private set; }
 
 		public void Dispose() => this.Disposed = true;
+	}
+
+	private sealed record LeaseCallbackDescriptor(Action AfterRent)
+		: JsonRpcMessagePackDescriptor<IBrokeredCalculator>(BrokeredTestServices.Calculator.Moniker, TypeShapeResolver.ResolveDynamicOrThrow<IBrokeredCalculator>())
+	{
+		public override IBrokeredCalculator CreateLocalProxy(ServiceProxyContext context, IReadOnlyList<ServiceInterface> additionalInterfaces)
+			=> base.CreateLocalProxy(new LeaseCallbackContext(context, this.AfterRent), additionalInterfaces);
+	}
+
+	private sealed class LeaseCallbackContext(ServiceProxyContext inner, Action afterRent) : ServiceProxyContext
+	{
+		public override bool IsDisposed => inner.IsDisposed;
+
+		protected override object? EventTarget => null;
+
+		public override bool IsInterfaceEnabled(Type interfaceType) => inner.IsInterfaceEnabled(interfaceType);
+
+		public override async ValueTask<ServiceProxyLease> RentAsync(CancellationToken cancellationToken)
+		{
+			ServiceProxyLease lease = await inner.RentAsync(cancellationToken);
+			try
+			{
+				afterRent();
+				return lease;
+			}
+			catch
+			{
+				lease.Dispose();
+				throw;
+			}
+		}
+
+		public override void Dispose() => inner.Dispose();
+
+		public override ValueTask DisposeAsync() => inner.DisposeAsync();
 	}
 
 	private sealed class Calculator : IBrokeredCalculator, IBrokeredSubtract, IDisposable

@@ -30,6 +30,7 @@ public class ClientProxyGeneratorTests
 				ValueTask TryDispose();
 				ValueTask DisposeUnowned();
 				ValueTask Is();
+				ValueTask IsInterfaceEnabled();
 			}
 			""";
 

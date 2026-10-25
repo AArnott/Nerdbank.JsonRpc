@@ -59,6 +59,11 @@ requires dynamic code. The Roslyn-based generator tests also remain managed-only
 Managed builds are RID-neutral by default and retain dynamic code, startup hooks, and event tracing for code coverage.
 Keep test projects in the solution as well as the traversal so managed testing continues to cover them.
 
+`Nerdbank.JsonRpc.NetStandard.Tests` explicitly references the netstandard2.0 shipping asset from a modern runtime host.
+It reuses the IPC tests, including Windows connection, owner/DACL enforcement, and pre-existing permissive-pipe rejection,
+so the native Windows implementation used by .NET 8/9 consumers is exercised rather than the net10.0 implementation.
+A build-time reference assertion guards against accidentally testing a different asset.
+
 ## Performance investigations
 
 The `test/Benchmarks` project uses BenchmarkDotNet and `MemoryDiagnoser`. Build it in Release, then run a focused workload without rebuilding:

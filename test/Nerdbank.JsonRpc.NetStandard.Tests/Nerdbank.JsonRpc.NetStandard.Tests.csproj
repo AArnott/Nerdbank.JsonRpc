@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <PublishNativeAOTTests>false</PublishNativeAOTTests>
+    <EnableDynamicPlatformResolution>false</EnableDynamicPlatformResolution>
+    <RootNamespace />
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Nerdbank.JsonRpc\Nerdbank.JsonRpc.csproj"
+                      SetTargetFramework="TargetFramework=netstandard2.0"
+                      SkipGetTargetFrameworkProperties="true" />
+    <Compile Include="..\Nerdbank.JsonRpc.Tests\IpcServerTests.cs" Link="IpcServerTests.cs" />
+    <!-- NuGet selects modern dependency assets even though MSBuild selects the netstandard2.0 project output. -->
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" />
+    <PackageReference Include="TUnit.Engine" />
+    <PackageReference Include="xunit.v3.assert.aot" />
+  </ItemGroup>
+  <Target Name="VerifyNetStandardAsset" AfterTargets="ResolveReferences">
+    <ItemGroup>
+      <_IpcAssembly Include="@(ReferenceCopyLocalPaths)"
+                    Condition="'%(ReferenceCopyLocalPaths.Filename)%(ReferenceCopyLocalPaths.Extension)' == 'Nerdbank.JsonRpc.dll'" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_IpcAssemblyPath>@(_IpcAssembly->'%(FullPath)')</_IpcAssemblyPath>
+      <_IpcAssemblyDirectory>$([System.IO.Path]::GetDirectoryName('$(_IpcAssemblyPath)'))</_IpcAssemblyDirectory>
+      <_IpcAssemblyFramework>$([System.IO.Path]::GetFileName('$(_IpcAssemblyDirectory)'))</_IpcAssemblyFramework>
+    </PropertyGroup>
+    <Error Condition="'@(_IpcAssembly->Count())' != '1' or '$(_IpcAssemblyFramework)' != 'netstandard2.0'"
+           Text="IPC compatibility tests must consume the netstandard2.0 Nerdbank.JsonRpc asset. Selected: $(_IpcAssemblyPath)." />
+  </Target>
+</Project>

@@ -67,14 +67,22 @@ public class IpcServerTests : TestBase
 		PipeSecurity security = Assert.IsAssignableFrom<NamedPipeClientStream>(stream).GetAccessControl();
 		using WindowsIdentity identity = WindowsIdentity.GetCurrent();
 		Assert.Equal(identity.User, security.GetOwner(typeof(SecurityIdentifier)));
+		Assert.True(security.AreAccessRulesProtected);
 		SecurityIdentifier network = new(WellKnownSidType.NetworkSid, null);
-		bool denied = false;
-		foreach (PipeAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+		AuthorizationRuleCollection rules = security.GetAccessRules(true, true, typeof(SecurityIdentifier));
+		Assert.Equal(2, rules.Count);
+		bool deniedNetwork = false;
+		bool allowedUser = false;
+		foreach (PipeAccessRule rule in rules)
 		{
-			denied |= rule.IdentityReference.Equals(network) && rule.AccessControlType == AccessControlType.Deny && rule.PipeAccessRights == PipeAccessRights.FullControl;
+			Assert.False(rule.IsInherited);
+			Assert.Equal(PipeAccessRights.FullControl, rule.PipeAccessRights);
+			deniedNetwork |= rule.IdentityReference.Equals(network) && rule.AccessControlType == AccessControlType.Deny;
+			allowedUser |= rule.IdentityReference.Equals(identity.User) && rule.AccessControlType == AccessControlType.Allow;
 		}
 
-		Assert.True(denied);
+		Assert.True(deniedNetwork);
+		Assert.True(allowedUser);
 	}
 
 	[Test]

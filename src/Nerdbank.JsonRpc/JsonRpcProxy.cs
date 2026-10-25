@@ -75,7 +75,7 @@ public abstract class JsonRpcProxy : IClientProxy, IDisposable, IAsyncDisposable
 			throw new ArgumentNullException(nameof(type));
 		}
 
-		if (!type.IsInterface || type == typeof(IClientProxy) || !type.IsInstanceOfType(this))
+		if (!this.IsProxyInterfaceEnabled(type))
 		{
 			return false;
 		}
@@ -90,25 +90,7 @@ public abstract class JsonRpcProxy : IClientProxy, IDisposable, IAsyncDisposable
 			return true;
 		}
 
-		if (this.LocalContext is null && this.Client is IClientProxy remoteProxy && !remoteProxy.Is(type))
-		{
-			return false;
-		}
-
-		if (this.enabledInterfaces is null)
-		{
-			return true;
-		}
-
-		foreach (Type enabledInterface in this.enabledInterfaces)
-		{
-			if (type.IsAssignableFrom(enabledInterface))
-			{
-				return true;
-			}
-		}
-
-		return false;
+		return this.LocalContext is not null || this.Client is not IClientProxy remoteProxy || remoteProxy.Is(type);
 	}
 
 	/// <inheritdoc/>
@@ -167,5 +149,44 @@ public abstract class JsonRpcProxy : IClientProxy, IDisposable, IAsyncDisposable
 	/// <summary>Invokes the contract's remote disposal operation when no local resource is owned.</summary>
 	protected virtual void DisposeUnowned()
 	{
+	}
+
+	/// <summary>Tests invocation capabilities against the retained target rather than the context's current generation.</summary>
+	/// <param name="type">The invoked contract.</param>
+	/// <param name="lease">The lease retaining the invocation target.</param>
+	/// <returns>Whether both this proxy and the retained target enable the contract.</returns>
+	protected bool IsInterfaceEnabled(Type type, ServiceProxyLease lease)
+	{
+		if (type is null)
+		{
+			throw new ArgumentNullException(nameof(type));
+		}
+
+		object target = lease.Target;
+		return this.IsProxyInterfaceEnabled(type) && type.IsInstanceOfType(target)
+			&& (target is not IClientProxy proxy || proxy.Is(type));
+	}
+
+	private bool IsProxyInterfaceEnabled(Type type)
+	{
+		if (!type.IsInterface || type == typeof(IClientProxy) || !type.IsInstanceOfType(this))
+		{
+			return false;
+		}
+
+		if (type.IsAssignableFrom(this.primaryInterface) || this.enabledInterfaces is null)
+		{
+			return true;
+		}
+
+		foreach (Type enabledInterface in this.enabledInterfaces)
+		{
+			if (type.IsAssignableFrom(enabledInterface))
+			{
+				return true;
+			}
+		}
+
+		return false;
 	}
 }

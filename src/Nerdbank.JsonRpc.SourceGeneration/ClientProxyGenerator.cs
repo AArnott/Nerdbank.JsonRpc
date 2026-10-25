@@ -959,7 +959,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 			if (method.ExplicitImplementation || method.OptionalInterfaceId is not null)
 			{
-				builder.Append("if (!this.Is(typeof(").Append(contract).AppendLine(")))");
+				builder.Append("if (!this.IsInterfaceEnabled(typeof(").Append(contract).AppendLine("), __lease))");
 				builder.OpenBlock();
 				builder.AppendLine("throw new global::System.NotSupportedException(\"This service implementation does not enable the requested interface.\");");
 				builder.CloseBlock();
