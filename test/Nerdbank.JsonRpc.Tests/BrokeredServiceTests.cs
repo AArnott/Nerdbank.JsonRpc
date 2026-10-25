@@ -15,6 +15,39 @@ using PolyType.Abstractions;
 public class BrokeredServiceTests : TestBase
 {
 	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task AsyncDisposableContractReleasesRpcConnection(JsonRpcEncoding encoding)
+	{
+		JsonRpcDescriptor<IAsyncLifetimeService> descriptor = CreateDescriptor<IAsyncLifetimeService>(new("async.lifetime"), encoding);
+		(IDuplexPipe client, IDuplexPipe server) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = descriptor.CreateConnection(client);
+		using JsonRpc serverRpc = descriptor.CreateConnection(server);
+		clientRpc.Start();
+		serverRpc.Start();
+		await using IAsyncLifetimeService proxy = descriptor.CreateProxy(clientRpc, []);
+		await proxy.DisposeAsync();
+		await clientRpc.Completion.WithCancellation(this.TimeoutToken);
+		await serverRpc.Completion.WithCancellation(this.TimeoutToken);
+	}
+
+	[Test]
+	public async Task AsyncDisposableContractReleasesLocalContextAndEvents()
+	{
+		AsyncLifetimeService target = new();
+		ServiceProxyContext context = ServiceProxyContext.Own(target);
+		await using IAsyncLifetimeService proxy = JsonRpcUtf8Descriptor.Create<IAsyncLifetimeService>(new("async.lifetime")).CreateLocalProxy(context, []);
+		proxy.Changed += (_, _) => { };
+		Assert.Equal(1, target.Subscriptions);
+		await proxy.DisposeAsync();
+		Assert.True(context.IsDisposed);
+		Assert.Equal(0, target.Subscriptions);
+		Assert.Equal(1, target.Disposals);
+		await proxy.DisposeAsync();
+		Assert.Equal(1, target.Disposals);
+	}
+
+	[Test]
 	[Arguments(false, JsonRpcEncoding.Json)]
 	[Arguments(false, JsonRpcEncoding.MessagePack)]
 	[Arguments(true, JsonRpcEncoding.Json)]
@@ -2082,6 +2115,43 @@ public class BrokeredServiceTests : TestBase
 	}
 
 	[Test]
+	public async Task CacheRetriesActivationThatFailsAfterWaiterCancels()
+	{
+		using BrokeredServiceContainer container = new();
+		TaskCompletionSource<IBrokeredCalculator?> activation = new();
+		TaskCompletionSource<bool> started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		int attempts = 0;
+		container.Register(new(BrokeredTestServices.Calculator.Moniker));
+		using IDisposable registration = container.Proffer(BrokeredTestServices.Calculator, async (_, _, _, _) =>
+		{
+			if (++attempts == 1)
+			{
+				started.SetResult(true);
+				return await activation.Task;
+			}
+
+			return new Calculator();
+		});
+		using ServiceBrokerClient client = new(container.GetServiceBroker());
+		using CancellationTokenSource cancellation = new();
+		Task canceled = AcquireAsync();
+		await started.Task.WithCancellation(this.TimeoutToken);
+		cancellation.Cancel();
+		await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceled);
+
+		// Inline continuations let the shared activation finish faulting before the next acquisition.
+		activation.SetException(new InvalidOperationException("Delayed activation failure"));
+		using ServiceBrokerClient.Rental<IBrokeredCalculator> rental = await client.GetProxyAsync(BrokeredTestServices.Calculator, cancellationToken: this.TimeoutToken);
+		Assert.NotNull(rental.Proxy);
+		Assert.Equal(2, attempts);
+
+		async Task AcquireAsync()
+		{
+			using ServiceBrokerClient.Rental<IBrokeredCalculator> rental = await client.GetProxyAsync(BrokeredTestServices.Calculator, cancellationToken: cancellation.Token);
+		}
+	}
+
+	[Test]
 	public async Task CacheRetriesFailedActivations()
 	{
 		using BrokeredServiceContainer container = new();
@@ -2793,6 +2863,25 @@ public class BrokeredServiceTests : TestBase
 
 	private static JsonRpcDescriptor<IRemoteServiceBroker> CreateControlDescriptor(JsonRpcEncoding encoding)
 		=> CreateDescriptor<IRemoteServiceBroker>(FrameworkServices.RemoteServiceBroker.Moniker, encoding);
+
+	private sealed class AsyncLifetimeService : IAsyncLifetimeService
+	{
+		public event EventHandler Changed
+		{
+			add => this.Subscriptions++;
+			remove => this.Subscriptions--;
+		}
+
+		internal int Subscriptions { get; private set; }
+
+		internal int Disposals { get; private set; }
+
+		public ValueTask DisposeAsync()
+		{
+			this.Disposals++;
+			return default;
+		}
+	}
 
 	private sealed class Calculator : IBrokeredCalculator, IBrokeredSubtract, IDisposable
 	{

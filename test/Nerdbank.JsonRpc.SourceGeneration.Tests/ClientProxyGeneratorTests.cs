@@ -13,6 +13,24 @@ using Nerdbank.JsonRpc.SourceGeneration;
 public class ClientProxyGeneratorTests
 {
 	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public async Task AsyncDisposableContractUsesProxyLifecycle(bool synchronous)
+	{
+		string source = /* lang=c#-test */ $$"""
+			using System;
+			using Nerdbank.JsonRpc;
+
+			[JsonRpcContract]
+			partial interface IService : IAsyncDisposable{{(synchronous ? ", IDisposable" : string.Empty)}}
+			{
+			}
+			""";
+
+		await RunGeneratorAsync(source);
+	}
+
+	[Test]
 	public async Task ConcreteStaticHelpersDoNotSuppressProxyGeneration()
 	{
 		const string Source = /* lang=c#-test */ """

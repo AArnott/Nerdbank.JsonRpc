@@ -10,6 +10,14 @@ using Microsoft.VisualStudio.Threading;
 public class IpcServerTests : TestBase
 {
 	[Test]
+	public async Task RejectsEmbeddedNullEndpoint()
+	{
+		string endpoint = "service\0suffix";
+		Assert.Throws<ArgumentException>(() => IpcServer.Create((_, _) => Task.CompletedTask, new() { Name = endpoint }));
+		await Assert.ThrowsAsync<ArgumentException>(() => IpcClient.ConnectAsync(endpoint, this.TimeoutToken));
+	}
+
+	[Test]
 	public async Task WindowsAccessRulesDenyNetworkLogons()
 	{
 #if NET

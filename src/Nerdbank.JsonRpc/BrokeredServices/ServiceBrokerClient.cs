@@ -58,7 +58,7 @@ public sealed class ServiceBrokerClient : IDisposable
 
 			if (!this.entries.TryGetValue(key, out entry!))
 			{
-				entry = new(this, async () => await this.broker.GetProxyAsync(descriptor, options, this.shutdown.Token).ConfigureAwait(false));
+				entry = new(this, key, async () => await this.broker.GetProxyAsync(descriptor, options, this.shutdown.Token).ConfigureAwait(false));
 				this.entries.Add(key, entry);
 			}
 
@@ -73,24 +73,6 @@ public sealed class ServiceBrokerClient : IDisposable
 		}
 		catch
 		{
-			bool evicted = false;
-			if (activation.IsFaulted || activation.IsCanceled)
-			{
-				lock (this.syncObject)
-				{
-					if (this.entries.TryGetValue(key, out Entry? cached) && ReferenceEquals(cached, entry))
-					{
-						this.entries.Remove(key);
-						evicted = true;
-					}
-				}
-			}
-
-			if (evicted)
-			{
-				entry.Release();
-			}
-
 			entry.Release();
 			throw;
 		}
@@ -123,6 +105,24 @@ public sealed class ServiceBrokerClient : IDisposable
 			{
 				entry.Release();
 			}
+		}
+	}
+
+	private void EvictFailedActivation(CacheKey key, Entry entry)
+	{
+		bool evicted = false;
+		lock (this.syncObject)
+		{
+			if (this.entries.TryGetValue(key, out Entry? cached) && ReferenceEquals(cached, entry))
+			{
+				this.entries.Remove(key);
+				evicted = true;
+			}
+		}
+
+		if (evicted)
+		{
+			entry.Release();
 		}
 	}
 
@@ -178,12 +178,25 @@ public sealed class ServiceBrokerClient : IDisposable
 	{
 		private readonly ServiceBrokerClient client;
 		private int references = 1;
+		private bool activationFailed;
 
-		internal Entry(ServiceBrokerClient client, Func<Task<object?>> factory)
+		internal Entry(ServiceBrokerClient client, CacheKey key, Func<Task<object?>> factory)
 		{
 			this.client = client;
 #pragma warning disable VSTHRD012 // Activation never synchronously blocks and does not require a main-thread affinity.
-			this.Proxy = new(factory);
+			this.Proxy = new(async () =>
+			{
+				try
+				{
+					return await factory().ConfigureAwait(false);
+				}
+				catch
+				{
+					this.activationFailed = true;
+					client.EvictFailedActivation(key, this);
+					throw;
+				}
+			});
 #pragma warning restore VSTHRD012
 		}
 
@@ -201,6 +214,11 @@ public sealed class ServiceBrokerClient : IDisposable
 
 		private async Task CleanupAsync()
 		{
+			if (this.activationFailed)
+			{
+				return;
+			}
+
 			try
 			{
 				object? proxy = await this.Proxy.GetValueAsync().ConfigureAwait(false);

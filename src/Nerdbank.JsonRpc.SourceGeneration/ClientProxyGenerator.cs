@@ -619,10 +619,10 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			.Select(static group => group.First()).ToImmutableArray();
 		string enabledInterfacesField = GetGeneratedMemberName(info, "NerdbankJsonRpc_EnabledInterfaces");
 		string lifetimeField = GetGeneratedMemberName(info, "NerdbankJsonRpc_Lifetime");
-		bool needsMethodNameTransform = methods.Any(m => m.ExplicitRpcName is null && m.Kind is not ProxyMethodKind.Unsupported && !(info.IsMarshalable && IsDisposeMethod(m)));
+		bool needsMethodNameTransform = methods.Any(m => m.ExplicitRpcName is null && m.Kind is not ProxyMethodKind.Unsupported && !IsAsyncDisposeMethod(m) && !(info.IsMarshalable && IsDisposeMethod(m)));
 		string? methodNameTransformField = needsMethodNameTransform ? GetGeneratedMemberName(info, "NerdbankJsonRpc_MethodNameTransform") : null;
 		ImmutableArray<string?> transformedRpcNameFields = methods
-			.Select((method, index) => method is { ExplicitRpcName: null, Kind: not ProxyMethodKind.Unsupported } && !(info.IsMarshalable && IsDisposeMethod(method)) ? GetGeneratedMemberName(info, $"NerdbankJsonRpc_TransformedRpcName{index}") : null)
+			.Select((method, index) => method is { ExplicitRpcName: null, Kind: not ProxyMethodKind.Unsupported } && !IsAsyncDisposeMethod(method) && !(info.IsMarshalable && IsDisposeMethod(method)) ? GetGeneratedMemberName(info, $"NerdbankJsonRpc_TransformedRpcName{index}") : null)
 			.ToImmutableArray();
 
 		builder.Append("internal sealed class ").Append(proxyName).Append(" : ").Append(info.InterfaceName);
@@ -806,6 +806,11 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		for (int i = 0; i < methods.Length; i++)
 		{
+			if (IsAsyncDisposeMethod(methods[i]))
+			{
+				continue;
+			}
+
 			builder.AppendLine();
 			RenderMethod(builder, methods[i], shapeFields, transformedRpcNameFields[i], methodNameTransformField, info.IsMarshalable, lifetimeField);
 		}
@@ -990,7 +995,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		foreach (MethodInfo method in methods)
 		{
-			if (IsDisposeMethod(method))
+			if (IsDisposeMethod(method) || IsAsyncDisposeMethod(method))
 			{
 				continue;
 			}
@@ -1392,6 +1397,9 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 	private static bool IsDisposeMethod(MethodInfo method)
 		=> method.Symbol.Name == KnownApis.Dispose && method.Symbol.ContainingType.ToDisplayString() == KnownApis.IDisposable && method.Symbol.Parameters.Length == 0;
+
+	private static bool IsAsyncDisposeMethod(MethodInfo method)
+		=> method.Symbol.Name == KnownApis.DisposeAsync && method.Symbol.ContainingType.ToDisplayString() == KnownApis.IAsyncDisposable && method.Symbol.Parameters.Length == 0;
 
 	/// <summary>
 	/// Appends a C# expression that evaluates to the JSON-RPC wire name for the given method: the exact

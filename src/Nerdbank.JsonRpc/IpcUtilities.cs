@@ -46,7 +46,7 @@ internal static class IpcUtilities
 		{
 			const string prefix = @"\\.\pipe\";
 			string leaf = name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? name.Substring(prefix.Length) : name;
-			if (leaf.IndexOfAny(['\\', '/', ':']) >= 0 || leaf == "." || leaf.Length > 200)
+			if (leaf.IndexOfAny(['\\', '/', ':', '\0']) >= 0 || leaf == "." || leaf.Length > 200)
 			{
 				throw new ArgumentException("A local pipe leaf name is required.", nameof(name));
 			}
