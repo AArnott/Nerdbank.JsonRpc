@@ -34,6 +34,7 @@ public class ClientProxyTests
 			? (IGroupedRootService)clientRpc.Attach(typeof(IGroupedRootService), options)
 			: clientRpc.Attach<IGroupedRootService>(options);
 		IClientProxy proxy = Assert.IsAssignableFrom<IClientProxy>(client);
+		Assert.Same(clientRpc, proxy.JsonRpc);
 		Assert.Equal(enableOptional, client is ISubtractCapability);
 		Assert.True(proxy.Is(typeof(ICalculator)));
 		Assert.Equal(enableOptional, proxy.Is(typeof(ISubtractCapability)));
@@ -61,6 +62,7 @@ public class ClientProxyTests
 		(MockChannel<JsonRpcMessage> transport, _) = MockChannel<JsonRpcMessage>.CreatePair();
 		using JsonRpc rpc = new(new MockJsonRpcPipeChannel(transport));
 		IClientProxy proxy = Assert.IsAssignableFrom<IClientProxy>(rpc.Attach<ICapabilityService>());
+		Assert.Same(rpc, proxy.JsonRpc);
 		Assert.True(proxy.Is(typeof(ICapabilityService)));
 		Assert.True(proxy.Is(typeof(ICalculator)));
 		Assert.True(proxy.Is(typeof(ISubtractCapability)));
@@ -85,6 +87,7 @@ public class ClientProxyTests
 		JsonRpcProxyOptions options = new() { EnabledInterfaces = [] };
 		object client = nonGenericAttach ? batch.Attach(typeof(ICompositeCalculator), options) : batch.Attach<ICompositeCalculator>(options);
 		IClientProxy proxy = Assert.IsAssignableFrom<IClientProxy>(client);
+		Assert.Same(rpc, proxy.JsonRpc);
 		Assert.True(proxy.Is(typeof(ICompositeCalculator)));
 		Assert.True(proxy.Is(typeof(ICalculator)));
 		Assert.False(proxy.Is(typeof(ISubtractCapability)));

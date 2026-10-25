@@ -56,6 +56,9 @@ By default, generated proxies send requests under a transformed wire name (trail
 ## Testing remote interface availability
 
 Every newly generated proxy implements <xref:Nerdbank.JsonRpc.IClientProxy>, for root services, batches, and RPC-marshalable objects alike.
+Its <xref:Nerdbank.JsonRpc.IClientProxy.JsonRpc?displayProperty=nameWithType> property exposes the original connection, including for batch and RPC-marshalable proxies.
+Generated local brokered-service proxies implement the same interface but return `null` because they invoke their targets directly.
+Accessing the connection does not transfer ownership or change the proxy's configured lifetime.
 Use <xref:Nerdbank.JsonRpc.IClientProxy.Is(System.Type)> or <xref:Nerdbank.JsonRpc.JsonRpcExtensions.As``1(Nerdbank.JsonRpc.IClientProxy)> to query enabled contract interfaces rather than relying on a CLR cast when the generated proxy may expose more interfaces than the remote object supports.
 The generator also emits `Is(Type)` and `As<T>()` extension methods directly on the contract interfaces and their optional interfaces, so callers need not cast to <xref:Nerdbank.JsonRpc.IClientProxy>.
 These extensions use proxy capability metadata when present and ordinary CLR type checking for local implementations; null receivers return false or null.

@@ -697,12 +697,12 @@ public class ClientProxyGeneratorTests
 			""";
 		GeneratorRunResult result = await RunGeneratorAsync(source);
 		ClassDeclarationSyntax[] proxies = GetProxyClasses(result);
-		if (proxies.Length != expectedProxyCount || proxies[0].BaseList!.Types.Count != 5)
+		if (proxies.Length != expectedProxyCount || proxies[0].BaseList!.Types.Count != 4)
 		{
 			throw new InvalidOperationException($"Expected {expectedProxyCount} proxies including a base-only proxy, got {proxies.Length}.");
 		}
 
-		if (optionalCount > 0 && proxies[1].BaseList!.Types.Count != optionalCount + 5)
+		if (optionalCount > 0 && proxies[1].BaseList!.Types.Count != optionalCount + 4)
 		{
 			throw new InvalidOperationException("The full proxy must implement every optional interface.");
 		}
@@ -731,7 +731,7 @@ public class ClientProxyGeneratorTests
 			""";
 		ClassDeclarationSyntax[] proxies = GetProxyClasses(await RunGeneratorAsync(source));
 		if (proxies.Length != (includeEmpty ? 3 : 2)
-			|| proxies.Count(proxy => proxy.BaseList!.Types.Count == 5) != (includeEmpty ? 1 : 0)
+			|| proxies.Count(proxy => proxy.BaseList!.Types.Count == 4) != (includeEmpty ? 1 : 0)
 			|| proxies.Any(proxy => proxy.BaseList!.Types.Any(type => type.ToString().Contains("IThird"))))
 		{
 			throw new InvalidOperationException("Only the distinct explicit groups should be emitted, without implicit base-only or full proxies.");

@@ -218,6 +218,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 	/// </remarks>
 	public SynchronizationContext? SynchronizationContext { get; init; } = new NonConcurrentSynchronizationContext(sticky: false);
 
+	JsonRpc IJsonRpcClient.JsonRpc => this;
+
 	JsonRpcSerializer IJsonRpcClient.Serializer => this.userDataSerializer;
 
 	JsonRpcSerializer IArgumentsBuilderContext.Serializer => this.userDataSerializer;

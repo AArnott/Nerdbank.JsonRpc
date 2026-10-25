@@ -16,6 +16,9 @@ namespace Nerdbank.JsonRpc;
 [EditorBrowsable(EditorBrowsableState.Advanced)]
 public interface IJsonRpcClient
 {
+	/// <summary>Gets the original connection used by this invocation client.</summary>
+	JsonRpc JsonRpc { get; }
+
 	/// <summary>
 	/// Gets the serializer used to encode arguments and decode results.
 	/// </summary>

@@ -3,7 +3,7 @@
 
 namespace Nerdbank.JsonRpc;
 
-/// <summary>Reports the remote contract interfaces enabled on a client proxy.</summary>
+/// <summary>Exposes a client proxy's connection and enabled contract interfaces.</summary>
 /// <remarks>
 /// Generated root and RPC-marshalable proxies implement this interface. Use it instead of a CLR type test
 /// when a proxy may implement interfaces that are not enabled on the remote object.
@@ -11,6 +11,13 @@ namespace Nerdbank.JsonRpc;
 /// </remarks>
 public interface IClientProxy
 {
+	/// <summary>Gets the original RPC connection, or null for a local direct proxy.</summary>
+	/// <remarks>
+	/// Batch and RPC-marshalable proxies return their owning connection.
+	/// Accessing this property does not transfer ownership; observe the proxy's configured lifetime.
+	/// </remarks>
+	JsonRpc? JsonRpc { get; }
+
 	/// <summary>Gets a value indicating whether a contract interface is enabled on this proxy.</summary>
 	/// <param name="type">The contract interface type to query.</param>
 	/// <returns><see langword="true"/> if the proxy implements the interface and it is enabled; otherwise <see langword="false"/>.</returns>

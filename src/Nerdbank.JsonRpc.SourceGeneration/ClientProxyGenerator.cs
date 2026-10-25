@@ -631,7 +631,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 			builder.Append(", ").Append(optionalInterface.Symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
 		}
 
-		builder.Append(", global::Nerdbank.JsonRpc.IClientProxy, global::Nerdbank.JsonRpc.BrokeredServices.IJsonRpcServiceProxy");
+		builder.Append(", global::Nerdbank.JsonRpc.IClientProxy");
 		if (lifetimeField is not null)
 		{
 			builder.Append(", global::System.IDisposable, global::System.IAsyncDisposable");
@@ -758,7 +758,7 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 		builder.CloseBlock();
 		builder.AppendLine();
-		builder.AppendLine("global::Nerdbank.JsonRpc.IJsonRpcClient global::Nerdbank.JsonRpc.BrokeredServices.IJsonRpcServiceProxy.RpcClient => this.jsonRpc;");
+		builder.AppendLine("global::Nerdbank.JsonRpc.JsonRpc global::Nerdbank.JsonRpc.IClientProxy.JsonRpc => this.jsonRpc.JsonRpc;");
 		builder.AppendLine("bool global::Nerdbank.JsonRpc.IClientProxy.Is(global::System.Type type)");
 		builder.OpenBlock();
 		builder.AppendLine("if (type is null)");

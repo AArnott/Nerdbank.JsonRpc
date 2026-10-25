@@ -12,6 +12,9 @@ internal sealed class MarshaledObjectProxyClient(JsonRpc owner, long handle, Mar
 	public JsonRpcSerializer Serializer => owner.UserDataSerializer;
 
 	/// <inheritdoc/>
+	public JsonRpc JsonRpc => owner;
+
+	/// <inheritdoc/>
 	bool IClientProxy.Is(Type type)
 	{
 		Requires.NotNull(type);

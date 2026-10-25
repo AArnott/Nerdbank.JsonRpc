@@ -23,6 +23,9 @@ public abstract class ServiceProxy : IClientProxy, IDisposable, IAsyncDisposable
 	/// <summary>Gets a value indicating whether this proxy is disposed.</summary>
 	public bool IsDisposed => this.Context.IsDisposed;
 
+	/// <inheritdoc/>
+	JsonRpc? IClientProxy.JsonRpc => null;
+
 	/// <summary>Gets the context for recognizing objects returning across their original local boundary.</summary>
 	internal ServiceProxyContext ProxyContext => this.Context;
 

@@ -275,7 +275,7 @@ public sealed class ResilientServiceProxy<T> : IResilientServiceProxy
 					try
 					{
 						this.MoveEvents(target);
-						if (replacement is not null && target is IJsonRpcServiceProxy { RpcClient: JsonRpc connection })
+						if (replacement is not null && target is IClientProxy { JsonRpc: { } connection })
 						{
 							this.ObserveDisconnectionAsync(replacement, connection).Forget();
 						}

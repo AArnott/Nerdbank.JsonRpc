@@ -82,6 +82,7 @@ public class BrokeredServiceTests : TestBase
 		clientRpc.Start();
 		serverRpc.Start();
 		await using IAsyncLifetimeService proxy = descriptor.CreateProxy(clientRpc, []);
+		Assert.Same(clientRpc, Assert.IsAssignableFrom<IClientProxy>(proxy).JsonRpc);
 		await proxy.DisposeAsync();
 		await clientRpc.Completion.WithCancellation(this.TimeoutToken);
 		await serverRpc.Completion.WithCancellation(this.TimeoutToken);
@@ -93,6 +94,7 @@ public class BrokeredServiceTests : TestBase
 		AsyncLifetimeService target = new();
 		ServiceProxyContext context = ServiceProxyContext.Own(target);
 		await using IAsyncLifetimeService proxy = JsonRpcUtf8Descriptor.Create<IAsyncLifetimeService>(new("async.lifetime")).CreateLocalProxy(context, []);
+		Assert.Null(Assert.IsAssignableFrom<IClientProxy>(proxy).JsonRpc);
 		proxy.Changed += (_, _) => { };
 		Assert.Equal(1, target.Subscriptions);
 		await proxy.DisposeAsync();
