@@ -12,6 +12,9 @@ The package also checks ownership of brokered-service proxies and cached rentals
 | [NBJSONRPC003](NBJSONRPC003.md) | Warning | Unsupported contract member |
 | [NBJSONRPC004](NBJSONRPC004.md) | Warning | Dispose of brokered-service proxies |
 | [NBJSONRPC005](NBJSONRPC005.md) | Warning | Do not store service rentals in fields or properties |
+| [NBJSONRPC010](NBJSONRPC010.md) | Warning | Annotate RPC proxy interfaces |
+| [NBJSONRPC011](NBJSONRPC011.md) | Warning | Use supported interfaces for RPC proxies |
+| [NBJSONRPC050](NBJSONRPC050.md) | Warning | Use IClientProxy for marshalable interface checks |
 
 By default, a contract also generates a client proxy.
 Set <xref:Nerdbank.JsonRpc.JsonRpcContractAttribute.GenerateProxy?displayProperty=nameWithType> to `false` to retain contract analysis without generating a proxy.
