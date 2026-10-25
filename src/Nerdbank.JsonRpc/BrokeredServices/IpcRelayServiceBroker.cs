@@ -10,7 +10,7 @@ namespace Nerdbank.JsonRpc.BrokeredServices;
 /// <summary>Relays a local broker through cancellable, single-client same-account IPC endpoints.</summary>
 public sealed class IpcRelayServiceBroker : IRemoteServiceBroker, IDisposable, IAsyncDisposable
 {
-	private readonly IServiceBrokerWithMetadata broker;
+	private readonly IServiceBroker broker;
 	private readonly object syncObject = new();
 	private readonly Dictionary<Guid, IIpcServer> pending = [];
 	private readonly List<IIpcServer> servers = [];
@@ -19,7 +19,7 @@ public sealed class IpcRelayServiceBroker : IRemoteServiceBroker, IDisposable, I
 
 	/// <summary>Initializes a new instance of the <see cref="IpcRelayServiceBroker"/> class.</summary>
 	/// <param name="broker">The broker to relay, including per-registration metadata.</param>
-	public IpcRelayServiceBroker(IServiceBrokerWithMetadata broker)
+	public IpcRelayServiceBroker(IServiceBroker broker)
 	{
 		this.broker = broker ?? throw new ArgumentNullException(nameof(broker));
 		this.broker.AvailabilityChanged += this.OnAvailabilityChanged;

@@ -26,4 +26,17 @@ public interface IServiceBroker
 	/// <param name="cancellationToken">Cancels this request.</param>
 	/// <returns>A caller-owned pipe, or null if the service is unavailable. Complete both ends when finished.</returns>
 	ValueTask<IDuplexPipe?> GetPipeAsync(ServiceMoniker moniker, ServiceActivationOptions options = default, CancellationToken cancellationToken = default);
+
+	/// <summary>Acquires a channel and capabilities from the same winning registration.</summary>
+	/// <param name="moniker">The requested identity.</param>
+	/// <param name="options">Options for the activation.</param>
+	/// <param name="cancellationToken">Cancels acquisition.</param>
+	/// <returns>The caller-owned connection, or null if unavailable.</returns>
+	ValueTask<BrokeredServiceConnection?> GetConnectionAsync(ServiceMoniker moniker, ServiceActivationOptions options = default, CancellationToken cancellationToken = default);
+
+	/// <summary>Gets the capabilities of the selected registration without activating it.</summary>
+	/// <param name="moniker">The requested service.</param>
+	/// <param name="cancellationToken">Cancels lookup.</param>
+	/// <returns>Stable capability identifiers, or null when no registration exists.</returns>
+	ValueTask<IReadOnlyList<string>?> GetCapabilitiesAsync(ServiceMoniker moniker, CancellationToken cancellationToken = default);
 }

@@ -11,7 +11,7 @@ using Nerdbank.Streams;
 namespace Nerdbank.JsonRpc.BrokeredServices;
 
 /// <summary>Adapts a remote broker control contract to typed local service acquisition.</summary>
-public sealed class RemoteServiceBroker : IServiceBrokerWithMetadata, IDisposable
+public sealed class RemoteServiceBroker : IServiceBroker, IDisposable
 {
 	private readonly IRemoteServiceBroker remote;
 	private readonly IDisposable? owner;

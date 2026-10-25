@@ -24,7 +24,7 @@ if (args.Length != 0)
 		JsonRpcDescriptor<IAotCalculator> descriptor = CreateDescriptor(encoding);
 		container.Register(new(descriptor.Moniker, additionalInterfaceIds: descriptor.AdditionalInterfaces.Select(static contract => contract.Id).ToArray()));
 		using IDisposable registration = container.Proffer(descriptor, (_, _, _, _) => new(new AotCalculator()));
-		await using IpcRelayServiceBroker relay = new((IServiceBrokerWithMetadata)container.GetServiceBroker()) { Logger = hostLogs.CreateLogger<IpcRelayServiceBroker>() };
+		await using IpcRelayServiceBroker relay = new(container.GetServiceBroker()) { Logger = hostLogs.CreateLogger<IpcRelayServiceBroker>() };
 		JsonRpcDescriptor<IRemoteServiceBroker> control = CreateControlDescriptor(encoding);
 		await using IIpcServer server = IpcServer.Create(
 			async (stream, token) =>

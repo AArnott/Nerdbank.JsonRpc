@@ -7,7 +7,7 @@ namespace Nerdbank.JsonRpc.BrokeredServices;
 
 /// <summary>Queries brokers in priority order, falling through only when a service is unavailable.</summary>
 /// <remarks>Errors and cancellation propagate. The aggregate does not own its constituent brokers.</remarks>
-public sealed class ServiceBrokerAggregator : IServiceBrokerWithMetadata, IDisposable
+public sealed class ServiceBrokerAggregator : IServiceBroker, IDisposable
 {
 	private readonly IReadOnlyList<IServiceBroker> brokers;
 	private bool disposed;
@@ -68,12 +68,7 @@ public sealed class ServiceBrokerAggregator : IServiceBrokerWithMetadata, IDispo
 		this.ThrowIfDisposed();
 		foreach (IServiceBroker broker in this.brokers)
 		{
-			if (broker is not IServiceBrokerWithMetadata metadata)
-			{
-				throw new NotSupportedException("Every aggregated broker must expose registration metadata for service relay.");
-			}
-
-			if (await metadata.GetConnectionAsync(moniker, options, cancellationToken).ConfigureAwait(false) is { } connection)
+			if (await broker.GetConnectionAsync(moniker, options, cancellationToken).ConfigureAwait(false) is { } connection)
 			{
 				return connection;
 			}
@@ -88,12 +83,7 @@ public sealed class ServiceBrokerAggregator : IServiceBrokerWithMetadata, IDispo
 		this.ThrowIfDisposed();
 		foreach (IServiceBroker broker in this.brokers)
 		{
-			if (broker is not IServiceBrokerWithMetadata metadata)
-			{
-				throw new NotSupportedException("Every aggregated broker must expose registration metadata for relay capability discovery.");
-			}
-
-			if (await metadata.GetCapabilitiesAsync(moniker, cancellationToken).ConfigureAwait(false) is { } capabilities)
+			if (await broker.GetCapabilitiesAsync(moniker, cancellationToken).ConfigureAwait(false) is { } capabilities)
 			{
 				return capabilities;
 			}

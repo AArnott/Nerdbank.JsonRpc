@@ -88,7 +88,7 @@ Keep all optional-interface references within the owning proxy's lifetime.
 
 ## Query metadata without activation
 
-When the broker implements <xref:Nerdbank.JsonRpc.BrokeredServices.IServiceBrokerWithMetadata>, capability identifiers can be queried before acquiring a proxy:
+Use <xref:Nerdbank.JsonRpc.BrokeredServices.IServiceBroker.GetCapabilitiesAsync*?displayProperty=nameWithType> to query capability identifiers before acquiring a proxy:
 
 [!code-csharp[](../../../samples/cs/brokered-service-hosting.cs#brokered-optional-metadata)]
 

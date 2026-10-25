@@ -158,7 +158,7 @@ internal static class BrokeredServiceHostingExamples
         #endregion
     }
 
-    internal static async Task<bool> QueryResetSupportAsync(IServiceBrokerWithMetadata broker, CancellationToken cancellationToken)
+    internal static async Task<bool> QueryResetSupportAsync(IServiceBroker broker, CancellationToken cancellationToken)
     {
         #region brokered-optional-metadata
         IReadOnlyList<string>? capabilities = await broker.GetCapabilitiesAsync(

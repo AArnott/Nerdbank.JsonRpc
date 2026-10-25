@@ -11,7 +11,7 @@ namespace Nerdbank.JsonRpc.BrokeredServices;
 /// <summary>Relays brokered services over channels on a caller-owned multiplexing stream.</summary>
 public sealed class MultiplexingRelayServiceBroker : IRemoteServiceBroker, IDisposable
 {
-	private readonly IServiceBrokerWithMetadata broker;
+	private readonly IServiceBroker broker;
 	private readonly MultiplexingStream multiplexer;
 	private readonly object syncObject = new();
 	private readonly Dictionary<Guid, MultiplexingStream.Channel> pending = [];
@@ -21,7 +21,7 @@ public sealed class MultiplexingRelayServiceBroker : IRemoteServiceBroker, IDisp
 	/// <summary>Initializes a new instance of the <see cref="MultiplexingRelayServiceBroker"/> class.</summary>
 	/// <param name="broker">The broker, including per-registration capabilities.</param>
 	/// <param name="multiplexer">The caller-owned stream carrying service channels.</param>
-	public MultiplexingRelayServiceBroker(IServiceBrokerWithMetadata broker, MultiplexingStream multiplexer)
+	public MultiplexingRelayServiceBroker(IServiceBroker broker, MultiplexingStream multiplexer)
 	{
 		this.broker = broker ?? throw new ArgumentNullException(nameof(broker));
 		this.multiplexer = multiplexer ?? throw new ArgumentNullException(nameof(multiplexer));

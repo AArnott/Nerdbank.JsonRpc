@@ -66,7 +66,7 @@ public static class BrokeredServiceExamples
         #endregion
     }
 
-    public static async Task ServeBrokerAsync(IServiceBrokerWithMetadata broker, string endpoint, CancellationToken cancellationToken)
+    public static async Task ServeBrokerAsync(IServiceBroker broker, string endpoint, CancellationToken cancellationToken)
     {
         #region brokered-ipc-server
         await using IpcRelayServiceBroker relay = new(broker);

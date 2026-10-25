@@ -56,7 +56,7 @@ public class BrokeredServiceDiagnosticsTests : TestBase
 				return new(outcome == "Succeeded" ? new Calculator() : null);
 			})
 			: null;
-		IServiceBrokerWithMetadata broker = (IServiceBrokerWithMetadata)container.GetServiceBroker();
+		IServiceBroker broker = container.GetServiceBroker();
 		async Task AcquireAsync()
 		{
 			if (connection)
@@ -135,7 +135,7 @@ public class BrokeredServiceDiagnosticsTests : TestBase
 			}));
 		}
 
-		IServiceBrokerWithMetadata broker = (IServiceBrokerWithMetadata)container.GetServiceBroker();
+		IServiceBroker broker = container.GetServiceBroker();
 		if (outcome == "RegistrationChanged")
 		{
 			Assert.Null(await broker.GetCapabilitiesAsync(moniker, this.TimeoutToken));
@@ -166,7 +166,7 @@ public class BrokeredServiceDiagnosticsTests : TestBase
 		InvalidOperationException failure = new("Deferred factory details");
 		using IDisposable proffer = container.Proffer<IBrokeredCalculator>(descriptor, (_, _, _, _) =>
 			throwException ? throw failure : new((IBrokeredCalculator?)null));
-		IServiceBrokerWithMetadata broker = (IServiceBrokerWithMetadata)container.GetServiceBroker();
+		IServiceBroker broker = container.GetServiceBroker();
 		await using BrokeredServiceConnection? connection = await broker.GetConnectionAsync(descriptor.Moniker, cancellationToken: this.TimeoutToken);
 		Assert.NotNull(connection);
 		LogEntry activation = await logs.ActivationCompleted.Task.WithCancellation(this.TimeoutToken);
@@ -207,8 +207,8 @@ public class BrokeredServiceDiagnosticsTests : TestBase
 		using BrokeredServiceContainer container = new() { LoggerFactory = hostLogs };
 		container.Register(new(BrokeredTestServices.Calculator.Moniker));
 		using IDisposable proffer = container.Proffer(BrokeredTestServices.Calculator, () => new Calculator());
-		await using IpcRelayServiceBroker relay = new((IServiceBrokerWithMetadata)container.GetServiceBroker()) { Logger = hostLogs.CreateLogger<IpcRelayServiceBroker>() };
-		using MultiplexingRelayServiceBroker muxRelay = new((IServiceBrokerWithMetadata)container.GetServiceBroker(), serverMux) { Logger = hostLogs.CreateLogger<MultiplexingRelayServiceBroker>() };
+		await using IpcRelayServiceBroker relay = new(container.GetServiceBroker()) { Logger = hostLogs.CreateLogger<IpcRelayServiceBroker>() };
+		using MultiplexingRelayServiceBroker muxRelay = new(container.GetServiceBroker(), serverMux) { Logger = hostLogs.CreateLogger<MultiplexingRelayServiceBroker>() };
 		(IDuplexPipe client, IDuplexPipe server) = FullDuplexStream.CreatePipePair();
 		JsonRpcDescriptor<IRemoteServiceBroker> control = encoding == JsonRpcEncoding.Json
 			? JsonRpcUtf8Descriptor.Create<IRemoteServiceBroker>(FrameworkServices.RemoteServiceBroker.Moniker)

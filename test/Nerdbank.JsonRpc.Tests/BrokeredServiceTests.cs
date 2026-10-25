@@ -30,7 +30,7 @@ public class BrokeredServiceTests : TestBase
 		using BrokeredServiceContainer container = new();
 		container.Register(new(BrokeredTestServices.Calculator.Moniker));
 		using IDisposable proffer = container.Proffer(BrokeredTestServices.Calculator, () => new Calculator());
-		using MultiplexingRelayServiceBroker relay = new((IServiceBrokerWithMetadata)container.GetServiceBroker(), serverMux);
+		using MultiplexingRelayServiceBroker relay = new(container.GetServiceBroker(), serverMux);
 		ObservedRemoteBroker remote = new(relay);
 		using RemoteServiceBroker broker = await RemoteServiceBroker.ConnectAsync(remote, clientMux, this.TimeoutToken);
 		using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
@@ -142,10 +142,10 @@ public class BrokeredServiceTests : TestBase
 			additionalInterfaceIds: ids));
 		ids[0] = "mutated.after.registration";
 		Assert.Equal(0, loads);
-		IServiceBrokerWithMetadata local = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker local = container.GetServiceBroker();
 		await using IpcRelayServiceBroker relay = new(local);
 		using RemoteServiceBroker remoteBroker = await RemoteServiceBroker.ConnectAsync(relay, this.TimeoutToken);
-		IServiceBrokerWithMetadata broker = remote ? remoteBroker : local;
+		IServiceBroker broker = remote ? remoteBroker : local;
 		try
 		{
 			Assert.Equal(new[] { "test.subtract.v1" }, await broker.GetCapabilitiesAsync(moniker, this.TimeoutToken));
@@ -189,7 +189,7 @@ public class BrokeredServiceTests : TestBase
 		InvalidOperationException failure = Assert.Throws<InvalidOperationException>(() => container.Proffer(BrokeredTestServices.Calculator, () => new Calculator()));
 		Assert.Contains(id, failure.Message);
 		Assert.Contains(moniker.ToString(), failure.Message);
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		Assert.Null(await broker.GetCapabilitiesAsync(moniker, this.TimeoutToken));
 		JsonRpcDescriptor<IBrokeredCalculator> corrected = BrokeredTestServices.Descriptor with
 		{
@@ -206,7 +206,7 @@ public class BrokeredServiceTests : TestBase
 		ServiceMoniker moniker = BrokeredTestServices.Calculator.Moniker;
 		container.Register(new(moniker, additionalInterfaceIds: ["unknown"]));
 		container.SetOffering(BrokeredTestServices.Calculator, (_, _, _, _) => new(new Calculator()));
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		await Assert.ThrowsAsync<InvalidOperationException>(async () => await broker.GetCapabilitiesAsync(moniker, this.TimeoutToken));
 		await Assert.ThrowsAsync<InvalidOperationException>(async () =>
 		{
@@ -231,7 +231,7 @@ public class BrokeredServiceTests : TestBase
 		container.Register(new(descriptor.Moniker, additionalInterfaceIds: ["test.subtract.v1"]));
 		LocalBoundaryService target = new();
 		using IDisposable proffer = container.Proffer(descriptor, () => target);
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		Assert.Equal(new[] { "test.subtract.v1" }, await broker.GetCapabilitiesAsync(descriptor.Moniker, this.TimeoutToken));
 		InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
 		{
@@ -387,16 +387,16 @@ public class BrokeredServiceTests : TestBase
 	{
 		using BrokeredServiceContainer container = new();
 		ServiceMoniker moniker = BrokeredTestServices.Calculator.Moniker;
-		IServiceBrokerWithMetadata process = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker(ServiceAudience.Process));
-		IServiceBrokerWithMetadata local = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
-		IServiceBrokerWithMetadata sdk = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker(ServiceAudience.Local | ServiceAudience.PublicSdk));
+		IServiceBroker process = container.GetServiceBroker(ServiceAudience.Process);
+		IServiceBroker local = container.GetServiceBroker();
+		IServiceBroker sdk = container.GetServiceBroker(ServiceAudience.Local | ServiceAudience.PublicSdk);
 		int processChanges = 0;
 		int localChanges = 0;
 		int sdkChanges = 0;
 		process.AvailabilityChanged += (_, _) => processChanges++;
 		local.AvailabilityChanged += (_, _) => localChanges++;
 		sdk.AvailabilityChanged += (_, _) => sdkChanges++;
-		foreach (IServiceBrokerWithMetadata view in new[] { process, local, sdk })
+		foreach (IServiceBroker view in new[] { process, local, sdk })
 		{
 			Assert.Null(await view.GetCapabilitiesAsync(moniker, this.TimeoutToken));
 		}
@@ -423,7 +423,7 @@ public class BrokeredServiceTests : TestBase
 	public async Task LiveUnregistrationPreservesClientsAndIsolatesReplacement(bool remote)
 	{
 		using BrokeredServiceContainer container = new();
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		await using IpcRelayServiceBroker relay = new(broker);
 		using RemoteServiceBroker remoteBroker = await RemoteServiceBroker.ConnectAsync(relay, this.TimeoutToken);
 		IServiceBroker client = remote ? remoteBroker : broker;
@@ -475,7 +475,7 @@ public class BrokeredServiceTests : TestBase
 				host.Proffer(BrokeredTestServices.Calculator, () => new Calculator());
 			}
 		}));
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		Task<IReadOnlyList<string>?> pending = broker.GetCapabilitiesAsync(moniker, this.TimeoutToken).AsTask();
 		await started.Task.WithCancellation(this.TimeoutToken);
 		Assert.True(container.Unregister(moniker));
@@ -510,7 +510,7 @@ public class BrokeredServiceTests : TestBase
 		using DelayedDiscoveryContainer container = new() { DiscoverOffering = discoverOffering };
 		ServiceMoniker moniker = BrokeredTestServices.Calculator.Moniker;
 		container.Register(new(moniker));
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		async Task AcquireAsync()
 		{
 			IBrokeredCalculator? proxy = await broker.GetProxyAsync(BrokeredTestServices.Calculator, cancellationToken: this.TimeoutToken);
@@ -538,7 +538,7 @@ public class BrokeredServiceTests : TestBase
 		using DelayedDiscoveryContainer container = new();
 		ServiceMoniker moniker = BrokeredTestServices.Calculator.Moniker;
 		container.Register(new(moniker));
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		Task<IReadOnlyList<string>?> pending = broker.GetCapabilitiesAsync(moniker, this.TimeoutToken).AsTask();
 		await container.Started.Task.WithCancellation(this.TimeoutToken);
 		Assert.True(container.Unregister(moniker));
@@ -567,7 +567,7 @@ public class BrokeredServiceTests : TestBase
 			return default;
 		});
 		container.Register(registration);
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		await Assert.ThrowsAsync<InvalidOperationException>(async () => await broker.GetCapabilitiesAsync(moniker, this.TimeoutToken));
 		Assert.True(container.Unregister(moniker));
 		container.Register(registration);
@@ -609,7 +609,7 @@ public class BrokeredServiceTests : TestBase
 	public async Task ConcurrentCatalogMutationsAndQueriesAreSafe()
 	{
 		using BrokeredServiceContainer container = new();
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		ServiceMoniker moniker = BrokeredTestServices.Calculator.Moniker;
 		TaskCompletionSource<bool> start = new(TaskCreationOptions.RunContinuationsAsynchronously);
 		Task writer = Task.Run(async () =>
@@ -804,7 +804,7 @@ public class BrokeredServiceTests : TestBase
 		};
 		container.Register(new(BrokeredTestServices.Descriptor.Moniker, audience: serviceAudience));
 		using IDisposable proffer = container.Proffer(BrokeredTestServices.Descriptor, factory);
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker(filter));
+		IServiceBroker broker = container.GetServiceBroker(filter);
 		ServiceMoniker moniker = BrokeredTestServices.Calculator.Moniker;
 		Assert.Equal(visible, await broker.GetCapabilitiesAsync(moniker, this.TimeoutToken) is not null);
 		IBrokeredCalculator? proxy = await broker.GetProxyAsync(BrokeredTestServices.Calculator, cancellationToken: this.TimeoutToken);
@@ -847,8 +847,8 @@ public class BrokeredServiceTests : TestBase
 			return default;
 		};
 		container.Register(new(BrokeredTestServices.Calculator.Moniker, loader, audience));
-		IServiceBrokerWithMetadata remote = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker(ServiceAudience.Local | ServiceAudience.PublicSdk));
-		IServiceBrokerWithMetadata local = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker(ServiceAudience.Process));
+		IServiceBroker remote = container.GetServiceBroker(ServiceAudience.Local | ServiceAudience.PublicSdk);
+		IServiceBroker local = container.GetServiceBroker(ServiceAudience.Process);
 		try
 		{
 			if ((audience & ServiceAudience.Local) != ServiceAudience.Local)
@@ -874,9 +874,9 @@ public class BrokeredServiceTests : TestBase
 	public async Task AudienceFiltersAvailabilityNotifications()
 	{
 		using BrokeredServiceContainer container = new();
-		IServiceBrokerWithMetadata process = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker(ServiceAudience.Process));
-		IServiceBrokerWithMetadata remote = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker(ServiceAudience.Local));
-		IServiceBrokerWithMetadata sdk = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker(ServiceAudience.Process | ServiceAudience.PublicSdk));
+		IServiceBroker process = container.GetServiceBroker(ServiceAudience.Process);
+		IServiceBroker remote = container.GetServiceBroker(ServiceAudience.Local);
+		IServiceBroker sdk = container.GetServiceBroker(ServiceAudience.Process | ServiceAudience.PublicSdk);
 		int processChanges = 0;
 		int remoteChanges = 0;
 		int sdkChanges = 0;
@@ -884,7 +884,7 @@ public class BrokeredServiceTests : TestBase
 		remote.AvailabilityChanged += (_, _) => remoteChanges++;
 		sdk.AvailabilityChanged += (_, _) => sdkChanges++;
 		ServiceMoniker moniker = BrokeredTestServices.Calculator.Moniker;
-		foreach (IServiceBrokerWithMetadata view in new[] { process, remote, sdk })
+		foreach (IServiceBroker view in new[] { process, remote, sdk })
 		{
 			Assert.Null(await view.GetCapabilitiesAsync(moniker, this.TimeoutToken));
 		}
@@ -907,7 +907,7 @@ public class BrokeredServiceTests : TestBase
 		using DiscoveringContainer container = new();
 		container.Register(new(BrokeredTestServices.Descriptor.Moniker, audience: ServiceAudience.Process));
 		container.SetOffering(BrokeredTestServices.Descriptor, (_, _, _, _) => new(new Calculator()));
-		IServiceBrokerWithMetadata remote = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker(ServiceAudience.Local));
+		IServiceBroker remote = container.GetServiceBroker(ServiceAudience.Local);
 		Assert.Null(await remote.GetCapabilitiesAsync(BrokeredTestServices.Calculator.Moniker, this.TimeoutToken));
 		Assert.Null(await remote.GetConnectionAsync(BrokeredTestServices.Calculator.Moniker, cancellationToken: this.TimeoutToken));
 		IBrokeredCalculator? hidden = await remote.GetProxyAsync(BrokeredTestServices.Calculator, cancellationToken: this.TimeoutToken);
@@ -979,7 +979,7 @@ public class BrokeredServiceTests : TestBase
 	public async Task BrokerViewSubscriptionsCanBeRemovedAndRestored()
 	{
 		using BrokeredServiceContainer container = new();
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		ServiceMoniker moniker = BrokeredTestServices.Calculator.Moniker;
 		int firstCalls = 0;
 		int secondCalls = 0;
@@ -1127,7 +1127,7 @@ public class BrokeredServiceTests : TestBase
 			started.TrySetResult(true);
 			await release.Task.WithCancellation(cancellationToken);
 		};
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		async Task AcquireAsync()
 		{
 			switch (request)
@@ -1192,7 +1192,7 @@ public class BrokeredServiceTests : TestBase
 		container.LoadRegistrations = async (_, cancellationToken) => await release.Task.WithCancellation(cancellationToken);
 		container.Register(new(BrokeredTestServices.Calculator.Moniker, audience: ServiceAudience.Process));
 		using IDisposable proffer = container.Proffer(BrokeredTestServices.Calculator, () => new Calculator());
-		IServiceBrokerWithMetadata local = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker local = container.GetServiceBroker();
 		Task<IReadOnlyList<string>?> missing = local.GetCapabilitiesAsync(new("pending-catalog"), this.TimeoutToken).AsTask();
 		try
 		{
@@ -1217,7 +1217,7 @@ public class BrokeredServiceTests : TestBase
 		using RegistrationDiscoveryContainer container = new();
 		TaskCompletionSource<bool> release = new(TaskCreationOptions.RunContinuationsAsynchronously);
 		container.LoadRegistrations = async (_, cancellationToken) => await release.Task.WithCancellation(cancellationToken);
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		using CancellationTokenSource cancellation = new();
 		Task<IReadOnlyList<string>?> canceled = broker.GetCapabilitiesAsync(new("missing"), cancellation.Token).AsTask();
 		Task<IReadOnlyList<string>?> remaining = broker.GetCapabilitiesAsync(BrokeredTestServices.Calculator.Moniker, this.TimeoutToken).AsTask();
@@ -1235,7 +1235,7 @@ public class BrokeredServiceTests : TestBase
 	public async Task MissingRegistrationIsRetriedOncePerRequestWithoutNegativeCaching()
 	{
 		using RegistrationDiscoveryContainer container = new();
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		for (int i = 1; i <= 2; i++)
 		{
 			Assert.Null(await broker.GetCapabilitiesAsync(BrokeredTestServices.Calculator.Moniker, this.TimeoutToken));
@@ -1275,7 +1275,7 @@ public class BrokeredServiceTests : TestBase
 		};
 		Assert.Empty(container.GetRegisteredServices());
 		Assert.Equal(0, container.RegistrationLookups);
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		Assert.Null(await broker.GetCapabilitiesAsync(BrokeredTestServices.Calculator.Moniker, this.TimeoutToken));
 		Assert.Equal(1, container.RegistrationLookups);
 		Assert.Equal(0, loads);
@@ -1286,7 +1286,7 @@ public class BrokeredServiceTests : TestBase
 	{
 		using RegistrationDiscoveryContainer container = new();
 		container.LoadRegistrations = (_, _) => throw new InvalidOperationException("Catalog failed.");
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
 			async () => await broker.GetCapabilitiesAsync(new("missing"), this.TimeoutToken));
 		Assert.Equal("Catalog failed.", failure.Message);
@@ -1298,7 +1298,7 @@ public class BrokeredServiceTests : TestBase
 		using RegistrationDiscoveryContainer container = new();
 		TaskCompletionSource<bool> release = new(TaskCreationOptions.RunContinuationsAsynchronously);
 		container.LoadRegistrations = async (_, _) => await release.Task.WithCancellation(this.TimeoutToken);
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		using CancellationTokenSource cancellation = new();
 		Task<IReadOnlyList<string>?> canceled = broker.GetCapabilitiesAsync(new("missing"), cancellation.Token).AsTask();
 		Task<IReadOnlyList<string>?> disposed = broker.GetCapabilitiesAsync(new("missing"), this.TimeoutToken).AsTask();
@@ -1324,7 +1324,7 @@ public class BrokeredServiceTests : TestBase
 			await release.Task.WithCancellation(this.TimeoutToken);
 			proffer = host.Proffer(BrokeredTestServices.Descriptor, (_, _, _, _) => new(new Calculator()));
 		}));
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		using CancellationTokenSource cancellation = new();
 		Task<IReadOnlyList<string>?> canceled = broker.GetCapabilitiesAsync(BrokeredTestServices.Calculator.Moniker, cancellation.Token).AsTask();
 		await started.Task.WithCancellation(this.TimeoutToken);
@@ -1354,7 +1354,7 @@ public class BrokeredServiceTests : TestBase
 			loads++;
 			throw new InvalidOperationException("Loading failed.");
 		}));
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		for (int i = 0; i < 2; i++)
 		{
 			InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
@@ -1372,7 +1372,7 @@ public class BrokeredServiceTests : TestBase
 		ServiceMoniker moniker = BrokeredTestServices.Calculator.Moniker;
 		container.Register(new(moniker));
 		Assert.Throws<InvalidOperationException>(() => container.Register(new(moniker)));
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		Assert.Null(await broker.GetCapabilitiesAsync(moniker, this.TimeoutToken));
 		using IDisposable proffer = container.Proffer(BrokeredTestServices.Descriptor, (_, _, _, _) => new(new Calculator()));
 		Assert.NotNull(await broker.GetCapabilitiesAsync(moniker, this.TimeoutToken));
@@ -1391,7 +1391,7 @@ public class BrokeredServiceTests : TestBase
 			loads++;
 			return default;
 		}));
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		using CancellationTokenSource cancellation = new();
 		cancellation.Cancel();
 		await Assert.ThrowsAnyAsync<OperationCanceledException>(
@@ -1421,7 +1421,7 @@ public class BrokeredServiceTests : TestBase
 				return default;
 			},
 			additionalInterfaceIds: [BrokeredTestServices.Subtract.Id]));
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		try
 		{
 			Assert.Equal(
@@ -1448,7 +1448,7 @@ public class BrokeredServiceTests : TestBase
 			await release.Task.WithCancellation(this.TimeoutToken);
 			host.Proffer(BrokeredTestServices.Descriptor, (_, _, _, _) => new(new Calculator()));
 		}));
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		Task<IReadOnlyList<string>?> request = broker.GetCapabilitiesAsync(BrokeredTestServices.Calculator.Moniker, this.TimeoutToken).AsTask();
 		await started.Task.WithCancellation(this.TimeoutToken);
 		container.Dispose();
@@ -1587,7 +1587,7 @@ public class BrokeredServiceTests : TestBase
 		using BrokeredServiceContainer container = new();
 		container.Register(new(BrokeredTestServices.Descriptor.Moniker));
 		using IDisposable registration = container.Proffer(BrokeredTestServices.Descriptor, (_, _, _, _) => new(new Calculator()));
-		await using IpcRelayServiceBroker relay = new(Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker()));
+		await using IpcRelayServiceBroker relay = new(container.GetServiceBroker());
 		(IDuplexPipe client, IDuplexPipe server) = FullDuplexStream.CreatePipePair();
 		JsonRpcDescriptor<IRemoteServiceBroker> control = FrameworkServices.RemoteServiceBroker;
 		using JsonRpc serverRpc = control.CreateConnection(server);
@@ -1667,7 +1667,7 @@ public class BrokeredServiceTests : TestBase
 	{
 		using DiscoveringContainer container = new();
 		container.Register(new(BrokeredTestServices.Descriptor.Moniker));
-		IServiceBrokerWithMetadata broker = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker broker = container.GetServiceBroker();
 		IBrokeredCalculator? unavailable = await broker.GetProxyAsync(BrokeredTestServices.Calculator, cancellationToken: this.TimeoutToken);
 		using (unavailable as IDisposable)
 		{
@@ -1998,7 +1998,7 @@ public class BrokeredServiceTests : TestBase
 		Calculator target = new();
 		container.Register(new(BrokeredTestServices.Calculator.Moniker));
 		using IDisposable registration = container.Proffer(BrokeredTestServices.Calculator, (_, _, _, _) => new(target));
-		await using IpcRelayServiceBroker relay = new(Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker()))
+		await using IpcRelayServiceBroker relay = new(container.GetServiceBroker())
 		{
 			ConnectionTimeout = TimeSpan.FromMilliseconds(50),
 		};
@@ -2018,7 +2018,7 @@ public class BrokeredServiceTests : TestBase
 		using AlternatingContainer container = new(
 			descriptor, (_, _, _, _) => new(new Calculator()));
 		container.Register(new(descriptor.Moniker));
-		await using IpcRelayServiceBroker relay = new(Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker()));
+		await using IpcRelayServiceBroker relay = new(container.GetServiceBroker());
 		using RemoteServiceBroker broker = await RemoteServiceBroker.ConnectAsync(relay, this.TimeoutToken);
 		IBrokeredCalculator proxy = (await broker.GetProxyAsync(descriptor, cancellationToken: this.TimeoutToken))!;
 		await using System.IAsyncDisposable lifetime = (System.IAsyncDisposable)proxy;
@@ -2043,7 +2043,7 @@ public class BrokeredServiceTests : TestBase
 			activated.TrySetResult(options);
 			return new(new Calculator());
 		});
-		await using IpcRelayServiceBroker relay = new(Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker()));
+		await using IpcRelayServiceBroker relay = new(container.GetServiceBroker());
 		(IDuplexPipe client, IDuplexPipe server) = FullDuplexStream.CreatePipePair();
 		JsonRpcDescriptor<IRemoteServiceBroker> control = CreateControlDescriptor(encoding);
 		using JsonRpc serverRpc = control.CreateConnection(server);
@@ -2297,7 +2297,7 @@ public class BrokeredServiceTests : TestBase
 		JsonRpcDescriptor<IOutOfBandStreamService> resourceDescriptor = CreateDescriptor<IOutOfBandStreamService>(new("resources"), encoding) with { MultiplexingStreamOptions = new() { ProtocolMajorVersion = 3 } };
 		container.Register(new(resourceDescriptor.Moniker));
 		using IDisposable resourceRegistration = container.Proffer(resourceDescriptor, (_, _, _, _) => new(new OutOfBandStreamService()));
-		IServiceBrokerWithMetadata source = Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker());
+		IServiceBroker source = container.GetServiceBroker();
 		await using IpcRelayServiceBroker downstreamRelay = new(source);
 		using RemoteServiceBroker middleBroker = await RemoteServiceBroker.ConnectAsync(downstreamRelay, this.TimeoutToken);
 		using MultiplexingRelayServiceBroker relay = new(forwardViaIpc ? middleBroker : source, serverMultiplexer);
@@ -2346,7 +2346,7 @@ public class BrokeredServiceTests : TestBase
 		JsonRpcDescriptor<IOutOfBandStreamService> descriptor = CreateDescriptor<IOutOfBandStreamService>(new("resources"), encoding) with { MultiplexingStreamOptions = new() { ProtocolMajorVersion = 3 } };
 		container.Register(new(descriptor.Moniker));
 		using IDisposable registration = container.Proffer(descriptor, (_, _, _, _) => new(new OutOfBandStreamService()));
-		await using IpcRelayServiceBroker relay = new(Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker()));
+		await using IpcRelayServiceBroker relay = new(container.GetServiceBroker());
 		using RemoteServiceBroker broker = await RemoteServiceBroker.ConnectAsync(relay, this.TimeoutToken);
 		IOutOfBandStreamService proxy = (await broker.GetProxyAsync(descriptor, cancellationToken: this.TimeoutToken))!;
 		await using System.IAsyncDisposable lifetime = (System.IAsyncDisposable)proxy;
@@ -2500,7 +2500,7 @@ public class BrokeredServiceTests : TestBase
 			cancellation.Cancel();
 			return new(target);
 		});
-		using MultiplexingRelayServiceBroker relay = new(Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker()), serverMultiplexer);
+		using MultiplexingRelayServiceBroker relay = new(container.GetServiceBroker(), serverMultiplexer);
 		await Assert.ThrowsAnyAsync<OperationCanceledException>(() => relay.RequestServiceChannelAsync(BrokeredTestServices.Calculator.Moniker, default, cancellation.Token));
 		Assert.True(await target.Disposal.Task.WithCancellation(this.TimeoutToken));
 	}
@@ -2619,15 +2619,22 @@ public class BrokeredServiceTests : TestBase
 		using BrokeredServiceContainer highPriority = new();
 		using BrokeredServiceContainer fallback = new();
 		using ServiceBrokerAggregator aggregate = new(highPriority.GetServiceBroker(), fallback.GetServiceBroker());
+		IServiceBroker broker = aggregate;
 		fallback.Register(new(BrokeredTestServices.Calculator.Moniker, additionalInterfaceIds: [BrokeredTestServices.Subtract.Id]));
 		using IDisposable registration = fallback.Proffer(BrokeredTestServices.Calculator, (_, _, _, _) => new(new Calculator()));
 		IBrokeredCalculator proxy = (await aggregate.GetProxyAsync(BrokeredTestServices.Calculator, cancellationToken: this.TimeoutToken))!;
 		using IDisposable lifetime = (IDisposable)proxy;
 		Assert.True(Assert.IsAssignableFrom<IClientProxy>(proxy).Is(typeof(IBrokeredSubtract)));
 		Assert.Equal(new[] { BrokeredTestServices.Subtract.Id }, await aggregate.GetCapabilitiesAsync(BrokeredTestServices.Calculator.Moniker, this.TimeoutToken));
+		await using BrokeredServiceConnection? fallbackConnection = await broker.GetConnectionAsync(BrokeredTestServices.Calculator.Moniker, cancellationToken: this.TimeoutToken);
+		Assert.NotNull(fallbackConnection);
+		Assert.Equal(new[] { BrokeredTestServices.Subtract.Id }, fallbackConnection.Capabilities);
 		highPriority.Register(new(BrokeredTestServices.Calculator.Moniker));
 		using IDisposable preferred = highPriority.Proffer(BrokeredTestServices.Calculator, (_, _, _, _) => new(new Calculator()));
 		Assert.Empty((await aggregate.GetCapabilitiesAsync(BrokeredTestServices.Calculator.Moniker, this.TimeoutToken))!);
+		await using BrokeredServiceConnection? preferredConnection = await broker.GetConnectionAsync(BrokeredTestServices.Calculator.Moniker, cancellationToken: this.TimeoutToken);
+		Assert.NotNull(preferredConnection);
+		Assert.Empty(preferredConnection.Capabilities);
 	}
 
 	[Test]
@@ -2815,7 +2822,7 @@ public class BrokeredServiceTests : TestBase
 		JsonRpcDescriptor<IBrokeredCalculator> descriptor = CreateCalculatorDescriptor(encoding) with { AdditionalInterfaces = [BrokeredTestServices.Subtract] };
 		container.Register(new(descriptor.Moniker, additionalInterfaceIds: [BrokeredTestServices.Subtract.Id]));
 		using IDisposable registration = container.Proffer(descriptor, (_, _, _, _) => new(new Calculator()));
-		await using IpcRelayServiceBroker relay = new(Assert.IsAssignableFrom<IServiceBrokerWithMetadata>(container.GetServiceBroker()));
+		await using IpcRelayServiceBroker relay = new(container.GetServiceBroker());
 		(IDuplexPipe client, IDuplexPipe server) = FullDuplexStream.CreatePipePair();
 		JsonRpcDescriptor<IRemoteServiceBroker> control = CreateControlDescriptor(encoding);
 		using JsonRpc serverRpc = control.CreateConnection(server);
@@ -3221,6 +3228,18 @@ public class BrokeredServiceTests : TestBase
 
 		public ValueTask<IDuplexPipe?> GetPipeAsync(ServiceMoniker moniker, ServiceActivationOptions options = default, CancellationToken cancellationToken = default)
 			=> throw new NotSupportedException();
+
+		public ValueTask<BrokeredServiceConnection?> GetConnectionAsync(ServiceMoniker moniker, ServiceActivationOptions options = default, CancellationToken cancellationToken = default)
+			=> throw new NotSupportedException();
+
+		public ValueTask<IReadOnlyList<string>?> GetCapabilitiesAsync(ServiceMoniker moniker, CancellationToken cancellationToken = default)
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+			lock (this.remaining)
+			{
+				return new(moniker == this.Moniker && this.remaining.Count > 0 ? Array.Empty<string>() : null);
+			}
+		}
 
 		internal void SignalChange() => this.AvailabilityChanged?.Invoke(this, new(
 			System.Collections.Immutable.ImmutableHashSet.Create(this.Moniker)));

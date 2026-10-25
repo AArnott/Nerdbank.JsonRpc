@@ -546,7 +546,7 @@ public class BrokeredServiceContainer : IBrokeredServiceContainer, IDisposable
 		}
 	}
 
-	private sealed class BrokerView(BrokeredServiceContainer container, ServiceAudience audience) : IServiceBrokerWithMetadata, IDisposable
+	private sealed class BrokerView(BrokeredServiceContainer container, ServiceAudience audience) : IServiceBroker, IDisposable
 	{
 		private readonly HashSet<ServiceMoniker> queried = [];
 		private EventHandler<BrokeredServicesChangedEventArgs>? availabilityChanged;
