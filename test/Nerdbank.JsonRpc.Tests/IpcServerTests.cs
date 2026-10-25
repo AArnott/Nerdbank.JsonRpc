@@ -25,6 +25,8 @@ public class IpcServerTests : TestBase
 		await using IIpcServer server = IpcServer.Create((_, token) => Task.Delay(Timeout.Infinite, token));
 		using Stream stream = await IpcClient.ConnectAsync(server.Name, this.TimeoutToken);
 		PipeSecurity security = Assert.IsAssignableFrom<NamedPipeClientStream>(stream).GetAccessControl();
+		using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+		Assert.Equal(identity.User, security.GetOwner(typeof(SecurityIdentifier)));
 		SecurityIdentifier network = new(WellKnownSidType.NetworkSid, null);
 		bool denied = false;
 		foreach (PipeAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
@@ -33,6 +35,37 @@ public class IpcServerTests : TestBase
 		}
 
 		Assert.True(denied);
+	}
+
+	[Test]
+	public async Task WindowsRejectsGroupOwnedPipe()
+	{
+		if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+		{
+			Skip.Test("Windows pipe ownership is not available on this platform.");
+			return;
+		}
+
+		using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+		if (Equals(identity.Owner, identity.User))
+		{
+			Skip.Test("An elevated token with a group default owner is required.");
+			return;
+		}
+
+		PipeSecurity security = new();
+		security.SetOwner(identity.Owner!);
+		security.AddAccessRule(new PipeAccessRule(identity.User!, PipeAccessRights.FullControl, AccessControlType.Allow));
+		string name = Guid.NewGuid().ToString("N");
+#if NETFRAMEWORK
+		using NamedPipeServerStream server = new(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, security);
+#else
+		using NamedPipeServerStream server = NamedPipeServerStreamAcl.Create(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, security);
+#endif
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+		{
+			using Stream client = await IpcClient.ConnectAsync(name, this.TimeoutToken);
+		});
 	}
 
 	[Test]

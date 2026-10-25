@@ -18,16 +18,14 @@ public static class IpcClient
 	public static async Task<Stream> ConnectAsync(string name, CancellationToken cancellationToken = default)
 	{
 		string pipeName = IpcUtilities.ValidateName(name);
-#if NETFRAMEWORK || NETSTANDARD2_0
 		bool windows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+		// CurrentUserOnly compares WindowsIdentity.Owner, which may be a group in an elevated token.
+		// Our same-account policy compares the explicit pipe owner to WindowsIdentity.User instead.
 		NamedPipeClientStream client = new(".", pipeName, PipeDirection.InOut, windows ? PipeOptions.Asynchronous : IpcUtilities.SecureOptions);
-#else
-		NamedPipeClientStream client = new(".", pipeName, PipeDirection.InOut, IpcUtilities.SecureOptions);
-#endif
 		try
 		{
 			await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
-#if NETFRAMEWORK || NETSTANDARD2_0
 			if (windows)
 			{
 				using WindowsIdentity identity = WindowsIdentity.GetCurrent();
@@ -36,7 +34,7 @@ public static class IpcClient
 					throw new UnauthorizedAccessException("The pipe server is not owned by the current account.");
 				}
 			}
-#endif
+
 			return client;
 		}
 		catch
