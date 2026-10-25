@@ -18,6 +18,38 @@ public class IpcServerTests : TestBase
 	}
 
 	[Test]
+	[Arguments(false)]
+	[Arguments(true)]
+	public void WindowsRejectsPreExistingPermissivePipe(bool differentOwner)
+	{
+		if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+		{
+			Skip.Test("Windows pipe ACLs are not available on this platform.");
+			return;
+		}
+
+		using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+		if (differentOwner && Equals(identity.Owner, identity.User))
+		{
+			Skip.Test("An elevated token with a group default owner is required.");
+			return;
+		}
+
+		PipeSecurity security = new();
+		security.SetOwner(differentOwner ? identity.Owner! : identity.User!);
+		security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.WorldSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
+		string name = Guid.NewGuid().ToString("N");
+#if NETFRAMEWORK
+		using NamedPipeServerStream existing = new(name, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, security);
+#else
+		using NamedPipeServerStream existing = NamedPipeServerStreamAcl.Create(name, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, security);
+#endif
+		Assert.Throws<UnauthorizedAccessException>(() => IpcServer.Create((_, _) => throw new InvalidOperationException("An insecure listener must never invoke callbacks."), new() { Name = name }));
+		using NamedPipeClientStream client = new(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
+		client.Connect(1000);
+	}
+
+	[Test]
 	public async Task WindowsAccessRulesDenyNetworkLogons()
 	{
 #if NET

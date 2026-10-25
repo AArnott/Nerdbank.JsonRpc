@@ -68,6 +68,7 @@ The connection callback owns the accepted stream until it completes, and the lis
 Disposal cancels acceptance and active callbacks; asynchronous disposal waits for them to finish.
 
 Windows listeners grant access to the current account and explicitly deny network logons, including network logons using the same credentials.
+Before accepting connections, each Windows pipe instance verifies its actual owner and access rules; a pre-existing endpoint with different security is rejected rather than reused.
 Clients reject a server owned by a different account.
 Unix uses the runtime's current-user-only Unix-domain socket implementation and validates endpoint length.
 This is not a security boundary between mutually hostile processes using the same account, and applications must not treat activation arguments as authentication.

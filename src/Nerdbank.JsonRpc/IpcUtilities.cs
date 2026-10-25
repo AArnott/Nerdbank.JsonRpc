@@ -80,11 +80,27 @@ internal static class IpcUtilities
 		security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.NetworkSid, null), PipeAccessRights.FullControl, AccessControlType.Deny));
 		security.AddAccessRule(new PipeAccessRule(user, PipeAccessRights.FullControl, AccessControlType.Allow));
 #if NETFRAMEWORK
-		return new(name, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, security);
+		NamedPipeServerStream pipe = new(name, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, security);
 #elif NETSTANDARD2_0
-		return WindowsPipeInterop.Create(name, security);
+		NamedPipeServerStream pipe = WindowsPipeInterop.Create(name, security);
 #else
-		return NamedPipeServerStreamAcl.Create(name, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, security);
+		NamedPipeServerStream pipe = NamedPipeServerStreamAcl.Create(name, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, security);
 #endif
+		try
+		{
+			// Additional instances retain the existing pipe object's security, not the supplied descriptor.
+			const AccessControlSections sections = AccessControlSections.Owner | AccessControlSections.Access;
+			if (pipe.GetAccessControl().GetSecurityDescriptorSddlForm(sections) != security.GetSecurityDescriptorSddlForm(sections))
+			{
+				throw new UnauthorizedAccessException("The existing pipe does not have the required same-account ownership and access rules.");
+			}
+
+			return pipe;
+		}
+		catch
+		{
+			pipe.Dispose();
+			throw;
+		}
 	}
 }
