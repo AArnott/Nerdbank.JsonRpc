@@ -93,6 +93,8 @@ public sealed class JsonRpcContractAnalyzer : DiagnosticAnalyzer
 			context.RegisterOperationAction(context => AnalyzeMarshalableInterfaceConversion(context, marshalableAttribute), OperationKind.Conversion);
 			context.RegisterOperationAction(context => AnalyzeMarshalableInterfaceTypeCheck(context, marshalableAttribute), OperationKind.IsType);
 			context.RegisterOperationAction(context => AnalyzeMarshalableInterfacePattern(context, marshalableAttribute), OperationKind.IsPattern);
+			context.RegisterOperationAction(context => AnalyzeMarshalableInterfaceSwitch(context, marshalableAttribute), OperationKind.Switch);
+			context.RegisterOperationAction(context => AnalyzeMarshalableInterfaceSwitchExpression(context, marshalableAttribute), OperationKind.SwitchExpression);
 		});
 	}
 
@@ -163,10 +165,33 @@ public sealed class JsonRpcContractAnalyzer : DiagnosticAnalyzer
 	private static void AnalyzeMarshalableInterfacePattern(OperationAnalysisContext context, INamedTypeSymbol? marshalableAttribute)
 	{
 		IIsPatternOperation patternCheck = (IIsPatternOperation)context.Operation;
-		if (GetMatchedType(patternCheck.Pattern) is ITypeSymbol target
-			&& AreDistinctMarshalableInterfaces(patternCheck.Value.Type, target, marshalableAttribute))
+		ReportMarshalableInterfacePattern(context, patternCheck.Value.Type, patternCheck.Pattern, patternCheck.Syntax.GetLocation(), marshalableAttribute);
+	}
+
+	private static void AnalyzeMarshalableInterfaceSwitch(OperationAnalysisContext context, INamedTypeSymbol? marshalableAttribute)
+	{
+		ISwitchOperation switchOperation = (ISwitchOperation)context.Operation;
+		foreach (IPatternCaseClauseOperation patternCase in switchOperation.Cases.SelectMany(static @case => @case.Clauses).OfType<IPatternCaseClauseOperation>())
 		{
-			context.ReportDiagnostic(Diagnostic.Create(PreferClientProxyTypeCheck, patternCheck.Syntax.GetLocation()));
+			ReportMarshalableInterfacePattern(context, switchOperation.Value.Type, patternCase.Pattern, patternCase.Pattern.Syntax.GetLocation(), marshalableAttribute);
+		}
+	}
+
+	private static void AnalyzeMarshalableInterfaceSwitchExpression(OperationAnalysisContext context, INamedTypeSymbol? marshalableAttribute)
+	{
+		ISwitchExpressionOperation switchExpression = (ISwitchExpressionOperation)context.Operation;
+		foreach (ISwitchExpressionArmOperation arm in switchExpression.Arms)
+		{
+			ReportMarshalableInterfacePattern(context, switchExpression.Value.Type, arm.Pattern, arm.Pattern.Syntax.GetLocation(), marshalableAttribute);
+		}
+	}
+
+	private static void ReportMarshalableInterfacePattern(OperationAnalysisContext context, ITypeSymbol? source, IPatternOperation pattern, Location location, INamedTypeSymbol? marshalableAttribute)
+	{
+		if (GetMatchedType(pattern) is ITypeSymbol target
+			&& AreDistinctMarshalableInterfaces(source, target, marshalableAttribute))
+		{
+			context.ReportDiagnostic(Diagnostic.Create(PreferClientProxyTypeCheck, location));
 		}
 	}
 
@@ -175,6 +200,7 @@ public sealed class JsonRpcContractAnalyzer : DiagnosticAnalyzer
 		{
 			IDeclarationPatternOperation { MatchedType: { } type } => type,
 			ITypePatternOperation { MatchedType: { } type } => type,
+			IRecursivePatternOperation { MatchedType: { } type } => type,
 			INegatedPatternOperation negated => GetMatchedType(negated.Pattern),
 			_ => null,
 		};

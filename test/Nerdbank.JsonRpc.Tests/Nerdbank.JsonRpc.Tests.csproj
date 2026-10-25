@@ -5,6 +5,8 @@
     <TargetFrameworks Condition="'$(OS)' == 'Windows_NT'">$(TargetFrameworks);net472</TargetFrameworks>
     <OutputType>Exe</OutputType>
     <IsTestProject>true</IsTestProject>
+    <!-- Tests intentionally call Attach with invalid types to verify its runtime exceptions. -->
+    <NoWarn>$(NoWarn);NBJSONRPC010;NBJSONRPC011</NoWarn>
     <!-- Run NativeAOT tests on .NET 10 and retain IL coverage on the other frameworks. -->
     <PublishNativeAOTTests Condition="'$(TargetFramework)' != '' and '$(TargetFramework)' != 'net10.0'">false</PublishNativeAOTTests>
     <RootNamespace />
