@@ -15,6 +15,40 @@ using PolyType.Abstractions;
 public class BrokeredServiceTests : TestBase
 {
 	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task RpcAndLocalCallsUseTheSameGeneratedProxy(JsonRpcEncoding encoding)
+	{
+		JsonRpcDescriptor<IBrokeredCalculator> descriptor = CreateDescriptor<IBrokeredCalculator>(new("unified.proxy"), encoding);
+		(IDuplexPipe client, IDuplexPipe server) = FullDuplexStream.CreatePipePair();
+		using JsonRpc clientRpc = descriptor.CreateConnection(client);
+		using JsonRpc serverRpc = descriptor.CreateConnection(server);
+		descriptor.AddRpcTarget(serverRpc, new Calculator(), []);
+		(IDuplexPipe ordinaryClient, IDuplexPipe ordinaryServer) = FullDuplexStream.CreatePipePair();
+		using JsonRpc ordinaryClientRpc = descriptor.CreateConnection(ordinaryClient);
+		using JsonRpc ordinaryServerRpc = descriptor.CreateConnection(ordinaryServer);
+		descriptor.AddRpcTarget(ordinaryServerRpc, new Calculator(), []);
+		IBrokeredCalculator ordinary = ordinaryClientRpc.Attach<IBrokeredCalculator>();
+		IBrokeredCalculator remote = descriptor.CreateProxy(clientRpc, []);
+		await using ServiceProxyContext context = ServiceProxyContext.Own(new Calculator());
+		IBrokeredCalculator local = descriptor.CreateLocalProxy(context, []);
+		await using JsonRpcProxy localLifetime = Assert.IsAssignableFrom<JsonRpcProxy>(local);
+		await using JsonRpcProxy remoteLifetime = Assert.IsAssignableFrom<JsonRpcProxy>(remote);
+		Assert.Equal(ordinary.GetType(), remote.GetType());
+		Assert.Equal(ordinary.GetType(), local.GetType());
+		Assert.Same(ordinaryClientRpc, Assert.IsAssignableFrom<IClientProxy>(ordinary).JsonRpc);
+		Assert.Same(clientRpc, Assert.IsAssignableFrom<IClientProxy>(remote).JsonRpc);
+		Assert.Null(Assert.IsAssignableFrom<IClientProxy>(local).JsonRpc);
+		clientRpc.Start();
+		serverRpc.Start();
+		ordinaryClientRpc.Start();
+		ordinaryServerRpc.Start();
+		Assert.Equal(7, await ordinary.AddAsync(3, 4, this.TimeoutToken));
+		Assert.Equal(7, await remote.AddAsync(3, 4, this.TimeoutToken));
+		Assert.Equal(7, await local.AddAsync(3, 4, this.TimeoutToken));
+	}
+
+	[Test]
 	[Arguments(0, false)]
 	[Arguments(1, false)]
 	[Arguments(2, false)]

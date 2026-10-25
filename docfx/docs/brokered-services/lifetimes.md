@@ -14,8 +14,9 @@ For example, a nullable proxy can be disposed in a local scope:
 
 ## Direct local invocation
 
-The generator emits separate RPC and direct-call implementations.
-The RPC implementation retains the normal serialization path; the direct implementation invokes the typed service without loopback transport, argument arrays, or serialization.
+The ordinary contract proxy also supports direct local calls; no additional broker-specific proxy or factory attribute is generated.
+Its <xref:Nerdbank.JsonRpc.JsonRpcProxy> base class shares capability queries, connection access, and resource disposal.
+RPC calls retain the normal serialization path; direct calls invoke the typed service without loopback transport, argument arrays, or serialization.
 Ordinary local arguments and results retain reference identity rather than being cloned.
 Nested application objects are shared, not recursively adapted or isolated.
 

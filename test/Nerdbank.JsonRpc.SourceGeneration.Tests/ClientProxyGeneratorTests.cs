@@ -13,6 +13,37 @@ using Nerdbank.JsonRpc.SourceGeneration;
 public class ClientProxyGeneratorTests
 {
 	[Test]
+	public async Task ProxyBaseMemberNamesDoNotCollideWithContractMethods()
+	{
+		const string Source = /* lang=c#-test */ """
+			using System.Threading.Tasks;
+			using Nerdbank.JsonRpc;
+
+			[JsonRpcContract]
+			partial interface IService
+			{
+				ValueTask Client();
+				ValueTask Context();
+				ValueTask LocalContext();
+				ValueTask MethodNameTransform();
+				ValueTask UseNamedArguments();
+				ValueTask TryDispose();
+				ValueTask DisposeUnowned();
+				ValueTask Is();
+			}
+			""";
+
+		GeneratorRunResult result = await RunGeneratorAsync(Source);
+		ClassDeclarationSyntax proxy = GetProxyClasses(result).Single();
+		ClassDeclarationSyntax[] factories = proxy.Members.OfType<ClassDeclarationSyntax>().ToArray();
+		if (factories.Length != 1 || factories[0].Members.OfType<MethodDeclarationSyntax>().Count() != 2
+			|| proxy.SyntaxTree.GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>().Count() != 2)
+		{
+			throw new InvalidOperationException("A contract should generate one proxy and one factory with RPC and local creation overloads.");
+		}
+	}
+
+	[Test]
 	[Arguments(false)]
 	[Arguments(true)]
 	public async Task AsyncDisposableContractUsesProxyLifecycle(bool synchronous)
@@ -183,13 +214,13 @@ public class ClientProxyGeneratorTests
 		await CSharpSourceGeneratorVerifier.VerifyGeneratorAsync(
 			Source,
 			CompilerDiagnostics.Warnings,
-			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 13, 269, 13, 293)
+			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 10, 269, 10, 293)
 				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<IEvents>", "T", "IEvents"),
-			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 14, 258, 14, 282)
+			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 11, 258, 11, 282)
 				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<IEvents>", "T", "IEvents"),
-			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 15, 272, 15, 296)
+			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 12, 272, 12, 296)
 				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<IEvents>", "T", "IEvents"),
-			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 16, 258, 16, 282)
+			DiagnosticResult.CompilerError("CS0311").WithSpan(generatedPath, 13, 258, 13, 282)
 				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<IEvents>", "T", "IEvents"));
 	}
 
@@ -652,7 +683,7 @@ public class ClientProxyGeneratorTests
 			Source,
 			CompilerDiagnostics.Warnings,
 			DiagnosticResult.CompilerError("CS0311")
-				.WithSpan(System.IO.Path.Combine("Nerdbank.JsonRpc.SourceGeneration", "Nerdbank.JsonRpc.SourceGeneration.ClientProxyGenerator", "CollidingLocalsProxy.g.cs"), 30, 107, 30, 140)
+				.WithSpan(System.IO.Path.Combine("Nerdbank.JsonRpc.SourceGeneration", "Nerdbank.JsonRpc.SourceGeneration.ClientProxyGenerator", "CollidingLocalsProxy.g.cs"), 18, 107, 18, 140)
 				.WithArguments("PolyType.Abstractions.TypeShapeResolver.Resolve<T>()", "PolyType.IShapeable<ICollidingLocals>", "T", "ICollidingLocals"));
 	}
 
@@ -697,12 +728,12 @@ public class ClientProxyGeneratorTests
 			""";
 		GeneratorRunResult result = await RunGeneratorAsync(source);
 		ClassDeclarationSyntax[] proxies = GetProxyClasses(result);
-		if (proxies.Length != expectedProxyCount || proxies[0].BaseList!.Types.Count != 4)
+		if (proxies.Length != expectedProxyCount || proxies[0].BaseList!.Types.Count != 2)
 		{
 			throw new InvalidOperationException($"Expected {expectedProxyCount} proxies including a base-only proxy, got {proxies.Length}.");
 		}
 
-		if (optionalCount > 0 && proxies[1].BaseList!.Types.Count != optionalCount + 4)
+		if (optionalCount > 0 && proxies[1].BaseList!.Types.Count != optionalCount + 2)
 		{
 			throw new InvalidOperationException("The full proxy must implement every optional interface.");
 		}
@@ -731,7 +762,7 @@ public class ClientProxyGeneratorTests
 			""";
 		ClassDeclarationSyntax[] proxies = GetProxyClasses(await RunGeneratorAsync(source));
 		if (proxies.Length != (includeEmpty ? 3 : 2)
-			|| proxies.Count(proxy => proxy.BaseList!.Types.Count == 4) != (includeEmpty ? 1 : 0)
+			|| proxies.Count(proxy => proxy.BaseList!.Types.Count == 2) != (includeEmpty ? 1 : 0)
 			|| proxies.Any(proxy => proxy.BaseList!.Types.Any(type => type.ToString().Contains("IThird"))))
 		{
 			throw new InvalidOperationException("Only the distinct explicit groups should be emitted, without implicit base-only or full proxies.");
@@ -985,7 +1016,7 @@ public class ClientProxyGeneratorTests
 	private static ClassDeclarationSyntax[] GetProxyClasses(GeneratorRunResult result)
 		=> [
 			.. result.GeneratedSources.SelectMany(static source => source.SyntaxTree.GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>())
-				.Where(static declaration => declaration.BaseList?.Types.Any(static type => type.ToString() == "global::Nerdbank.JsonRpc.IClientProxy") is true),
+				.Where(static declaration => declaration.BaseList?.Types.Any(static type => type.ToString() == "global::Nerdbank.JsonRpc.JsonRpcProxy") is true),
 		];
 
 	private static async Task<GeneratorRunResult> RunGeneratorAsync([StringSyntax("c#-test")] string source, bool publicExtensions = false)

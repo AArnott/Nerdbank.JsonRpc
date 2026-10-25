@@ -2,6 +2,9 @@
 
 The client proxy generator is included in the `Nerdbank.JsonRpc` NuGet package as a C# analyzer. It creates a typed implementation of an interface annotated with <xref:Nerdbank.JsonRpc.JsonRpcContractAttribute>. It uses PolyType-generated method shapes for arguments and results. [Getting Started](getting-started.md) shows the contract declaration and how to call <xref:Nerdbank.JsonRpc.JsonRpc.Attach*> on a connection to obtain the proxy; you do not need to construct the generated implementation yourself.
 
+Generated implementations derive from <xref:Nerdbank.JsonRpc.JsonRpcProxy>, which provides connection access, capability queries, and resource disposal.
+The same generated type and factory also support [direct local brokered-service calls](brokered-services/lifetimes.md#direct-local-invocation), including callback isolation and local exception policies, without serializing those calls.
+
 ## Choosing request return types
 
 For new RPC interfaces whose callers normally await each operation once, prefer <xref:System.Threading.Tasks.ValueTask`1> for requests with a result and <xref:System.Threading.Tasks.ValueTask> for requests without one. Generated proxies return these awaitables directly rather than converting them to Tasks. <xref:System.Threading.Tasks.Task`1> and <xref:System.Threading.Tasks.Task> are sensible choices when callers routinely share operations, await them repeatedly, or compose many operations, including in batching-heavy applications. Internal completion-source pooling benefits both return types; any additional savings from ValueTask depend on the request path and should be measured for your workload.

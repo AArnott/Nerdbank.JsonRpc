@@ -157,7 +157,7 @@ public abstract class ServiceProxyContext : IDisposable, IAsyncDisposable
 			return borrowed.Original;
 		}
 
-		ServiceProxyContext lifetime = new OwnedContext(observer, new RetainedServiceObject(observer, lease.Retain(), disposeTarget: observer is LocalObserver<T> or ServiceProxy), true, this, exported: true)
+		ServiceProxyContext lifetime = new OwnedContext(observer, new RetainedServiceObject(observer, lease.Retain(), disposeTarget: observer is LocalObserver<T> or JsonRpcProxy), true, this, exported: true)
 		{
 			Logger = this.Logger,
 			RpcOptions = this.RpcOptions,
@@ -219,7 +219,7 @@ public abstract class ServiceProxyContext : IDisposable, IAsyncDisposable
 		};
 		try
 		{
-			return ServiceProxyFactoryAttribute.CreateForTarget<T>(context, target);
+			return JsonRpcProxyFactoryAttribute.CreateForTarget<T>(context, target);
 		}
 		catch
 		{
@@ -263,7 +263,7 @@ public abstract class ServiceProxyContext : IDisposable, IAsyncDisposable
 		};
 		try
 		{
-			T proxy = ServiceProxyFactoryAttribute.CreateForTarget<T>(context, target);
+			T proxy = JsonRpcProxyFactoryAttribute.CreateForTarget<T>(context, target);
 			boundary = context;
 			return proxy;
 		}
@@ -425,7 +425,7 @@ public abstract class ServiceProxyContext : IDisposable, IAsyncDisposable
 	private bool TryUnwrapProxy<T>(T target, bool exported, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out T? original)
 		where T : class
 	{
-		if (target is ServiceProxy { ProxyContext: OwnedContext context } && context.Unwrap(this, exported) is { } value)
+		if (target is JsonRpcProxy { ProxyContext: OwnedContext context } && context.Unwrap(this, exported) is { } value)
 		{
 			original = (T)value;
 			return true;
@@ -729,7 +729,7 @@ public abstract class ServiceProxyContext : IDisposable, IAsyncDisposable
 				return null;
 			}
 
-			return !this.IsDisposed ? this.generation.Target : throw new ObjectDisposedException(nameof(ServiceProxy));
+			return !this.IsDisposed ? this.generation.Target : throw new ObjectDisposedException(nameof(JsonRpcProxy));
 		}
 	}
 }

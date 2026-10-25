@@ -38,7 +38,7 @@ public sealed class ServiceInterface<T> : ServiceInterface
 	/// <summary>Constructs a typed direct proxy for this captured contract.</summary>
 	/// <param name="context">The target and callback lifetime.</param>
 	/// <returns>The generated proxy.</returns>
-	public new T CreateLocalProxy(ServiceProxyContext context) => ServiceProxyFactoryAttribute.Create<T>(context, []);
+	public new T CreateLocalProxy(ServiceProxyContext context) => JsonRpcProxyFactoryAttribute.CreateLocal<T>(context, []);
 
 	/// <inheritdoc/>
 	protected override object CreateProxyCore(JsonRpc rpc, JsonRpcProxyOptions? options) => this.CreateProxy(rpc, options);

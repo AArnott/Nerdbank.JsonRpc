@@ -62,7 +62,7 @@ public abstract record JsonRpcDescriptor<T> : JsonRpcDescriptor, IJsonRpcDescrip
 	{
 		Requires.NotNull(context);
 		Requires.NotNull(additionalInterfaces);
-		return ServiceProxyFactoryAttribute.Create<T>(context, additionalInterfaces.Select(static item => item.InterfaceType).ToArray());
+		return JsonRpcProxyFactoryAttribute.CreateLocal<T>(context, additionalInterfaces.Select(static item => item.InterfaceType).ToArray());
 	}
 
 	/// <inheritdoc/>

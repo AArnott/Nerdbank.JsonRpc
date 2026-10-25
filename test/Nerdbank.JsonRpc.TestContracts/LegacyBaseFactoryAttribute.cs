@@ -6,4 +6,6 @@ namespace Nerdbank.JsonRpc.TestContracts;
 internal sealed class LegacyBaseFactoryAttribute : JsonRpcProxyFactoryAttribute
 {
 	public override object CreateProxy(IJsonRpcClient client, JsonRpcProxyOptions options) => new LegacyBaseProxy();
+
+	public override object CreateProxy(BrokeredServices.ServiceProxyContext context, IReadOnlyList<Type> enabledInterfaces) => throw new NotSupportedException();
 }
