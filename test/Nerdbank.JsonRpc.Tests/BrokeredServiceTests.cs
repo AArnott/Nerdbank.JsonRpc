@@ -15,6 +15,33 @@ using PolyType.Abstractions;
 public class BrokeredServiceTests : TestBase
 {
 	[Test]
+	public async Task NullLocalProxyFactoryReleasesActivationAndBorrowedCallback()
+	{
+		JsonRpcDescriptor<INullFactoryProxy> descriptor = JsonRpcUtf8Descriptor.Create<INullFactoryProxy>(new("null.local.proxy")) with
+		{
+			CallbackInterface = BrokeredTestServices.Descriptor.CreateInterface<IBrokeredCalculator>("calculator.callback"),
+		};
+		using BrokeredServiceContainer container = new();
+		container.Register(new(descriptor.Moniker));
+		NullFactoryService target = new();
+		Calculator callerOwned = new();
+		IBrokeredCalculator? callback = null;
+		using IDisposable proffer = container.Proffer(descriptor, (_, options, _, _) =>
+		{
+			callback = Assert.IsAssignableFrom<IBrokeredCalculator>(options.ClientRpcTarget);
+			return new(target);
+		});
+		await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+		{
+			using IDisposable? proxy = (IDisposable?)await container.GetServiceBroker().GetProxyAsync(descriptor, new() { ClientRpcTarget = callerOwned }, this.TimeoutToken);
+		});
+		Assert.True(target.Disposed);
+		Assert.False(callerOwned.Disposed);
+		Assert.NotNull(callback);
+		await Assert.ThrowsAsync<ObjectDisposedException>(async () => await callback.AddAsync(1, 2, this.TimeoutToken));
+	}
+
+	[Test]
 	[Arguments(JsonRpcEncoding.Json)]
 	[Arguments(JsonRpcEncoding.MessagePack)]
 	public async Task RpcAndLocalCallsUseTheSameGeneratedProxy(JsonRpcEncoding encoding)
@@ -3056,6 +3083,13 @@ public class BrokeredServiceTests : TestBase
 			this.Disposals++;
 			return default;
 		}
+	}
+
+	private sealed class NullFactoryService : INullFactoryProxy, IDisposable
+	{
+		internal bool Disposed { get; private set; }
+
+		public void Dispose() => this.Disposed = true;
 	}
 
 	private sealed class Calculator : IBrokeredCalculator, IBrokeredSubtract, IDisposable

@@ -58,9 +58,14 @@ public abstract class JsonRpcProxyFactoryAttribute : Attribute
 	{
 		JsonRpcProxyFactoryAttribute? factory = Cache<T>.Factories.FirstOrDefault(candidate =>
 			enabledInterfaces.All(type => type.IsAssignableFrom(typeof(T)) || candidate.AdditionalInterfaces.Any(type.IsAssignableFrom)));
-		return factory is null
-			? throw new NotSupportedException($"No generated proxy group covers '{typeof(T)}'. Add JsonRpcContract and a covering JsonRpcProxyInterfaceGroup.")
-			: (T)factory.CreateProxy(context, enabledInterfaces);
+		if (factory is null)
+		{
+			throw new NotSupportedException($"No generated proxy group covers '{typeof(T)}'. Add JsonRpcContract and a covering JsonRpcProxyInterfaceGroup.");
+		}
+
+		object? proxy = factory.CreateProxy(context, enabledInterfaces);
+		return proxy is T typedProxy ? typedProxy
+			: throw new InvalidOperationException($"The generated proxy factory returned {(proxy is null ? "null" : $"an instance of '{proxy.GetType().FullName}'")} which does not implement requested interface '{typeof(T).FullName}'.");
 	}
 
 	/// <summary>Selects capabilities from a returned object's generated contract universe.</summary>

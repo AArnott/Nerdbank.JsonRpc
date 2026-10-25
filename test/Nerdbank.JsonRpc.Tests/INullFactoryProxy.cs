@@ -2,7 +2,8 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 [NullProxyFactory]
-internal interface INullFactoryProxy
+[PolyType.GenerateShape]
+internal partial interface INullFactoryProxy
 {
 }
 
