@@ -18,6 +18,8 @@ public class MarshalableInterfaceTypeCheckTests
 			[RpcMarshalable(CallScopedLifetime = true)]
 			interface ISecond { }
 
+			interface IUnrelated { }
+
 			class C
 			{
 				void M(IFirst value)
@@ -29,6 +31,8 @@ public class MarshalableInterfaceTypeCheckTests
 					_ = {|#4:value is not ISecond|};
 					_ = {|#5:value is ISecond { }|};
 					_ = {|#6:value is ISecond { } recursiveSecond|};
+					_ = {|#7:value is ISecond and { }|};
+					_ = {|#8:value is ISecond or IUnrelated|};
 				}
 			}
 			""";
@@ -41,7 +45,9 @@ public class MarshalableInterfaceTypeCheckTests
 			Verify.Diagnostic("NBJSONRPC050").WithLocation(3),
 			Verify.Diagnostic("NBJSONRPC050").WithLocation(4),
 			Verify.Diagnostic("NBJSONRPC050").WithLocation(5),
-			Verify.Diagnostic("NBJSONRPC050").WithLocation(6));
+			Verify.Diagnostic("NBJSONRPC050").WithLocation(6),
+			Verify.Diagnostic("NBJSONRPC050").WithLocation(7),
+			Verify.Diagnostic("NBJSONRPC050").WithLocation(8));
 	}
 
 	[Test]
@@ -56,13 +62,15 @@ public class MarshalableInterfaceTypeCheckTests
 			[RpcMarshalable(CallScopedLifetime = true)]
 			interface ISecond { }
 
+			interface IUnrelated { }
+
 			class C
 			{
 				int Statement(IFirst value)
 				{
 					switch (value)
 					{
-						case {|#0:ISecond second|}:
+						case {|#0:ISecond and { }|}:
 							return 1;
 						default:
 							return 0;
@@ -71,7 +79,7 @@ public class MarshalableInterfaceTypeCheckTests
 
 				int Expression(IFirst value) => value switch
 				{
-					{|#1:ISecond second|} => 1,
+					{|#1:ISecond or IUnrelated|} => 1,
 					_ => 0,
 				};
 			}

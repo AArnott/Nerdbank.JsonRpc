@@ -188,22 +188,44 @@ public sealed class JsonRpcContractAnalyzer : DiagnosticAnalyzer
 
 	private static void ReportMarshalableInterfacePattern(OperationAnalysisContext context, ITypeSymbol? source, IPatternOperation pattern, Location location, INamedTypeSymbol? marshalableAttribute)
 	{
-		if (GetMatchedType(pattern) is ITypeSymbol target
-			&& AreDistinctMarshalableInterfaces(source, target, marshalableAttribute))
+		foreach (ITypeSymbol? target in GetMatchedTypes(pattern).Distinct(SymbolEqualityComparer.Default))
 		{
-			context.ReportDiagnostic(Diagnostic.Create(PreferClientProxyTypeCheck, location));
+			if (target is not null && AreDistinctMarshalableInterfaces(source, target, marshalableAttribute))
+			{
+				context.ReportDiagnostic(Diagnostic.Create(PreferClientProxyTypeCheck, location));
+			}
 		}
 	}
 
-	private static ITypeSymbol? GetMatchedType(IPatternOperation pattern)
-		=> pattern switch
+	private static IEnumerable<ITypeSymbol> GetMatchedTypes(IPatternOperation pattern)
+	{
+		switch (pattern)
 		{
-			IDeclarationPatternOperation { MatchedType: { } type } => type,
-			ITypePatternOperation { MatchedType: { } type } => type,
-			IRecursivePatternOperation { MatchedType: { } type } => type,
-			INegatedPatternOperation negated => GetMatchedType(negated.Pattern),
-			_ => null,
-		};
+			case IDeclarationPatternOperation { MatchedType: { } declarationType }:
+				yield return declarationType;
+				break;
+			case ITypePatternOperation { MatchedType: { } typePatternType }:
+				yield return typePatternType;
+				break;
+			case IRecursivePatternOperation { MatchedType: { } recursivePatternType }:
+				yield return recursivePatternType;
+				break;
+			case INegatedPatternOperation negated:
+				foreach (ITypeSymbol type in GetMatchedTypes(negated.Pattern))
+				{
+					yield return type;
+				}
+
+				break;
+			case IBinaryPatternOperation binary:
+				foreach (ITypeSymbol type in GetMatchedTypes(binary.LeftPattern).Concat(GetMatchedTypes(binary.RightPattern)))
+				{
+					yield return type;
+				}
+
+				break;
+		}
+	}
 
 	private static bool AreDistinctMarshalableInterfaces(ITypeSymbol? source, ITypeSymbol? target, INamedTypeSymbol? marshalableAttribute)
 		=> source is INamedTypeSymbol { TypeKind: TypeKind.Interface } sourceInterface
