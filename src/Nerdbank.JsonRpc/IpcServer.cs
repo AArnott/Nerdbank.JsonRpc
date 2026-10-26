@@ -31,8 +31,11 @@ public sealed class IpcServer : IDisposable, IAsyncDisposable
 		this.options = options;
 		this.logger = options.Logger ?? NullLogger<IpcServer>.Instance;
 		this.pipeName = IpcUtilities.ValidateName(options.Name ?? Guid.NewGuid().ToString("N"));
-		this.Name = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? @"\\.\pipe\" + this.pipeName
-			: Path.IsPathRooted(this.pipeName) ? this.pipeName : Path.Combine(Path.GetTempPath(), "CoreFxPipe_" + this.pipeName);
+		this.Name = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+			? @"\\.\pipe\" + this.pipeName
+			: Path.IsPathRooted(this.pipeName)
+				? this.pipeName
+				: Path.Combine(Path.GetTempPath(), "CoreFxPipe_" + this.pipeName);
 		this.listener = IpcUtilities.CreatePipe(this.pipeName);
 		this.Completion = this.ListenAsync();
 	}

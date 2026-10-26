@@ -406,7 +406,7 @@ public class StreamJsonRpcInteropTests : TestBase
 
 		internal int Value => Volatile.Read(ref this.value);
 
-		public Task<int> Add(int amount, CancellationToken cancellationToken) => Task.FromResult(Interlocked.Add(ref this.value, amount));
+		public Task<int> Add(int value, CancellationToken cancellationToken) => Task.FromResult(Interlocked.Add(ref this.value, value));
 
 		public void Dispose()
 		{

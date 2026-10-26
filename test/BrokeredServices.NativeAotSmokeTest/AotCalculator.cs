@@ -9,10 +9,10 @@ internal sealed class AotCalculator : IAotCalculator, IAotMultiply, IObserver<in
 
 	internal Task<int> Observed => this.observed.Task;
 
-	public ValueTask<int> AddAsync(int left, int right, CancellationToken cancellationToken)
+	public ValueTask<int> AddAsync(int __lease, int __current, CancellationToken __enumerationCancellation)
 	{
-		cancellationToken.ThrowIfCancellationRequested();
-		int sum = left + right;
+		__enumerationCancellation.ThrowIfCancellationRequested();
+		int sum = __lease + __current;
 		this.Changed?.Invoke(this, sum);
 		return new(sum);
 	}
@@ -23,10 +23,10 @@ internal sealed class AotCalculator : IAotCalculator, IAotMultiply, IObserver<in
 		return new(left * right);
 	}
 
-	public ValueTask<IDisposable?> ObserveAsync(IObserver<int> observer, int value, CancellationToken cancellationToken)
+	public ValueTask<IDisposable?> ObserveAsync(IObserver<int> __target, int __subscription, CancellationToken __cancellationToken)
 	{
-		cancellationToken.ThrowIfCancellationRequested();
-		observer.OnNext(value);
+		__cancellationToken.ThrowIfCancellationRequested();
+		__target.OnNext(__subscription);
 		return new((IDisposable?)null);
 	}
 

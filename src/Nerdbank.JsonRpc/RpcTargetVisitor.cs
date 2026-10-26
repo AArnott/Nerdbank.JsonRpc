@@ -243,8 +243,8 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 							return new DispatchResponse
 							{
 								Response = dispatch.Request.Id is RequestId id
-								? new JsonRpcError { Id = id, Error = new() { Code = JsonRpcErrorCode.InvalidParams, Message = $"Expected at most {parameterSetters.Length} arguments but received {values.Count}." } }
-								: null,
+									? new JsonRpcError { Id = id, Error = new() { Code = JsonRpcErrorCode.InvalidParams, Message = $"Expected at most {parameterSetters.Length} arguments but received {values.Count}." } }
+									: null,
 								IsError = true,
 							};
 						}
@@ -265,8 +265,8 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 									return new DispatchResponse
 									{
 										Response = dispatch.Request.Id is RequestId id
-										? new JsonRpcError { Id = id, Error = new() { Code = JsonRpcErrorCode.InvalidParams, Message = $"Unknown parameter name: '{values[i].Name}'." } }
-										: null,
+											? new JsonRpcError { Id = id, Error = new() { Code = JsonRpcErrorCode.InvalidParams, Message = $"Unknown parameter name: '{values[i].Name}'." } }
+											: null,
 										IsError = true,
 									};
 								}

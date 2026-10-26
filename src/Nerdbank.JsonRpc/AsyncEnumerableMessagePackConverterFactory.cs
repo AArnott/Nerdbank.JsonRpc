@@ -18,7 +18,7 @@ internal sealed class AsyncEnumerableMessagePackConverterFactory(AsyncEnumerable
 	private sealed class Factory(AsyncEnumerableManager manager) : PolyType.Abstractions.ITypeShapeFunc
 	{
 		/// <inheritdoc/>
-		public object? Invoke<T>(PolyType.ITypeShape<T> shape, object? state = null) => new Converter<T>(manager, shape);
+		public object? Invoke<T>(PolyType.ITypeShape<T> typeShape, object? state = null) => new Converter<T>(manager, typeShape);
 	}
 
 	/// <summary>Converts a single <see cref="IAsyncEnumerable{T}"/> type.</summary>

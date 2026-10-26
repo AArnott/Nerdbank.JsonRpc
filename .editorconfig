@@ -194,3 +194,24 @@ dotnet_diagnostic.CA2016.severity = warning
 
 [*.sln]
 indent_style = tab
+
+[src/Nerdbank.JsonRpc/JsonRpcValue.cs]
+dotnet_diagnostic.SA1649.severity = none
+
+[test/Nerdbank.JsonRpc.Tests/DefaultPositionalProxyTestTypes.cs]
+dotnet_diagnostic.SA1649.severity = none
+
+[test/Nerdbank.JsonRpc.Tests/GeneratedProxyTestTypes.cs]
+dotnet_diagnostic.SA1649.severity = none
+
+[test/Nerdbank.JsonRpc.Tests/INullFactoryProxy.cs]
+dotnet_diagnostic.SA1649.severity = none
+
+[test/Nerdbank.JsonRpc.Tests/NamedArgumentsProxyTestTypes.cs]
+dotnet_diagnostic.SA1649.severity = none
+
+[test/Nerdbank.JsonRpc.Tests/OptionalInterfaceTestTypes.cs]
+dotnet_diagnostic.SA1649.severity = none
+
+[test/Nerdbank.JsonRpc.BrokeredServiceContracts/IBrokeredCalculator.cs]
+dotnet_diagnostic.SA1649.severity = none

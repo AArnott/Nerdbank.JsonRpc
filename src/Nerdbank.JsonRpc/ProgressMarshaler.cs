@@ -49,6 +49,6 @@ internal static class ProgressMarshaler
 	{
 		internal static readonly ProgressShapeFunc Instance = new();
 
-		public object? Invoke<T>(ITypeShape<T> shape, object? state = null) => new Contract<T>(shape);
+		public object? Invoke<T>(ITypeShape<T> typeShape, object? state = null) => new Contract<T>(typeShape);
 	}
 }

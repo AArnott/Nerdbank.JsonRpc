@@ -1565,9 +1565,11 @@ public class BrokeredServiceTests : TestBase
 		Calculator firstTarget = new();
 		Calculator secondTarget = new();
 		BrokeredServiceFactory<IBrokeredCalculator> factory = (moniker, _, _, _) => new(
-			moniker == first.Moniker ? firstTarget
-			: moniker == second.Moniker ? secondTarget
-			: throw new InvalidOperationException("Unexpected service moniker."));
+			moniker == first.Moniker
+				? firstTarget
+				: moniker == second.Moniker
+					? secondTarget
+					: throw new InvalidOperationException("Unexpected service moniker."));
 		container.Register(new(first.Moniker));
 		using IDisposable firstRegistration = container.Proffer(first, factory);
 		container.Register(new(second.Moniker));

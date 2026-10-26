@@ -64,7 +64,8 @@ public abstract class JsonRpcProxyFactoryAttribute : Attribute
 		}
 
 		object? proxy = factory.CreateProxy(context, enabledInterfaces);
-		return proxy is T typedProxy ? typedProxy
+		return proxy is T typedProxy
+			? typedProxy
 			: throw new InvalidOperationException($"The generated proxy factory returned {(proxy is null ? "null" : $"an instance of '{proxy.GetType().FullName}'")} which does not implement requested interface '{typeof(T).FullName}'.");
 	}
 
