@@ -37,7 +37,8 @@ public sealed class IpcRelayServiceBroker : IRemoteServiceBroker, IDisposable, I
 	{
 		get;
 		init => field = value > TimeSpan.Zero && value.TotalMilliseconds <= int.MaxValue
-			? value : throw new ArgumentOutOfRangeException(nameof(value));
+			? value
+			: throw new ArgumentOutOfRangeException(nameof(value));
 	} = TimeSpan.FromSeconds(30);
 
 	/// <inheritdoc/>

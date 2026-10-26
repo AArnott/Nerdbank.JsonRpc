@@ -23,7 +23,7 @@ internal sealed class MarshaledInterfaceMessagePackConverterFactory(MarshaledObj
 			: throw new NotSupportedException($"A PolyType shape is required to marshal interface '{type}'.");
 	}
 
-	public object? Invoke<T>(ITypeShape<T> shape, object? state) => new Converter<T>(manager, progress, shape);
+	public object? Invoke<T>(ITypeShape<T> typeShape, object? state) => new Converter<T>(manager, progress, typeShape);
 
 	private sealed class Converter<T>(MarshaledObjectManager manager, ProgressManager progress, ITypeShape<T> shape) : MessagePackConverter<T>
 	{

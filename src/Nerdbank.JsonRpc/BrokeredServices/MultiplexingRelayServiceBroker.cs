@@ -39,7 +39,8 @@ public sealed class MultiplexingRelayServiceBroker : IRemoteServiceBroker, IDisp
 	{
 		get;
 		init => field = value > TimeSpan.Zero && value.TotalMilliseconds <= int.MaxValue
-			? value : throw new ArgumentOutOfRangeException(nameof(value));
+			? value
+			: throw new ArgumentOutOfRangeException(nameof(value));
 	} = TimeSpan.FromSeconds(30);
 
 	/// <inheritdoc/>
@@ -51,7 +52,8 @@ public sealed class MultiplexingRelayServiceBroker : IRemoteServiceBroker, IDisp
 			this.ThrowIfDisposed();
 		}
 
-		return (connections & RemoteServiceConnections.Multiplexing) != 0 ? Task.FromResult(1)
+		return (connections & RemoteServiceConnections.Multiplexing) != 0
+			? Task.FromResult(1)
 			: throw new NotSupportedException("The client does not support multiplexed service channels.");
 	}
 

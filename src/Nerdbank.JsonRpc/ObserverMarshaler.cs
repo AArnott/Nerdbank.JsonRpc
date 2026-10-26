@@ -224,6 +224,6 @@ internal static class ObserverMarshaler
 	{
 		internal static readonly ObserverShapeFunc Instance = new();
 
-		public object? Invoke<T>(ITypeShape<T> shape, object? state = null) => new Contract<T>(shape);
+		public object? Invoke<T>(ITypeShape<T> typeShape, object? state = null) => new Contract<T>(typeShape);
 	}
 }

@@ -498,7 +498,7 @@ public class BrokeredServiceContainer : IBrokeredServiceContainer, IDisposable
 
 	private sealed class LoadingContainer(BrokeredServiceContainer container, RegistrationEntry registration) : IBrokeredServiceContainer
 	{
-		public void Register(ServiceRegistration metadata) => container.Register(metadata);
+		public void Register(ServiceRegistration registration) => container.Register(registration);
 
 		public bool Unregister(ServiceMoniker moniker) => container.Unregister(moniker);
 
@@ -651,7 +651,8 @@ public class BrokeredServiceContainer : IBrokeredServiceContainer, IDisposable
 				IJsonRpcDescriptor<T> configured = container.ApplyDescriptorSettings(descriptor, clientRole: true) as IJsonRpcDescriptor<T>
 					?? throw new InvalidOperationException("The host descriptor must preserve the typed proxy contract.");
 				ILogger<ServiceProxyContext> logger = container.LoggerFactory.CreateLogger<ServiceProxyContext>();
-				context = callback is null ? ServiceProxyContext.Own(target, logger: logger, rpcOptions: configured.RpcOptions)
+				context = callback is null
+					? ServiceProxyContext.Own(target, logger: logger, rpcOptions: configured.RpcOptions)
 					: ServiceProxyContext.OwnActivation(target, callback, logger, configured.RpcOptions);
 				target = null;
 				callback = null;

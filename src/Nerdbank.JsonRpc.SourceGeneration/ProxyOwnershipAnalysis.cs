@@ -673,8 +673,11 @@ internal sealed class ProxyOwnershipAnalysis(Compilation compilation, IInvocatio
 		bool nullWhenTrue = true;
 		if (condition is IBinaryOperation binary && binary.OperatorKind is BinaryOperatorKind.Equals or BinaryOperatorKind.NotEquals)
 		{
-			operand = binary.LeftOperand.ConstantValue is { HasValue: true, Value: null } ? binary.RightOperand
-				: binary.RightOperand.ConstantValue is { HasValue: true, Value: null } ? binary.LeftOperand : null;
+			operand = binary.LeftOperand.ConstantValue is { HasValue: true, Value: null }
+				? binary.RightOperand
+				: binary.RightOperand.ConstantValue is { HasValue: true, Value: null }
+					? binary.LeftOperand
+					: null;
 			nullWhenTrue = binary.OperatorKind == BinaryOperatorKind.Equals;
 		}
 		else if (condition is IIsPatternOperation pattern)

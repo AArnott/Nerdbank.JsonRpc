@@ -60,9 +60,11 @@ public readonly struct JsonRpcValue : IEquatable<JsonRpcValue>
 	public ReadOnlyMemory<byte> Bytes => this.storage is null ? default : this.OwnedBytes.ToArray();
 
 	/// <summary>Gets the internally owned bytes without copying.</summary>
-	internal ReadOnlyMemory<byte> OwnedBytes => this.storage is null ? ReadOnlyMemory<byte>.Empty
-		: this.IsSlice ? GetMemory(this.storage).Slice(this.Offset, this.sliceLength)
-		: GetMemory(this.storage);
+	internal ReadOnlyMemory<byte> OwnedBytes => this.storage is null
+		? ReadOnlyMemory<byte>.Empty
+		: this.IsSlice
+			? GetMemory(this.storage).Slice(this.Offset, this.sliceLength)
+			: GetMemory(this.storage);
 
 	internal MarshaledObjectManager.HandleSet? MarshaledHandles => this.attachments?.MarshaledHandles;
 

@@ -2337,10 +2337,12 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				? [
 					.. this.Factories.SelectMany(static factory => factory.AdditionalInterfaces).Distinct()
 						.Where(type => configured.Any(type.IsAssignableFrom)),
-				]
+					]
 				: null;
-			JsonRpcProxyFactoryAttribute? factory = enabled is null ? this.Factories[0] : this.Factories.FirstOrDefault(candidate =>
-				enabled.All(type => type.IsAssignableFrom(this.InterfaceType) || candidate.AdditionalInterfaces.Any(type.IsAssignableFrom)));
+			JsonRpcProxyFactoryAttribute? factory = enabled is null
+				? this.Factories[0]
+				: this.Factories.FirstOrDefault(candidate =>
+					enabled.All(type => type.IsAssignableFrom(this.InterfaceType) || candidate.AdditionalInterfaces.Any(type.IsAssignableFrom)));
 			return factory is not null
 				? factory.CreateProxy(client, options)
 				: throw new NotSupportedException("No generated proxy group covers the enabled interfaces. Add a JsonRpcProxyInterfaceGroupAttribute containing them.");

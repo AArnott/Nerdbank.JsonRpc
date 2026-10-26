@@ -87,6 +87,6 @@ internal static class AsyncEnumerableMarshaler
 		internal static readonly EnumerableShapeFunc Instance = new();
 
 		/// <inheritdoc/>
-		public object? Invoke<T>(ITypeShape<T> shape, object? state = null) => new Contract<T>(shape);
+		public object? Invoke<T>(ITypeShape<T> typeShape, object? state = null) => new Contract<T>(typeShape);
 	}
 }

@@ -134,12 +134,14 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		string? source = diagnostics.IsEmpty ? RenderProxy(info) : null;
 		return new ProxyOutput(info.HintName, source, diagnostics)
 		{
-			Extensions = source is null ? [] : info.OptionalInterfaces.Concat(info.ProxyGroups.SelectMany(static group => group))
-				.Select(static item => item.Symbol).Concat([info.Symbol])
-				.GroupBy(static symbol => symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), StringComparer.Ordinal)
-				.Select(static group => group.First())
-				.Select(symbol => new ExtensionInfo(symbol.ContainingNamespace.IsGlobalNamespace ? string.Empty : symbol.ContainingNamespace.ToDisplayString(), symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), symbol.DeclaredAccessibility == Accessibility.Public && SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, compilation.Assembly) ? "public" : "internal"))
-				.OrderBy(static extension => extension.TypeName, StringComparer.Ordinal).ToImmutableArray(),
+			Extensions = source is null
+				? []
+				: info.OptionalInterfaces.Concat(info.ProxyGroups.SelectMany(static group => group))
+					.Select(static item => item.Symbol).Concat([info.Symbol])
+					.GroupBy(static symbol => symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), StringComparer.Ordinal)
+					.Select(static group => group.First())
+					.Select(symbol => new ExtensionInfo(symbol.ContainingNamespace.IsGlobalNamespace ? string.Empty : symbol.ContainingNamespace.ToDisplayString(), symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), symbol.DeclaredAccessibility == Accessibility.Public && SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, compilation.Assembly) ? "public" : "internal"))
+					.OrderBy(static extension => extension.TypeName, StringComparer.Ordinal).ToImmutableArray(),
 		};
 	}
 
@@ -417,8 +419,8 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 		=> contract.GetAttributes().Any(static attribute => attribute.AttributeClass?.ToDisplayString() == KnownApis.GenerateShapeAttribute
 				|| (attribute.AttributeClass is { Name: KnownApis.TypeShapeProviderAttributeName } providerAttribute && providerAttribute.ContainingAssembly.Name == KnownApis.PolyTypeAssembly))
 			|| contract.AllInterfaces.Any(type => IsShapeableInterface(type) && SymbolEqualityComparer.Default.Equals(type.TypeArguments[0], contract))
-			? contract
-			: primaryContract;
+				? contract
+				: primaryContract;
 
 	private static bool IsShapeableInterface(INamedTypeSymbol type)
 		=> type.MetadataName == KnownApis.IShapeableMetadataName && type.ContainingNamespace.ToDisplayString() == KnownApis.PolyTypeNamespace && type.ContainingAssembly.Name == KnownApis.PolyTypeAssembly;
@@ -589,13 +591,15 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 
 				if (methodSignatures.Add(signature))
 				{
-					methods.Add(method.OptionalInterfaceId is null ? method : method with
-					{
-						OptionalRoutes = [
-							.. implemented.Where(item => item.Methods.Any(candidate => SymbolEqualityComparer.Default.Equals(candidate.Symbol, method.Symbol)))
-								.Select(static item => item.InterfaceId!.Value),
-						],
-					});
+					methods.Add(method.OptionalInterfaceId is null
+						? method
+						: method with
+						{
+							OptionalRoutes = [
+								.. implemented.Where(item => item.Methods.Any(candidate => SymbolEqualityComparer.Default.Equals(candidate.Symbol, method.Symbol)))
+									.Select(static item => item.InterfaceId!.Value),
+							],
+						});
 				}
 			}
 
@@ -899,8 +903,11 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 				p.Type is INamedTypeSymbol named && named.IsGenericType && named.ConstructedFrom.ToDisplayString() is "System.IObserver<T>" or "System.IProgress<T>"
 					? "__callback" + index
 					: GetLocalMarshalableAttribute(p.Type) is not null ? "__callback" + index : "__arg" + index));
-			string token = method.HasCancellationToken ? "__arg" + (method.Symbol.Parameters.Length - 1)
-				: enumerable ? "__enumerationCancellation" : "global::System.Threading.CancellationToken.None";
+			string token = method.HasCancellationToken
+				? "__arg" + (method.Symbol.Parameters.Length - 1)
+				: enumerable
+					? "__enumerationCancellation"
+					: "global::System.Threading.CancellationToken.None";
 			bool subscription = method.Kind is ProxyMethodKind.TaskOfT or ProxyMethodKind.ValueTaskOfT
 				&& method.Symbol.ReturnType is INamedTypeSymbol { IsGenericType: true } resultType
 				&& resultType.TypeArguments[0].WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString() == "System.IDisposable";
@@ -1003,10 +1010,13 @@ public sealed class ClientProxyGenerator : IIncrementalGenerator
 					&& !method.Symbol.Parameters.Any(static parameter => GetLocalMarshalableAttribute(parameter.Type) is { } attribute && IsLocalCallScoped(attribute)))
 				{
 					string replayArguments = string.Join(", ", method.Symbol.Parameters.Select((parameter, index) =>
-						method.HasCancellationToken && index == method.Symbol.Parameters.Length - 1 ? "__cancellationToken"
+						method.HasCancellationToken && index == method.Symbol.Parameters.Length - 1
+							? "__cancellationToken"
 							: parameter.Type is INamedTypeSymbol named && named.ConstructedFrom.ToDisplayString() == "System.IObserver<T>"
 								? "this.Context.Wrap(__arg" + index + ")"
-								: GetLocalMarshalableAttribute(parameter.Type) is not null ? "this.Context.WrapProxy(__arg" + index + ")" : "__arg" + index));
+								: GetLocalMarshalableAttribute(parameter.Type) is not null
+									? "this.Context.WrapProxy(__arg" + index + ")"
+									: "__arg" + index));
 					builder.Append(", async (__target, __cancellationToken) => await ((").Append(contract).Append(")__target).").Append(EscapeIdentifier(method.Symbol.Name)).Append("(").Append(replayArguments).Append(").ConfigureAwait(false)");
 				}
 

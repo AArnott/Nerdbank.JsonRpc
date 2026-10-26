@@ -310,8 +310,11 @@ public sealed class ResilientServiceProxy<T> : IResilientServiceProxy
 						this.previouslyAvailable = replacement is not null;
 						if (hadService || replacement is not null)
 						{
-							this.changes.Enqueue(replacement is null ? ResilientServiceProxyChangeKind.Lost
-								: hadService ? ResilientServiceProxyChangeKind.Replaced : ResilientServiceProxyChangeKind.Gained);
+							this.changes.Enqueue(replacement is null
+								? ResilientServiceProxyChangeKind.Lost
+								: hadService
+									? ResilientServiceProxyChangeKind.Replaced
+									: ResilientServiceProxyChangeKind.Gained);
 						}
 					}
 
