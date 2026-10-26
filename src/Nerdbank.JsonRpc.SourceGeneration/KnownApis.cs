@@ -27,6 +27,15 @@ internal static class KnownApis
 	/// <summary>The proxy interface group attribute metadata name.</summary>
 	internal const string JsonRpcProxyInterfaceGroupAttribute = "Nerdbank.JsonRpc.JsonRpcProxyInterfaceGroupAttribute";
 
+	/// <summary>The JSON-RPC client metadata name.</summary>
+	internal const string JsonRpc = "Nerdbank.JsonRpc.JsonRpc";
+
+	/// <summary>The JSON-RPC batch client metadata name.</summary>
+	internal const string JsonRpcBatch = "Nerdbank.JsonRpc.JsonRpcBatch";
+
+	/// <summary>The proxy attachment method name.</summary>
+	internal const string Attach = "Attach";
+
 	/// <summary>The RPC contract attribute metadata name.</summary>
 	internal const string JsonRpcContractAttribute = "Nerdbank.JsonRpc.JsonRpcContractAttribute";
 

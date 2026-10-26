@@ -11,3 +11,9 @@ items:
   href: NBJSONRPC004.md
 - name: "NBJSONRPC005: Do not store service rentals"
   href: NBJSONRPC005.md
+- name: "NBJSONRPC010: Annotate RPC proxy interfaces"
+  href: NBJSONRPC010.md
+- name: "NBJSONRPC011: Use supported interfaces for RPC proxies"
+  href: NBJSONRPC011.md
+- name: "NBJSONRPC050: Use IClientProxy for marshalable interface checks"
+  href: NBJSONRPC050.md
