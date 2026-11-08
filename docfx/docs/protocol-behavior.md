@@ -52,9 +52,54 @@ A supporting peer handles this notification internally, ahead of user target dis
 
 ### Logging and causal information
 
-Configure <xref:Nerdbank.JsonRpc.JsonRpc.Logger?displayProperty=nameWithType> before starting the connection. Shutdown logs include the original state, encoding, pending outbound count, and exception; transport logs identify inbound versus outbound failure. Use your logger's scopes or a connection-specific logger to attach a safe session label. Do not put secrets in labels. Message logs identify the envelope type without logging argument/result contents.
+Configure <xref:Nerdbank.JsonRpc.JsonRpc.Logger?displayProperty=nameWithType> before starting the connection.
+Shutdown logs include the original state, encoding, pending outbound count, exception, and local `ConnectionId`; transport failures identify inbound versus outbound failure.
+Use your logger's scopes or a connection-specific logger to attach a safe session label.
+Do not put secrets in labels.
 
 [!code-csharp[](../../samples/cs/connection-lifecycle.cs#connection-logging)]
+
+Diagnostics use standard structured logging properties; a receiver need not inspect a <xref:Nerdbank.JsonRpc.JsonRpcMessage> object or parse formatted text.
+
+| Event ID | Name | Level | Meaning |
+| --- | --- | --- | --- |
+| 1 | Message sent | Debug | An envelope was serialized and successfully flushed locally. |
+| 2 | Message received | Debug | An envelope was parsed, before dispatch or response matching. |
+| 100 | RpcOperationStarted | Information | A client call or server dispatch began. |
+| 101 | RpcOperationCompleted | Information / Warning | That operation reached one terminal outcome; failures use warning level, success, submission, and cancellation use information level. |
+| 102 | RpcResultConversionFailed | Warning | A successful result could not be converted to the caller's return type; includes the local exception. |
+
+Message events contain `Direction`, `MessageKind` (`Request`, `Notification`, `Result`, `Error`, `Batch`, or `Invalid`), `Method` when present, `RequestId`, `RequestIdKind` (`Absent`, `Null`, `String`, or `Number`), `ErrorCode` when present, and `ConnectionId`.
+A batch has a local `BatchId` and `BatchCount`, and each contained envelope receives its own event with that batch ID.
+Trace/span fields on transport events come from the envelope's W3C context, when present, not from the transport pump's ambient activity.
+
+Operation events contain `Role` (`Client` or `Server`), `MessageKind`, `Method`, ID value and kind, `ConnectionId`, `OperationId`, `TraceId`, `SpanId`, `Outcome`, `ErrorCode`, and `ElapsedMilliseconds`.
+Start and terminal events share an operation ID, including notifications that have no request ID.
+When information-level logging is enabled, asynchronous request and dispatch scopes carry operation metadata into nested logs.
+Warning-only logging does not create these scopes or eagerly format operation metadata for successful calls.
+Library handler-failure warnings include method, request, connection, and operation identifiers explicitly even without scopes; application logs require information-level logging to inherit the RPC scope.
+When no RPC activity is sampled, operation logs use the caller's ambient activity for correlation, if any.
+Trace/span fields are null when no activity exists; connection and operation IDs still allow local correlation.
+Connection IDs are local to each endpoint; use W3C traces to join endpoints.
+Match protocol responses by connection, request ID **and token kind**, and opposite message direction; a bidirectional connection can reuse an ID independently on both sides.
+
+Outcomes are `Succeeded`, `Submitted`, `RemoteError`, `HandlerError`, `Canceled`, `TimedOut`, `ConnectionError`, or `Exception`.
+Error codes are numeric, including custom codes and notification dispatch errors that have no response envelope.
+Exceptional local failures include the exception object; handler exceptions are retained in the existing warning logs.
+A client request succeeds here when its protocol response arrives, **before result conversion**; event 102 reports conversion failures separately.
+Server success means dispatch finished, not that its response was delivered.
+A client notification is `Submitted` when accepted by the outbound queue, not when received or successfully executed remotely.
+Only server dispatch can report a notification handler failure.
+
+Batched requests begin when added and their durations include waiting for batch submission.
+Batched notifications similarly remain pending until the batch is queued, canceled, or disposed.
+Cancellation or disposal of an unsent batched notification produces a `Canceled` terminal event.
+Inline internal progress and marshaled-lifetime notifications are observed as transport messages rather than target-dispatch operations.
+
+Message and operation metadata omit arguments, result contents, error messages, and error data.
+Unlike earlier versions, transport events are at debug level and no longer expose live envelope objects as logger state.
+Local exception logs still retain full exceptions, and protocol diagnostics may contain peer-supplied text.
+Treat method names, string IDs, exception messages, and peer diagnostics as potentially sensitive, untrusted input and apply your logging provider's access controls and rendering protections.
 
 Transport exceptions retain their causal chains. Because ProtocolViolationException has no public inner-exception constructor, a JSON syntax rejection retains the original <xref:System.Text.Json.JsonException> in its <xref:System.Exception.Data> under `ParserException`; the local transport logs that exception separately as well. The parser message is included in the protocol rejection message transmitted to the peer. Cleanup errors are logged independently of the original cause.
 

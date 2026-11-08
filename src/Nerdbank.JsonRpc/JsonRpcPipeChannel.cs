@@ -23,9 +23,6 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, System.IAsyn
 	/// <summary>The default maximum encoded message size, in bytes.</summary>
 	internal const int DefaultMaximumMessageSize = 8 * 1024 * 1024;
 
-	private static readonly EventId MessageSent = new(1, "Message sent");
-	private static readonly EventId MessageReceived = new(2, "Message received");
-
 	private readonly CancellationTokenSource disposalSource = new();
 	private readonly CancellationTokenSource inboundDisposalSource = new();
 	private readonly PipeReader pipeReader;
@@ -69,6 +66,9 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, System.IAsyn
 
 	/// <summary>Gets the serializer selected by this channel for application values.</summary>
 	public abstract JsonRpcSerializer Serializer { get; }
+
+	/// <summary>Gets a local identifier shared by this connection's diagnostics.</summary>
+	internal string DiagnosticConnectionId { get; } = Guid.NewGuid().ToString("N");
 
 	/// <summary>Gets the configured maximum size, in bytes, of a message.</summary>
 	protected int MaximumMessageSize => this.maximumMessageSize;
@@ -246,9 +246,6 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, System.IAsyn
 
 	protected abstract ValueTask SendMessageAsync(PipeWriter writer, JsonRpcMessage message, CancellationToken cancellationToken);
 
-	private static string FormatLoggedMessage(JsonRpcMessage message, Exception? exception)
-		=> $"JSON-RPC {message.GetType().Name}";
-
 	private async Task HandleInboundMessagesAsync(PipeReader reader, CancellationToken cancellationToken)
 	{
 		Exception? failure = null;
@@ -265,7 +262,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, System.IAsyn
 					break;
 				}
 
-				this.Logger.Log(LogLevel.Information, MessageReceived, message, null, FormatLoggedMessage);
+				JsonRpcDiagnostics.LogMessage(this, message, sent: false);
 				try
 				{
 					await this.inboundMessageWriter.WriteAsync(message, cancellationToken).ConfigureAwait(false);
@@ -284,7 +281,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, System.IAsyn
 		catch (Exception ex)
 		{
 			failure = ex;
-			this.Logger.LogError(ex, "JSON-RPC inbound transport failed; encoding: {Encoding}.", this.Encoding);
+			this.Logger.LogError(ex, "JSON-RPC inbound transport failed; encoding: {Encoding}; connection: {ConnectionId}.", this.Encoding, this.DiagnosticConnectionId);
 			if (ex.Data["ParserException"] is Exception parserException)
 			{
 				this.Logger.LogError(parserException, "Underlying JSON-RPC parser failure.");
@@ -364,7 +361,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, System.IAsyn
 							throw new EndOfStreamException("The JSON-RPC peer stopped reading output.");
 						}
 
-						this.Logger.Log(LogLevel.Information, MessageSent, message, null, FormatLoggedMessage);
+						JsonRpcDiagnostics.LogMessage(this, message, sent: true);
 						if (ReferenceEquals(message, this.finalNotification))
 						{
 							this.finalNotificationFlushed.TrySetResult(true);
@@ -384,7 +381,7 @@ public abstract class JsonRpcPipeChannel : Channel<JsonRpcMessage>, System.IAsyn
 		catch (Exception ex)
 		{
 			failure = ex;
-			this.Logger.LogError(ex, "JSON-RPC outbound transport failed; encoding: {Encoding}.", this.Encoding);
+			this.Logger.LogError(ex, "JSON-RPC outbound transport failed; encoding: {Encoding}; connection: {ConnectionId}.", this.Encoding, this.DiagnosticConnectionId);
 			this.inboundMessageWriter.TryComplete(ex);
 			this.Writer.TryComplete(ex);
 			this.outboundMessageWriter.TryComplete(ex);

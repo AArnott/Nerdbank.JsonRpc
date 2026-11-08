@@ -85,6 +85,14 @@ dotnet run --project .\test\Benchmarks\Benchmarks.csproj --no-build -c Release -
 
 This pins execution to one logical processor and retains outliers. Inspect the warmup and measurement distributions: insufficient warmup can include tiered-compilation transitions in the reported results, even with fixed affinity.
 
+`RpcRequestTimeoutBenchmarks` and `RpcNotificationSubmissionBenchmarks` also vary `Logging` between `Disabled`, `Warning`, and `Debug`.
+The enabled logger consumes formatted messages and maintains real external scopes without console or file I/O.
+Both request endpoints use the same level, and no activity listener is registered by these benchmarks.
+Use warning-only successful calls to detect eager diagnostic allocations even when no events are emitted.
+Debug includes transport events for request/batch round trips; notification submission remains a queue-acceptance-only measurement.
+For a focused comparison, select `*RpcRequestTimeoutBenchmarks.Proxy*TimeoutEnabled: False*Cancellable: False*`, `*RpcRequestTimeoutBenchmarks.Batch*TimeoutEnabled: False*Cancellable: False*`, or `*RpcNotificationSubmissionBenchmarks.DirectEncoded*Suspend: False*`.
+Use identical filters and logging instrumentation on the baseline and candidate revisions.
+
 Compare baseline and candidate with the same runtime, parameters, operation counts, and CPU affinity. For allocation optimizations, use sampled allocation stacks for attribution and `Allocated` bytes per operation for the quantitative result. Repeat comparisons when scheduling or multimodal distributions obscure latency changes. Keep generated reports and traces outside source control; record the measured result and important tradeoffs in the change description.
 
 `ProxyEventAttachmentBenchmarks` measures connection construction, generated event proxy attachment, and disposal, including allocations. Its warmed measurements exercise reuse of the generated proxy's static event dispatch metadata.

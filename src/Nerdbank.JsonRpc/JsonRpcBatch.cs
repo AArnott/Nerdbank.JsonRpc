@@ -347,6 +347,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			{
 				if (entry.ResponseCompletionSource is null)
 				{
+					entry.CompleteNotification();
 					entry.Dispose();
 				}
 			}
@@ -370,6 +371,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 				}
 				else
 				{
+					entry.CompleteNotification(ex);
 					entry.Dispose();
 				}
 			}
@@ -489,6 +491,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		TaskCompletionSource<JsonRpcResponse> responseTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 		CancellationTokenSource? timeoutSource = this.owner.CreateOutboundRequestTimeoutSource(cancellationToken);
 		Entry entry = new(this, request, responseTcs, timeoutSource?.Token ?? cancellationToken);
+		entry.InitializeCancellation();
 		try
 		{
 			this.AddEntry(entry);
@@ -510,25 +513,26 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			: this.AwaitBatchResponseWithTimeoutAsync(responseTcs, entry, request, timeoutSource, cancellationToken);
 	}
 
+#if NET
+	[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
 	private async ValueTask<JsonRpcResponse> AwaitBatchResponseAsync(TaskCompletionSource<JsonRpcResponse> responseTcs, Entry entry, JsonRpcRequest request)
 	{
 		using Activity? activity = JsonRpcTracing.StartClientActivity(request.Method);
+		JsonRpcOperation operation = JsonRpcOperation.Start(this.owner, request, activity, "Client");
+		using IDisposable? logScope = operation.BeginScope();
 		JsonRpcTracing.ApplyTraceContext(request);
 		try
 		{
 #pragma warning disable VSTHRD003 // Awaiting a TaskCompletionSource completed by inbound JSON-RPC responses.
 			JsonRpcResponse response = await responseTcs.Task.ConfigureAwait(false);
 #pragma warning restore VSTHRD003
-			if (response is JsonRpcError)
-			{
-				activity?.SetStatus(ActivityStatusCode.Error);
-			}
-
+			operation.Complete(response);
 			return response;
 		}
-		catch
+		catch (Exception ex)
 		{
-			activity?.SetStatus(ActivityStatusCode.Error);
+			operation.Fail(ex);
 			throw;
 		}
 		finally
@@ -550,22 +554,20 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		using (timeoutSource)
 		{
 			using Activity? activity = JsonRpcTracing.StartClientActivity(request.Method);
+			JsonRpcOperation operation = JsonRpcOperation.Start(this.owner, request, activity, "Client");
+			using IDisposable? logScope = operation.BeginScope();
 			JsonRpcTracing.ApplyTraceContext(request);
 			try
 			{
 #pragma warning disable VSTHRD003 // Awaiting a TaskCompletionSource completed by inbound JSON-RPC responses.
 				JsonRpcResponse response = await this.owner.AwaitOutboundResponseAsync(responseTcs.Task, timeoutSource.Token, cancellationToken).ConfigureAwait(false);
 #pragma warning restore VSTHRD003
-				if (response is JsonRpcError)
-				{
-					activity?.SetStatus(ActivityStatusCode.Error);
-				}
-
+				operation.Complete(response);
 				return response;
 			}
-			catch (TimeoutException) when (timeoutSource.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+			catch (TimeoutException ex) when (timeoutSource.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
 			{
-				activity?.SetStatus(ActivityStatusCode.Error);
+				operation.Fail(ex, timedOut: true);
 				this.OnEntryCanceled(entry);
 				if (responseTcs.Task.Status != TaskStatus.Canceled)
 				{
@@ -574,9 +576,9 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 
 				throw;
 			}
-			catch
+			catch (Exception ex)
 			{
-				activity?.SetStatus(ActivityStatusCode.Error);
+				operation.Fail(ex);
 				throw;
 			}
 			finally
@@ -588,8 +590,29 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 
 	private void AddNotification(JsonRpcRequest request, CancellationToken cancellationToken)
 	{
-		JsonRpcTracing.ApplyTraceContext(request);
-		Entry entry = new(this, request, responseCompletionSource: null, cancellationToken);
+		Activity? parentActivity = Activity.Current;
+		Activity? activity = JsonRpcTracing.StartClientActivity(request.Method);
+		JsonRpcOperation operation = JsonRpcOperation.Start(this.owner, request, activity, "Client");
+		Entry entry;
+		try
+		{
+			JsonRpcTracing.ApplyTraceContext(request);
+			entry = operation.IsEnabled
+				? new DiagnosticNotificationEntry(this, request, cancellationToken, operation, activity)
+				: new Entry(this, request, responseCompletionSource: null, cancellationToken);
+			entry.InitializeCancellation();
+		}
+		catch (Exception ex)
+		{
+			operation.Fail(ex);
+			activity?.Dispose();
+			throw;
+		}
+		finally
+		{
+			Activity.Current = parentActivity;
+		}
+
 		try
 		{
 			this.AddEntry(entry);
@@ -598,8 +621,9 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 				entry.ReleaseAbandonedArguments();
 			}
 		}
-		catch
+		catch (Exception ex)
 		{
+			entry.CompleteNotification(ex);
 			entry.ReleaseAbandonedArguments();
 			entry.Dispose();
 			throw;
@@ -697,12 +721,12 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		}
 	}
 
-	private sealed class Entry
+	private class Entry
 	{
 		private readonly JsonRpcBatch owner;
 		private readonly CancellationToken cancellationToken;
-		private readonly CancellationTokenRegistration cancellationRegistration;
 		private readonly object syncObject = new();
+		private CancellationTokenRegistration cancellationRegistration;
 		private bool sent;
 		private bool canceled;
 		private bool cancellationSubmitted;
@@ -718,14 +742,24 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			this.cancellationToken = cancellationToken;
 			this.Request = request;
 			this.ResponseCompletionSource = responseCompletionSource;
-			if (cancellationToken.IsCancellationRequested)
+		}
+
+		internal JsonRpcRequest Request { get; }
+
+		internal TaskCompletionSource<JsonRpcResponse>? ResponseCompletionSource { get; }
+
+		/// <summary>Registers cancellation after any derived diagnostic state has been initialized.</summary>
+		internal void InitializeCancellation()
+		{
+			if (this.cancellationToken.IsCancellationRequested)
 			{
 				this.canceled = true;
 				this.ResponseCompletionSource?.TrySetCanceled(this.cancellationToken.IsCancellationRequested ? this.cancellationToken : CancellationToken.None);
+				this.CancelNotification();
 			}
 			else
 			{
-				this.cancellationRegistration = cancellationToken.Register(
+				this.cancellationRegistration = this.cancellationToken.Register(
 					static state =>
 					{
 						Entry entry = (Entry)state!;
@@ -735,9 +769,11 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			}
 		}
 
-		internal JsonRpcRequest Request { get; }
-
-		internal TaskCompletionSource<JsonRpcResponse>? ResponseCompletionSource { get; }
+		/// <summary>Records submission or abandonment of a batched notification.</summary>
+		/// <param name="exception">The submission failure, if any.</param>
+		internal virtual void CompleteNotification(Exception? exception = null)
+		{
+		}
 
 		internal void CancelUnsent()
 		{
@@ -747,6 +783,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			}
 
 			this.ResponseCompletionSource?.TrySetCanceled(this.cancellationToken.IsCancellationRequested ? this.cancellationToken : CancellationToken.None);
+			this.CancelNotification();
 			this.ReleaseAbandonedArguments();
 			this.Dispose();
 		}
@@ -784,6 +821,7 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 			}
 
 			this.ResponseCompletionSource?.TrySetCanceled(this.cancellationToken.IsCancellationRequested ? this.cancellationToken : CancellationToken.None);
+			this.CancelNotification();
 			this.ReleaseAbandonedArguments();
 			return true;
 		}
@@ -858,6 +896,60 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 		internal void Dispose()
 		{
 			this.cancellationRegistration.Dispose();
+		}
+
+		/// <summary>Records cancellation of an unsent notification when diagnostics are enabled.</summary>
+		protected virtual void CancelNotification()
+		{
+		}
+	}
+
+	/// <summary>Stores notification diagnostics without enlarging ordinary batch entries.</summary>
+	private sealed class DiagnosticNotificationEntry : Entry
+	{
+		private readonly CancellationToken cancellationToken;
+		private JsonRpcOperation operation;
+		private Activity? activity;
+		private int completed;
+
+		/// <summary>Initializes a new instance of the <see cref="DiagnosticNotificationEntry"/> class.</summary>
+		/// <param name="owner">The batch.</param>
+		/// <param name="request">The notification.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <param name="operation">The operation diagnostics.</param>
+		/// <param name="activity">The operation activity.</param>
+		internal DiagnosticNotificationEntry(JsonRpcBatch owner, JsonRpcRequest request, CancellationToken cancellationToken, JsonRpcOperation operation, Activity? activity)
+			: base(owner, request, responseCompletionSource: null, cancellationToken)
+		{
+			this.cancellationToken = cancellationToken;
+			this.operation = operation;
+			this.activity = activity;
+		}
+
+		/// <inheritdoc/>
+		internal override void CompleteNotification(Exception? exception = null)
+		{
+			if (Interlocked.Exchange(ref this.completed, 1) != 0)
+			{
+				return;
+			}
+
+			if (exception is null)
+			{
+				this.operation.Complete();
+			}
+			else
+			{
+				this.operation.Fail(exception);
+			}
+
+			Interlocked.Exchange(ref this.activity, null)?.Dispose();
+		}
+
+		/// <inheritdoc/>
+		protected override void CancelNotification()
+		{
+			this.CompleteNotification(new OperationCanceledException(this.cancellationToken));
 		}
 	}
 }

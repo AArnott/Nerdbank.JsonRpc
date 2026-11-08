@@ -61,7 +61,7 @@ internal static class ObserverMarshaler
 		}
 		catch (Exception ex)
 		{
-			dispatch.JsonRpc.LogApplicationError(ex);
+			dispatch.JsonRpc.LogApplicationError(ex, dispatch);
 		}
 
 		return new(default(DispatchResponse));

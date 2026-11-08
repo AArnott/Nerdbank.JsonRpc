@@ -37,7 +37,7 @@ public partial class JsonRpcClientTests : TestBase
 		using JsonRpc rpc = new(channel) { Logger = logger };
 		rpc.Start();
 
-		Assert.Equal("JSON-RPC JsonRpcRequest", await logger.MessageReceived.Task.WithCancellation(this.TimeoutToken));
+		Assert.StartsWith("JSON-RPC Received Notification: test;", await logger.MessageReceived.Task.WithCancellation(this.TimeoutToken));
 	}
 
 	[Test]

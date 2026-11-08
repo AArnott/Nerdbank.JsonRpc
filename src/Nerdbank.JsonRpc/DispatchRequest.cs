@@ -19,4 +19,7 @@ internal struct DispatchRequest
 	internal required CancellationToken CancellationToken { get; init; }
 
 	internal bool IsNotification => this.Request.Id is null;
+
+	/// <summary>Gets or sets the process-local identifier used to correlate dispatch diagnostics.</summary>
+	internal long DiagnosticOperationId { get; set; }
 }
