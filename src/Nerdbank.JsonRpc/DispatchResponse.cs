@@ -10,4 +10,7 @@ internal struct DispatchResponse
 	internal bool IsProtocolViolation { get; set; }
 
 	internal bool IsError { get; init; }
+
+	/// <summary>Gets the diagnostic error code, including when a notification has no response envelope.</summary>
+	internal JsonRpcErrorCode? ErrorCode { get; init; }
 }

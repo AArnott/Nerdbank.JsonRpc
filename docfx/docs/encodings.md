@@ -10,7 +10,16 @@ For JSON, configure a <xref:Nerdbank.Json.JsonSerializer>, pass it to a <xref:Ne
 
 ## Logging and distributed tracing
 
-Nerdbank.JsonRpc uses `Microsoft.Extensions.Logging` for transport message and failure events. Its <xref:Nerdbank.JsonRpc.JsonRpc.ActivitySource> emits client activities for outbound requests (including batched requests) and direct notifications, and server activities for dispatched requests. Subscribe with an `ActivityListener` or OpenTelemetry tracer provider using <xref:Nerdbank.JsonRpc.JsonRpc.ActivitySource>.Name. Unsampled inbound requests with W3C context still establish a propagation activity so nested operations and logs retain their correlation; otherwise unsampled RPC calls do not create activities. Activities include the `rpc.system` and `rpc.method` tags and are marked as errors when an RPC fails.
+Nerdbank.JsonRpc uses `Microsoft.Extensions.Logging` for structured transport, RPC operation, and failure events.
+See [Logging and causal information](protocol-behavior.md#logging-and-causal-information) for event IDs, fields, and completion semantics.
+Transport traffic is logged at debug level; operation summaries are logged at information level, with failed outcomes at warning level.
+
+Its <xref:Nerdbank.JsonRpc.JsonRpc.ActivitySource> emits client activities for outbound requests and notifications (including batch entries), and server activities for dispatched requests.
+Subscribe with an <xref:System.Diagnostics.ActivityListener> or OpenTelemetry tracer provider using <xref:Nerdbank.JsonRpc.JsonRpc.ActivitySource>.Name.
+Unsampled inbound requests with W3C context still establish a propagation activity so nested operations and logs retain their correlation; otherwise unsampled RPC calls do not create activities.
+Activities include `rpc.system`, `rpc.method`, `rpc.message_kind`, `rpc.request_id`, `rpc.request_id_kind`, `rpc.connection_id`, and terminal `rpc.outcome` and `rpc.error_code` tags.
+Failed operations are marked as errors; cancellation is distinguished from failure and does not set error status.
+Success leaves activity status unset.
 
 When a W3C activity is current, its `traceparent` and optional `tracestate` are carried as top-level JSON-RPC envelope extension properties. Both built-in encodings preserve these fields, and peers that do not use distributed tracing can ignore them. This lets a server activity be a child of the caller's client activity across a process boundary.
 

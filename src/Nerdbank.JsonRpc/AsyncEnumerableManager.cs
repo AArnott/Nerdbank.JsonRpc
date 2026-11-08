@@ -613,6 +613,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 						? new JsonRpcError { Id = missingId, Error = new() { Code = JsonRpcErrorCode.NoMarshaledObjectFound, Message = $"No async enumerator with token {token} exists." } }
 						: null,
 					IsError = true,
+					ErrorCode = JsonRpcErrorCode.NoMarshaledObjectFound,
 				};
 			}
 
@@ -640,24 +641,26 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		}
 		catch (OperationCanceledException ex) when (dispatch.CancellationToken.IsCancellationRequested)
 		{
-			owner.LogApplicationError(ex);
+			owner.LogApplicationError(ex, dispatch);
 			return new DispatchResponse
 			{
 				Response = id is RequestId cancelledId
 					? new JsonRpcError { Id = cancelledId, Error = owner.CreateApplicationError(ex, JsonRpcErrorCode.RequestCancelled) }
 					: null,
 				IsError = true,
+				ErrorCode = JsonRpcErrorCode.RequestCancelled,
 			};
 		}
 		catch (Exception ex)
 		{
-			owner.LogApplicationError(ex);
+			owner.LogApplicationError(ex, dispatch);
 			return new DispatchResponse
 			{
 				Response = id is RequestId errorId
 					? new JsonRpcError { Id = errorId, Error = owner.CreateApplicationError(ex, JsonRpcErrorCode.InternalError) }
 					: null,
 				IsError = true,
+				ErrorCode = JsonRpcDiagnostics.GetApplicationErrorCode(ex, JsonRpcErrorCode.InternalError),
 			};
 		}
 	}
@@ -674,7 +677,13 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		}
 		catch (Exception ex)
 		{
-			owner.LogApplicationError(ex);
+			owner.LogApplicationError(ex, dispatch);
+			return new DispatchResponse
+			{
+				Response = id is RequestId errorId ? new JsonRpcResult { Id = errorId, Result = this.CreateNullValue() } : null,
+				IsError = true,
+				ErrorCode = JsonRpcDiagnostics.GetApplicationErrorCode(ex, JsonRpcErrorCode.InternalError),
+			};
 		}
 
 		return new DispatchResponse { Response = id is RequestId responseId ? new JsonRpcResult { Id = responseId, Result = this.CreateNullValue() } : null };

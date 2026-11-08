@@ -246,6 +246,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 									? new JsonRpcError { Id = id, Error = new() { Code = JsonRpcErrorCode.InvalidParams, Message = $"Expected at most {parameterSetters.Length} arguments but received {values.Count}." } }
 									: null,
 								IsError = true,
+								ErrorCode = JsonRpcErrorCode.InvalidParams,
 							};
 						}
 
@@ -268,6 +269,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 											? new JsonRpcError { Id = id, Error = new() { Code = JsonRpcErrorCode.InvalidParams, Message = $"Unknown parameter name: '{values[i].Name}'." } }
 											: null,
 										IsError = true,
+										ErrorCode = JsonRpcErrorCode.InvalidParams,
 									};
 								}
 
@@ -322,18 +324,20 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 								}
 								: null,
 							IsError = true,
+							ErrorCode = JsonRpcErrorCode.InvalidParams,
 						};
 					}
 				}
 				catch (Exception ex) when (ex is not OperationCanceledException)
 				{
-					dispatch.JsonRpc.LogApplicationError(ex);
+					dispatch.JsonRpc.LogApplicationError(ex, dispatch);
 					return new DispatchResponse
 					{
 						Response = dispatch.Request.Id is RequestId id
 							? new JsonRpcError { Id = id, Error = dispatch.JsonRpc.CreateApplicationError(ex, JsonRpcErrorCode.InvalidParams) }
 							: null,
 						IsError = true,
+						ErrorCode = JsonRpcDiagnostics.GetApplicationErrorCode(ex, JsonRpcErrorCode.InvalidParams),
 					};
 				}
 			}
@@ -347,6 +351,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 
 			var target = (TDeclaringType)dispatch.TargetInstance!;
 			JsonRpcResponse? response;
+			JsonRpcErrorCode? errorCode = null;
 			try
 			{
 				TResult result = await invoker(ref target, ref argState).ConfigureAwait(false);
@@ -377,7 +382,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			}
 			catch (OperationCanceledException ex) when (dispatch.CancellationToken.IsCancellationRequested && dispatch.Request.Id is RequestId id)
 			{
-				dispatch.JsonRpc.LogApplicationError(ex);
+				dispatch.JsonRpc.LogApplicationError(ex, dispatch);
 				response = new JsonRpcError
 				{
 					Id = id,
@@ -387,7 +392,8 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			catch (Exception ex)
 			{
 				isError = true;
-				dispatch.JsonRpc.LogApplicationError(ex);
+				errorCode = JsonRpcDiagnostics.GetApplicationErrorCode(ex, JsonRpcErrorCode.InternalError);
+				dispatch.JsonRpc.LogApplicationError(ex, dispatch);
 				if (dispatch.Request.Id is RequestId id)
 				{
 					response = new JsonRpcError
@@ -402,7 +408,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 				}
 			}
 
-			return new DispatchResponse { Response = response, IsError = isError || response is JsonRpcError };
+			return new DispatchResponse { Response = response, IsError = isError || response is JsonRpcError, ErrorCode = errorCode };
 		}
 	}
 

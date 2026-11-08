@@ -86,6 +86,9 @@ public partial class JsonRpcTracingTests : TestBase
 			Assert.Equal(parent.SpanId, activity.ParentSpanId);
 			Assert.Equal("jsonrpc", activity.GetTagItem("rpc.system"));
 			Assert.NotNull(activity.GetTagItem("rpc.method"));
+			Assert.Equal(Equals(activity.GetTagItem("rpc.method"), "notify") ? "Notification" : "Request", activity.GetTagItem("rpc.message_kind"));
+			Assert.NotNull(activity.GetTagItem("rpc.connection_id"));
+			Assert.NotNull(activity.GetTagItem("rpc.outcome"));
 		}
 
 		foreach (Activity activity in serverActivities)
@@ -97,6 +100,8 @@ public partial class JsonRpcTracingTests : TestBase
 
 		Assert.Equal(1, clientActivities.Count(activity => activity.Status == ActivityStatusCode.Error));
 		Assert.Equal(2, serverActivities.Count(activity => activity.Status == ActivityStatusCode.Error));
+		Assert.Equal("RemoteError", Assert.Single(clientActivities, activity => activity.Status == ActivityStatusCode.Error).GetTagItem("rpc.outcome"));
+		Assert.Equal((long)JsonRpcErrorCode.InternalError, Assert.Single(clientActivities, activity => activity.Status == ActivityStatusCode.Error).GetTagItem("rpc.error_code"));
 	}
 
 	private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding) => encoding switch

@@ -29,12 +29,16 @@ public class RpcNotificationSubmissionBenchmarks
 	[Params(false, true)]
 	public bool Suspend { get; set; }
 
+	/// <summary>Gets or sets the enabled logging level.</summary>
+	[Params(RpcLoggingMode.Disabled, RpcLoggingMode.Warning, RpcLoggingMode.Debug)]
+	public RpcLoggingMode Logging { get; set; }
+
 	/// <summary>Creates the client and validates each submission path.</summary>
 	[GlobalSetup]
 	public async Task SetupAsync()
 	{
 		this.channel = new(this.Encoding, this.Suspend);
-		this.rpc = new(this.channel);
+		this.rpc = new(this.channel) { Logger = RpcBenchmarkLogger.Create(this.Logging) };
 		this.rpc.Start();
 		this.proxy = this.rpc.Attach<INotificationBenchmarkContract>();
 		using (JsonRpcArgumentsBuilder builder = this.rpc.CreateArguments(named: false, count: 1))

@@ -29,6 +29,9 @@ public class RpcRequestTimeoutBenchmarks
 	[Params(false, true)]
 	public bool Cancellable { get; set; }
 
+	[Params(RpcLoggingMode.Disabled, RpcLoggingMode.Warning, RpcLoggingMode.Debug)]
+	public RpcLoggingMode Logging { get; set; }
+
 	[GlobalSetup]
 	public async Task SetupAsync()
 	{
@@ -38,8 +41,9 @@ public class RpcRequestTimeoutBenchmarks
 		this.clientRpc = new JsonRpc(this.clientChannel, new JsonRpcOptions
 		{
 			OutboundRequestTimeout = this.TimeoutEnabled ? TimeSpan.FromMinutes(1) : Timeout.InfiniteTimeSpan,
-		});
-		this.serverRpc = new JsonRpc(this.serverChannel);
+		})
+		{ Logger = RpcBenchmarkLogger.Create(this.Logging) };
+		this.serverRpc = new JsonRpc(this.serverChannel) { Logger = RpcBenchmarkLogger.Create(this.Logging) };
 		this.serverRpc.AddRpcTarget<IRpcBenchmarkContract>(new RpcBenchmarkServer());
 		this.clientRpc.Start();
 		this.serverRpc.Start();
