@@ -274,6 +274,53 @@ public partial class JsonRpcDiagnosticsTests : TestBase
 	}
 
 	[Test]
+	[Arguments(JsonRpcEncoding.Json, false)]
+	[Arguments(JsonRpcEncoding.Json, true)]
+	[Arguments(JsonRpcEncoding.MessagePack, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, true)]
+	public void DisposingUnsentBatchPreservesCurrentActivity(JsonRpcEncoding encoding, bool noCurrentActivity)
+	{
+		string sourceName = JsonRpc.ActivitySource.Name;
+		using Activity parent = new Activity("notification parent").SetIdFormat(ActivityIdFormat.W3C).Start();
+		ConcurrentQueue<Activity> stopped = new();
+		using ActivityListener listener = new()
+		{
+			ShouldListenTo = source => source.Name == sourceName,
+			Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+			ActivityStopped = activity =>
+			{
+				if (activity.TraceId == parent.TraceId && activity.Kind == ActivityKind.Client)
+				{
+					stopped.Enqueue(activity);
+				}
+			},
+		};
+		ActivitySource.AddActivityListener(listener);
+		using Fixture fixture = new(encoding);
+		using JsonRpcBatch batch = fixture.Client.CreateBatch();
+		batch.Attach<IEchoService>().Notify("notification", this.TimeoutToken);
+		Assert.Same(parent, Activity.Current);
+		using Activity? completionActivity = noCurrentActivity ? null : new Activity("batch disposal").SetIdFormat(ActivityIdFormat.W3C).Start();
+		if (noCurrentActivity)
+		{
+			Activity.Current = null;
+		}
+
+		try
+		{
+			batch.Dispose();
+			batch.Dispose();
+			Assert.Same(completionActivity, Activity.Current);
+			Assert.Equal("Canceled", Assert.Single(stopped).GetTagItem("rpc.outcome"));
+			Assert.Single(fixture.ClientLogs.Entries, entry => entry.Id == 101);
+		}
+		finally
+		{
+			Activity.Current = parent;
+		}
+	}
+
+	[Test]
 	public async Task ResultConversionFailureIsSeparateFromProtocolSuccess()
 	{
 		(Channel<JsonRpcMessage> peer, Channel<JsonRpcMessage> local) = MockChannel<JsonRpcMessage>.CreatePair();

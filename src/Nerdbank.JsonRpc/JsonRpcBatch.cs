@@ -943,7 +943,22 @@ public class JsonRpcBatch : IJsonRpcClient, IDisposable, IArgumentsBuilderContex
 				this.operation.Fail(exception);
 			}
 
-			Interlocked.Exchange(ref this.activity, null)?.Dispose();
+			if (Interlocked.Exchange(ref this.activity, null) is Activity activity)
+			{
+				// Stopping a detached activity must not restore its original parent into the caller's context.
+				Activity? currentActivity = Activity.Current;
+				try
+				{
+					activity.Dispose();
+				}
+				finally
+				{
+					if (!ReferenceEquals(currentActivity, activity))
+					{
+						Activity.Current = currentActivity;
+					}
+				}
+			}
 		}
 
 		/// <inheritdoc/>
