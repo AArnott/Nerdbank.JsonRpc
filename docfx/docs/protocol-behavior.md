@@ -90,6 +90,7 @@ A client request succeeds here when its protocol response arrives, **before resu
 Server success means dispatch finished, not that its response was delivered.
 A client notification is `Submitted` when accepted by the outbound queue, not when received or successfully executed remotely.
 Only server dispatch can report a notification handler failure.
+Failures caught by observer callbacks or enumerator-abort handlers still produce a server failure event without changing their wire-response policy.
 
 Batched requests begin when added and their durations include waiting for batch submission.
 Batched notifications similarly remain pending until the batch is queued, canceled, or disposed.

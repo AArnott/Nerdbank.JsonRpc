@@ -100,6 +100,90 @@ public partial class JsonRpcDiagnosticsTests : TestBase
 	}
 
 	[Test]
+	[Arguments(JsonRpcEncoding.Json, false)]
+	[Arguments(JsonRpcEncoding.Json, true)]
+	[Arguments(JsonRpcEncoding.MessagePack, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, true)]
+	public async Task ApplicationErrorCodesArePreservedForRequestsAndNotifications(JsonRpcEncoding encoding, bool notification)
+	{
+		using Fixture fixture = new(encoding, LogLevel.Warning);
+		if (notification)
+		{
+			fixture.Client.Attach<IEchoService>().Notify("custom", this.TimeoutToken);
+		}
+		else
+		{
+			RemoteInvocationException exception = await Assert.ThrowsAsync<RemoteInvocationException>(() => fixture.Client.Attach<IEchoService>().EchoAsync("custom", this.TimeoutToken));
+			Assert.Equal((JsonRpcErrorCode)12345, exception.ErrorDetails.Code);
+		}
+
+		await fixture.ServerLogs.WaitForAsync(entries => entries.Any(entry => entry.Id == 101), this.TimeoutToken);
+		Entry failure = Assert.Single(fixture.ServerLogs.Entries, entry => entry.Id == 101);
+		Assert.Equal("HandlerError", failure.Values["Outcome"]);
+		Assert.Equal(12345L, failure.Values["ErrorCode"]);
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, "onNext")]
+	[Arguments(JsonRpcEncoding.Json, "onError")]
+	[Arguments(JsonRpcEncoding.Json, "onCompleted")]
+	[Arguments(JsonRpcEncoding.MessagePack, "onNext")]
+	[Arguments(JsonRpcEncoding.MessagePack, "onError")]
+	[Arguments(JsonRpcEncoding.MessagePack, "onCompleted")]
+	public async Task ObserverCallbackFailuresHaveCorrelatedTerminalEvents(JsonRpcEncoding encoding, string method)
+	{
+		using Fixture fixture = new(encoding, LogLevel.Warning);
+		ObserverService service = new();
+		fixture.Server.AddRpcTarget<IObserverService>(service);
+		InvalidOperationException exception = new("Expected observer failure");
+		using IDisposable subscription = await fixture.Client.Attach<IObserverService>().SubscribeAsync(new ThrowingObserver(exception), this.TimeoutToken);
+		IObserver<int> observer = Assert.IsAssignableFrom<IObserver<int>>(service.Subscriber);
+		switch (method)
+		{
+			case "onNext":
+				observer.OnNext(1);
+				break;
+			case "onError":
+				observer.OnError(new Exception("remote error"));
+				break;
+			case "onCompleted":
+				observer.OnCompleted();
+				break;
+		}
+
+		await fixture.ClientLogs.WaitForAsync(entries => entries.Any(entry => entry.Id == 101 && entry.Values["Method"] is string name && name.EndsWith("/" + method, StringComparison.Ordinal)), this.TimeoutToken);
+		Entry failure = Assert.Single(fixture.ClientLogs.Entries, entry => entry.Id == 101);
+		Assert.Equal("HandlerError", failure.Values["Outcome"]);
+		Assert.Equal((long)JsonRpcErrorCode.InternalError, failure.Values["ErrorCode"]);
+		Assert.Contains(fixture.ClientLogs.Entries, entry => ReferenceEquals(entry.Exception, exception) && Equals(entry.Values["OperationId"], failure.Values["OperationId"]));
+	}
+
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, false)]
+	[Arguments(JsonRpcEncoding.Json, true)]
+	[Arguments(JsonRpcEncoding.MessagePack, false)]
+	[Arguments(JsonRpcEncoding.MessagePack, true)]
+	public async Task EnumeratorAbortFailuresAreLoggedWithoutChangingAcknowledgment(JsonRpcEncoding encoding, bool notification)
+	{
+		using Fixture fixture = new(encoding);
+		if (notification)
+		{
+			await fixture.Client.NotifyAsync("$/enumerator/abort", default(JsonRpcValue), this.TimeoutToken);
+		}
+		else
+		{
+			await fixture.Client.RequestAsync("$/enumerator/abort", default(JsonRpcValue), this.TimeoutToken);
+			Assert.Equal("Succeeded", Assert.Single(fixture.ClientLogs.Entries, entry => entry.Id == 101).Values["Outcome"]);
+		}
+
+		await fixture.ServerLogs.WaitForAsync(entries => entries.Any(entry => entry.Id == 101), this.TimeoutToken);
+		Entry failure = Assert.Single(fixture.ServerLogs.Entries, entry => entry.Id == 101);
+		Assert.Equal("HandlerError", failure.Values["Outcome"]);
+		Assert.Equal((long)JsonRpcErrorCode.InternalError, failure.Values["ErrorCode"]);
+		Assert.Contains(fixture.ServerLogs.Entries, entry => entry.Exception is InvalidOperationException && Equals(entry.Values["OperationId"], failure.Values["OperationId"]));
+	}
+
+	[Test]
 	[Arguments(false, false)]
 	[Arguments(false, true)]
 	[Arguments(true, false)]
@@ -413,9 +497,12 @@ public partial class JsonRpcDiagnosticsTests : TestBase
 
 	private sealed class EchoService : IEchoService
 	{
-		public Task<string> EchoAsync(string value, CancellationToken cancellationToken) => value == "fail"
-			? Task.FromException<string>(new InvalidOperationException("Expected failure"))
-			: Task.FromResult(value);
+		public Task<string> EchoAsync(string value, CancellationToken cancellationToken) => value switch
+		{
+			"fail" => Task.FromException<string>(new InvalidOperationException("Expected failure")),
+			"custom" => Task.FromException<string>(new JsonRpcException(new() { Code = (JsonRpcErrorCode)12345, Message = "Expected custom failure" })),
+			_ => Task.FromResult(value),
+		};
 
 		public void Notify(string value, CancellationToken cancellationToken)
 		{
@@ -423,9 +510,23 @@ public partial class JsonRpcDiagnosticsTests : TestBase
 			{
 				throw new InvalidOperationException("Expected notification failure");
 			}
+
+			if (value == "custom")
+			{
+				throw new JsonRpcException(new() { Code = (JsonRpcErrorCode)12345, Message = "Expected custom failure" });
+			}
 		}
 
 		public Task<int> DoubleAsync(int value, CancellationToken cancellationToken) => Task.FromResult(value * 2);
+	}
+
+	private sealed class ThrowingObserver(Exception exception) : IObserver<int>
+	{
+		public void OnNext(int value) => throw exception;
+
+		public void OnError(Exception error) => throw exception;
+
+		public void OnCompleted() => throw exception;
 	}
 
 	private sealed class RecordingLogger(LogLevel minimum = LogLevel.Debug) : ILogger

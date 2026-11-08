@@ -9,6 +9,15 @@ namespace Nerdbank.JsonRpc;
 /// <summary>Emits payload-free structured protocol and operation diagnostics.</summary>
 internal static class JsonRpcDiagnostics
 {
+	/// <summary>Gets the application error code using the same policy as error responses.</summary>
+	/// <param name="exception">The application exception.</param>
+	/// <param name="fallback">The code used when the exception does not supply local error details.</param>
+	/// <returns>The diagnostic error code.</returns>
+	internal static JsonRpcErrorCode GetApplicationErrorCode(Exception exception, JsonRpcErrorCode fallback)
+		=> exception is JsonRpcException rpcException && exception is not RemoteInvocationException
+			? rpcException.ErrorDetails.Code
+			: fallback;
+
 	/// <summary>Gets the semantic kind of an envelope.</summary>
 	/// <param name="message">The envelope.</param>
 	/// <returns>The diagnostic kind.</returns>

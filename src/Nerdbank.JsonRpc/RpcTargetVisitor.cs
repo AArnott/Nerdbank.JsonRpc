@@ -337,7 +337,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 							? new JsonRpcError { Id = id, Error = dispatch.JsonRpc.CreateApplicationError(ex, JsonRpcErrorCode.InvalidParams) }
 							: null,
 						IsError = true,
-						ErrorCode = JsonRpcErrorCode.InvalidParams,
+						ErrorCode = JsonRpcDiagnostics.GetApplicationErrorCode(ex, JsonRpcErrorCode.InvalidParams),
 					};
 				}
 			}
@@ -392,7 +392,7 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 			catch (Exception ex)
 			{
 				isError = true;
-				errorCode = JsonRpcErrorCode.InternalError;
+				errorCode = JsonRpcDiagnostics.GetApplicationErrorCode(ex, JsonRpcErrorCode.InternalError);
 				dispatch.JsonRpc.LogApplicationError(ex, dispatch);
 				if (dispatch.Request.Id is RequestId id)
 				{
