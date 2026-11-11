@@ -2375,10 +2375,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		internal object CreateProxy(IJsonRpcClient client, JsonRpcProxyOptions options)
 		{
 			Type[]? enabled = options.EnabledInterfaces is { } configured
-				? [
-					.. this.Factories.SelectMany(static factory => factory.AdditionalInterfaces).Distinct()
-						.Where(type => configured.Any(type.IsAssignableFrom)),
-					]
+				? [.. this.Factories.SelectMany(static factory => factory.AdditionalInterfaces).Distinct().Where(type => configured.Any(type.IsAssignableFrom))]
 				: null;
 			JsonRpcProxyFactoryAttribute? factory = enabled is null
 				? this.Factories[0]
