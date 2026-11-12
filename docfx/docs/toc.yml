@@ -1,8 +1,6 @@
 items:
 - name: Features
   href: features.md
-- name: StreamJsonRpc comparison
-  href: streamjsonrpc-comparison.md
 - name: Getting Started
   href: getting-started.md
 - name: Encodings and framing
@@ -42,3 +40,5 @@ items:
   href: openrpc.md
 - name: Security considerations
   href: security.md
+- name: StreamJsonRpc comparison
+  href: streamjsonrpc-comparison.md
