@@ -40,7 +40,7 @@ internal static class CSharpBrokeredServiceAnalyzerVerifier
 		Test test = new()
 		{
 			TestCode = includeContracts ? Contracts + Environment.NewLine + source : source,
-			ReferenceAssemblies = ReferenceAssemblies.Net.Net90,
+			ReferenceAssemblies = TestCompilationResources.Net10,
 		};
 		test.MarkupOptions = MarkupOptions.UseFirstDescriptor;
 		test.DisabledDiagnostics.Add(diagnosticId == "NBJSONRPC004" ? "NBJSONRPC005" : "NBJSONRPC004");
