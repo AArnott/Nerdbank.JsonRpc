@@ -1,9 +1,6 @@
 // Copyright (c) Andrew Arnott. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-
 namespace Nerdbank.JsonRpc;
 
 /// <summary>
@@ -98,21 +95,16 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 			throw new InvalidOperationException("A partially prefetched sequence cannot buffer more values after enumeration has started.");
 		}
 
-		// Prefer a token the iterator method already captured. A private token would make a compiler
-		// iterator link the two, and that link flips only inside a cancellation callback.
-		// An inbound request that has already begun canceling must not be tracked either: its callbacks
-		// still run on the shutdown stack, and registering the iterator there can block Completion.
+		// An inbound request token is the one the target method already captured, and this sequence holds
+		// a lease on it. Any other caller token is only an input: canceling the source behind it would
+		// also cancel unrelated work that shares that token, including the call that is sending this sequence.
+		// An inbound request that has already begun canceling is left alone, because its callbacks still
+		// run on the shutdown stack and registering the iterator there can block Completion.
 		if (this.enumerationCancellation is null)
 		{
-			if (this.requestCancellation is InboundRequestCancellation request)
+			if (this.requestCancellation is InboundRequestCancellation request && request.TryArmEnumeration())
 			{
-				this.enumerationCancellation = request.TryArmEnumeration()
-					? OwnedCancellation.Adopt(request)
-					: OwnedCancellation.Create();
-			}
-			else if (OwnedCancellation.TryTrack(cancellationToken) is OwnedCancellation tracked)
-			{
-				this.enumerationCancellation = tracked;
+				this.enumerationCancellation = OwnedCancellation.Adopt(request);
 			}
 			else
 			{
@@ -297,44 +289,6 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		/// <param name="lease">The request lease. The caller has already armed it.</param>
 		/// <returns>The cancellation owner.</returns>
 		internal static OwnedCancellation Adopt(InboundRequestCancellation lease) => new(lease.Source, lease, ownsSource: false);
-
-		/// <summary>
-		/// Observes a token the caller already owns, when its source can be recovered.
-		/// A compiler iterator that captured this same token reads it from <see langword="finally"/>,
-		/// so a later enumeration token cancels that source instead of a private one the compiler would link.
-		/// </summary>
-		/// <param name="token">The token passed to prefetch.</param>
-		/// <returns>The cancellation owner, or <see langword="null"/> when <paramref name="token"/> has no recoverable source.</returns>
-		internal static OwnedCancellation? TryTrack(CancellationToken token)
-		{
-			CancellationTokenSource? source = TryGetSource(token);
-			return source is null ? null : new OwnedCancellation(source, lease: null, ownsSource: false);
-
-			// CancellationToken keeps its source in its only field, and no public API cancels a token without that source.
-			// Round-tripping through CancellationTokenSource.Token rejects a layout that does not point at the source.
-			static CancellationTokenSource? TryGetSource(CancellationToken candidate)
-			{
-				if (!candidate.CanBeCanceled)
-				{
-					return null;
-				}
-
-				CancellationTokenSource? owner = Unsafe.As<CancellationToken, TokenSourceBox>(ref candidate).Source;
-				if (owner is null)
-				{
-					return null;
-				}
-
-				try
-				{
-					return owner.Token.Equals(candidate) ? owner : null;
-				}
-				catch (ObjectDisposedException)
-				{
-					return owner;
-				}
-			}
-		}
 
 		/// <summary>Queues cancellation so the caller's stack, including connection shutdown, is not blocked by iterator callbacks.</summary>
 		internal void CancelFromLinkedToken()
@@ -569,15 +523,6 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 			{
 				this.source.Dispose();
 			}
-		}
-
-		[StructLayout(LayoutKind.Sequential)]
-		private readonly struct TokenSourceBox
-		{
-			private readonly CancellationTokenSource? source;
-
-			/// <summary>Gets the source stored in a <see cref="CancellationToken"/>.</summary>
-			internal CancellationTokenSource? Source => this.source;
 		}
 	}
 }

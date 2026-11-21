@@ -635,8 +635,8 @@ public partial class AsyncEnumerableTests : TestBase
 	}
 
 	/// <summary>
-	/// A compiler iterator prefetched with the token it captured must still observe a different token supplied when enumeration starts.
-	/// The callback blocks until <see langword="finally"/>, which has to see cancellation without waiting for that callback to return.
+	/// A later enumeration token cancels the sequence's own source. The token the iterator captured stays usable,
+	/// and a callback that blocks on <see langword="finally"/> still completes.
 	/// </summary>
 	/// <returns>A task representing the test.</returns>
 	[Test]
@@ -652,27 +652,74 @@ public partial class AsyncEnumerableTests : TestBase
 
 		enumeration.Cancel();
 		await enumerator.DisposeAsync();
+		Assert.False(captured.IsCancellationRequested);
 		Assert.True(iterator.SawCanceled);
 		await iterator.CallbackFinished.Task.WithCancellation(this.TimeoutToken);
 	}
 
 	/// <summary>
-	/// Prefetch with a token other than the one the iterator captured still cancels the compiler's combined token before disposal.
+	/// After prefetch, canceling the token that was supplied to prefetch does not cancel the token the iterator captured.
 	/// </summary>
 	/// <returns>A task representing the test.</returns>
 	[Test]
-	public async Task PrefetchedIteratorObservesEnumerationTokenDistinctFromCapturedToken()
+	public async Task CancelingThePrefetchTokenLeavesTheCapturedTokenUsable()
 	{
 		using CancellationTokenSource captured = new();
-		using CancellationTokenSource enumeration = new();
+		using CancellationTokenSource prefetch = new();
 		DistinctCapturedIterator iterator = new();
-		IAsyncEnumerable<int> prefetched = await iterator.Produce(captured.Token).WithPrefetchAsync(1, enumeration.Token);
+		IAsyncEnumerable<int> prefetched = await iterator.Produce(captured.Token).WithPrefetchAsync(1, prefetch.Token);
+		prefetch.Cancel();
+
 		await using IAsyncEnumerator<int> enumerator = prefetched.GetAsyncEnumerator(this.TimeoutToken);
 		Assert.True(await enumerator.MoveNextAsync());
+		await enumerator.DisposeAsync();
+		Assert.False(captured.IsCancellationRequested);
+		Assert.False(iterator.SawCanceled);
+	}
 
+	/// <summary>
+	/// Sending a partially prefetched sequence with the same token as the call must not cancel that token
+	/// when the remote consumer finishes the sequence.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task PrefetchedArgumentKeepsTheSharedCallToken(JsonRpcEncoding encoding)
+	{
+		using Fixture fixture = new(encoding);
+		using CancellationTokenSource shared = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
+		SharedTokenIterator iterator = new();
+		int sum = await fixture.Client.SumAsync(
+			await iterator.Produce(shared.Token).WithPrefetchAsync(1, shared.Token),
+			shared.Token);
+
+		Assert.Equal(3, sum);
+		await iterator.Disposed.Task.WithCancellation(this.TimeoutToken);
+		Assert.False(shared.IsCancellationRequested);
+	}
+
+	/// <summary>
+	/// Disposing the prefetch token after values were buffered must not prevent enumeration or strand the iterator.
+	/// </summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task DisposingThePrefetchTokenDoesNotStrandTheIterator()
+	{
+		OneValueThenSuspended sequence = new();
+		CancellationTokenSource prefetch = new();
+		IAsyncEnumerable<int> prefetched = await sequence.WithPrefetchAsync(1, prefetch.Token);
+		Assert.True(sequence.Started);
+		prefetch.Dispose();
+
+		using CancellationTokenSource enumeration = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
+		await using IAsyncEnumerator<int> enumerator = prefetched.GetAsyncEnumerator(enumeration.Token);
+		Assert.True(await enumerator.MoveNextAsync());
 		enumeration.Cancel();
 		await enumerator.DisposeAsync();
-		Assert.True(iterator.SawCanceled);
+		await sequence.Disposed.Task.WithCancellation(this.TimeoutToken);
+		Assert.True(sequence.DisposeObservedCancellation);
 	}
 
 	/// <summary>
@@ -852,6 +899,27 @@ public partial class AsyncEnumerableTests : TestBase
 			finally
 			{
 				Volatile.Write(ref this.sawCanceled, cancellationToken.IsCancellationRequested ? 1 : 0);
+			}
+		}
+	}
+
+	private sealed class SharedTokenIterator
+	{
+		internal TaskCompletionSource<bool> Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public IAsyncEnumerable<int> Produce(CancellationToken captured) => this.Run(captured);
+
+		private async IAsyncEnumerable<int> Run([EnumeratorCancellation] CancellationToken cancellationToken)
+		{
+			try
+			{
+				cancellationToken.ThrowIfCancellationRequested();
+				yield return 1;
+				yield return 2;
+			}
+			finally
+			{
+				this.Disposed.TrySetResult(true);
 			}
 		}
 	}
