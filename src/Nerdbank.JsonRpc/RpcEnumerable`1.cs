@@ -283,6 +283,7 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		private bool published;
 		private bool cancelScheduled;
 		private bool cancelFinished;
+		private int pendingCancels;
 		private bool disposeRequested;
 		private bool released;
 		private int waitArmed;
@@ -317,6 +318,7 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 				}
 
 				this.cancelScheduled = true;
+				this.pendingCancels++;
 			}
 
 			// The pool, not a dedicated thread: disposal awaits the signal and does not occupy a worker while it waits.
@@ -349,16 +351,33 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 				return;
 			}
 
-			bool cancelNow;
+			bool queueCatchUp;
 			lock (this.gate)
 			{
 				Volatile.Write(ref this.compilerLinked, linked);
-				cancelNow = this.cancelScheduled || this.IsCanceled();
+
+				// Cancellation may already be queued or finished from inside GetAsyncEnumerator, before this
+				// source was visible. Catch up off this stack: a callback waiting for finally would deadlock
+				// prefetch if it ran here, because disposal has not started.
+				queueCatchUp = this.cancelScheduled || this.IsCanceled();
+				if (queueCatchUp)
+				{
+					this.pendingCancels++;
+				}
 			}
 
-			if (cancelNow)
+			if (!queueCatchUp)
 			{
-				this.CancelCompilerLinkedToken();
+				return;
+			}
+
+			try
+			{
+				ThreadPool.QueueUserWorkItem(static state => ((OwnedCancellation)state!).CancelLinkedCatchUp(), this);
+			}
+			catch (NotSupportedException)
+			{
+				this.CancelLinkedCatchUp();
 			}
 		}
 
@@ -431,7 +450,7 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 					return;
 				}
 
-				if (this.cancelScheduled && !this.cancelFinished)
+				if (this.pendingCancels > 0 || (this.cancelScheduled && !this.cancelFinished))
 				{
 					this.disposeRequested = true;
 					return;
@@ -516,21 +535,49 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 				// The wait handle is what unblocks disposal. Publishing here only covers a waiter that raced
 				// ahead of the flag; it does not make disposal depend on callback order.
 				this.PublishSignaled();
-				bool releaseNow = false;
-				lock (this.gate)
+				this.CompleteCancel();
+			}
+		}
+
+		/// <summary>
+		/// Cancels a compiler-linked source discovered after cancellation was already queued.
+		/// Runs off the prefetch stack so a callback can block on disposal.
+		/// </summary>
+		private void CancelLinkedCatchUp()
+		{
+			try
+			{
+				this.CancelCompilerLinkedToken();
+			}
+			finally
+			{
+				this.CompleteCancel();
+			}
+		}
+
+		/// <summary>Drops one in-flight cancel and releases the source when none remain.</summary>
+		private void CompleteCancel()
+		{
+			bool releaseNow = false;
+			lock (this.gate)
+			{
+				this.pendingCancels--;
+				if (this.pendingCancels > 0)
 				{
-					this.cancelFinished = true;
-					if (this.disposeRequested && !this.released)
-					{
-						this.released = true;
-						releaseNow = true;
-					}
+					return;
 				}
 
-				if (releaseNow)
+				this.cancelFinished = true;
+				if (this.disposeRequested && !this.released)
 				{
-					this.DisposeSource();
+					this.released = true;
+					releaseNow = true;
 				}
+			}
+
+			if (releaseNow)
+			{
+				this.DisposeSource();
 			}
 		}
 
