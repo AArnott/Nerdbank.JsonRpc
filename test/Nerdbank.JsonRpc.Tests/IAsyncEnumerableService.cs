@@ -9,6 +9,16 @@ internal partial interface IAsyncEnumerableService
 {
 	IAsyncEnumerable<int> GetNumbersAsync(int count, CancellationToken cancellationToken);
 
+	/// <summary>Returns a sequence that yields once, then waits until its enumerator token is canceled.</summary>
+	/// <param name="cancellationToken">A token to cancel production.</param>
+	/// <returns>The sequence.</returns>
+	IAsyncEnumerable<int> GetNumbersUntilCanceledAsync(CancellationToken cancellationToken);
+
+	/// <summary>Returns a sequence that yields once, then waits without observing cancellation, then yields again.</summary>
+	/// <param name="cancellationToken">A token to cancel production.</param>
+	/// <returns>The sequence.</returns>
+	IAsyncEnumerable<int> GetNumbersIgnoringCancellationAsync(CancellationToken cancellationToken);
+
 	IAsyncEnumerable<int> GetUncooperativeSequenceAsync(bool blockReadAhead, bool blockDispose, CancellationToken cancellationToken);
 
 	Task<IAsyncEnumerable<int>> GetNumbersWrappedAsync(int count, CancellationToken cancellationToken);

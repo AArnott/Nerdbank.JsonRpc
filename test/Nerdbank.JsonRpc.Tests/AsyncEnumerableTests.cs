@@ -3,10 +3,24 @@
 
 using System.IO.Pipelines;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.VisualStudio.Threading;
 using Nerdbank.Streams;
 
-public partial class AsyncEnumerableTests
+public partial class AsyncEnumerableTests : TestBase
 {
+	/// <summary>How a test severs an open JSON-RPC connection.</summary>
+	public enum ConnectionLoss
+	{
+		/// <summary>The client <see cref="JsonRpc"/> is disposed.</summary>
+		ClientDisposed,
+
+		/// <summary>The underlying pipe is closed without disposing either <see cref="JsonRpc"/>.</summary>
+		TransportClosed,
+
+		/// <summary>The server <see cref="JsonRpc"/> is disposed.</summary>
+		ServerDisposed,
+	}
+
 	[Test]
 	[Arguments(JsonRpcEncoding.Json)]
 	[Arguments(JsonRpcEncoding.MessagePack)]
@@ -346,6 +360,95 @@ public partial class AsyncEnumerableTests
 		Assert.True(argument.EnumeratorDisposed);
 	}
 
+	/// <summary>
+	/// Dropping the connection while a client is enumerating disposes the server iterator and cancels its token.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="disconnect">How the connection is severed.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ServerDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ServerDisposed)]
+	public async Task ConnectionLossDisposesAndCancelsServerIterator(JsonRpcEncoding encoding, ConnectionLoss disconnect)
+	{
+		using Fixture fixture = new(encoding);
+		Task enumeration = this.EnumerateAsync(fixture.Client.GetNumbersUntilCanceledAsync(this.TimeoutToken));
+		await fixture.Service.CancelableEnumerationWaiting.Task.WithCancellation(this.TimeoutToken);
+
+		await fixture.SeverAsync(disconnect);
+
+		await fixture.Service.CancelableEnumerationDisposed.Task.WithCancellation(this.TimeoutToken);
+		Assert.True(fixture.Service.CancelableEnumerationCanceled);
+		await Assert.ThrowsAnyAsync<Exception>(() => enumeration);
+		await this.AwaitCompletionAsync(fixture.ServerRpc.Completion);
+		await this.AwaitCompletionAsync(fixture.ClientRpc.Completion);
+	}
+
+	/// <summary>
+	/// An iterator that ignores cancellation and blocks in an await must not hold connection shutdown open, and it is disposed once it yields.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="disconnect">How the connection is severed.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ServerDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ServerDisposed)]
+	public async Task ConnectionLossDoesNotWaitForIteratorThatIgnoresCancellation(JsonRpcEncoding encoding, ConnectionLoss disconnect)
+	{
+		using Fixture fixture = new(encoding);
+		Task enumeration = this.EnumerateAsync(fixture.Client.GetNumbersIgnoringCancellationAsync(this.TimeoutToken));
+		try
+		{
+			await fixture.Service.BlockingEnumerationWaiting.Task.WithCancellation(this.TimeoutToken);
+			await fixture.SeverAsync(disconnect);
+
+			// Shutdown finishes while the iterator is still blocked on an await that does not observe cancellation.
+			await this.AwaitCompletionAsync(fixture.ServerRpc.Completion);
+			Assert.False(fixture.Service.BlockingEnumerationDisposed.Task.IsCompleted);
+
+			fixture.Service.ReleaseBlockingEnumeration.TrySetResult(true);
+			await fixture.Service.BlockingEnumerationDisposed.Task.WithCancellation(this.TimeoutToken);
+			Assert.True(fixture.Service.BlockingEnumerationCanceled);
+			await Assert.ThrowsAnyAsync<Exception>(() => enumeration);
+			await this.AwaitCompletionAsync(fixture.ClientRpc.Completion);
+		}
+		finally
+		{
+			fixture.Service.ReleaseBlockingEnumeration.TrySetResult(true);
+		}
+	}
+
+	private async Task EnumerateAsync(IAsyncEnumerable<int> sequence)
+	{
+		await foreach (int value in sequence.WithCancellation(this.TimeoutToken))
+		{
+		}
+	}
+
+	private async Task AwaitCompletionAsync(Task completion)
+	{
+		try
+		{
+			await completion.WithCancellation(this.TimeoutToken);
+		}
+		catch (OperationCanceledException) when (this.TimeoutToken.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch (Exception)
+		{
+			// A dropped transport can fault Completion. Shutdown must still finish.
+		}
+	}
+
 	private sealed class TrackingSequence : IAsyncEnumerable<int>
 	{
 		internal bool EnumeratorDisposed { get; private set; }
@@ -368,12 +471,14 @@ public partial class AsyncEnumerableTests
 
 	private sealed class Fixture : IDisposable
 	{
+		private readonly IDuplexPipe clientPipe;
 		private readonly JsonRpc clientRpc;
 		private readonly JsonRpc serverRpc;
 
 		internal Fixture(JsonRpcEncoding encoding)
 		{
 			(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+			this.clientPipe = clientPipe;
 			this.clientRpc = new(CreateChannel(clientPipe, encoding));
 			this.serverRpc = new(CreateChannel(serverPipe, encoding));
 			this.Service = new AsyncEnumerableService();
@@ -385,14 +490,39 @@ public partial class AsyncEnumerableTests
 
 		internal JsonRpc ClientRpc => this.clientRpc;
 
+		internal JsonRpc ServerRpc => this.serverRpc;
+
 		internal IAsyncEnumerableService Client { get; }
 
 		internal AsyncEnumerableService Service { get; }
 
+		/// <inheritdoc/>
 		public void Dispose()
 		{
 			this.clientRpc.Dispose();
 			this.serverRpc.Dispose();
+		}
+
+		/// <summary>Severs the connection without assuming which side is still running.</summary>
+		/// <param name="disconnect">How to sever the connection.</param>
+		/// <returns>A task that completes when the transport close has been requested.</returns>
+		internal async Task SeverAsync(ConnectionLoss disconnect)
+		{
+			switch (disconnect)
+			{
+				case ConnectionLoss.ClientDisposed:
+					this.clientRpc.Dispose();
+					break;
+				case ConnectionLoss.TransportClosed:
+					await this.clientPipe.Output.CompleteAsync();
+					await this.clientPipe.Input.CompleteAsync();
+					break;
+				case ConnectionLoss.ServerDisposed:
+					this.serverRpc.Dispose();
+					break;
+				default:
+					throw new ArgumentOutOfRangeException(nameof(disconnect));
+			}
 		}
 
 		private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)

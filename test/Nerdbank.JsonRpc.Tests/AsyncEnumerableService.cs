@@ -7,6 +7,8 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 {
 	private int generatedValues;
 	private bool generatorDisposed;
+	private int cancelableEnumerationCanceled;
+	private int blockingEnumerationCanceled;
 
 	internal TaskCompletionSource<bool> UncooperativeMoveNextStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -16,10 +18,64 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 
 	internal TaskCompletionSource<bool> FailingGeneratorDisposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+	/// <summary>Gets the signal that <see cref="GetNumbersUntilCanceledAsync"/> is blocked in its cancelable wait.</summary>
+	internal TaskCompletionSource<bool> CancelableEnumerationWaiting { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	/// <summary>Gets the signal that <see cref="GetNumbersUntilCanceledAsync"/> has left its <see langword="finally"/> block.</summary>
+	internal TaskCompletionSource<bool> CancelableEnumerationDisposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	/// <summary>Gets a value indicating whether <see cref="GetNumbersUntilCanceledAsync"/> observed a canceled enumerator token.</summary>
+	internal bool CancelableEnumerationCanceled => Volatile.Read(ref this.cancelableEnumerationCanceled) != 0;
+
+	/// <summary>Gets the signal that <see cref="GetNumbersIgnoringCancellationAsync"/> is blocked in an await that ignores cancellation.</summary>
+	internal TaskCompletionSource<bool> BlockingEnumerationWaiting { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	/// <summary>Gets the signal that <see cref="GetNumbersIgnoringCancellationAsync"/> has left its <see langword="finally"/> block.</summary>
+	internal TaskCompletionSource<bool> BlockingEnumerationDisposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	/// <summary>Gets the gate released by a test so <see cref="GetNumbersIgnoringCancellationAsync"/> can yield again.</summary>
+	internal TaskCompletionSource<bool> ReleaseBlockingEnumeration { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	/// <summary>Gets a value indicating whether <see cref="GetNumbersIgnoringCancellationAsync"/> observed a canceled enumerator token.</summary>
+	internal bool BlockingEnumerationCanceled => Volatile.Read(ref this.blockingEnumerationCanceled) != 0;
+
 	/// <summary>Gets the callback retained by the last sequence-producing call.</summary>
 	internal ICallScopedCounter? LastCounter { get; private set; }
 
 	public IAsyncEnumerable<int> GetNumbersAsync(int count, CancellationToken cancellationToken) => this.ProduceAsync(count, cancellationToken);
+
+	/// <inheritdoc/>
+	public async IAsyncEnumerable<int> GetNumbersUntilCanceledAsync([EnumeratorCancellation] CancellationToken cancellationToken)
+	{
+		try
+		{
+			yield return 0;
+			this.CancelableEnumerationWaiting.TrySetResult(true);
+			await Task.Delay(Timeout.Infinite, cancellationToken);
+		}
+		finally
+		{
+			Volatile.Write(ref this.cancelableEnumerationCanceled, cancellationToken.IsCancellationRequested ? 1 : 0);
+			this.CancelableEnumerationDisposed.TrySetResult(true);
+		}
+	}
+
+	/// <inheritdoc/>
+	public async IAsyncEnumerable<int> GetNumbersIgnoringCancellationAsync([EnumeratorCancellation] CancellationToken cancellationToken)
+	{
+		try
+		{
+			yield return 0;
+			this.BlockingEnumerationWaiting.TrySetResult(true);
+			await this.ReleaseBlockingEnumeration.Task;
+			yield return 1;
+		}
+		finally
+		{
+			Volatile.Write(ref this.blockingEnumerationCanceled, cancellationToken.IsCancellationRequested ? 1 : 0);
+			this.BlockingEnumerationDisposed.TrySetResult(true);
+		}
+	}
 
 	public IAsyncEnumerable<int> GetUncooperativeSequenceAsync(bool blockReadAhead, bool blockDispose, CancellationToken cancellationToken)
 		=> new UncooperativeSequence(this, blockReadAhead, blockDispose).WithJsonRpcSettings(new() { MaxReadAhead = blockReadAhead ? 1 : 0 });
