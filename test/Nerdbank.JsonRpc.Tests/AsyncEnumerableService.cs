@@ -9,6 +9,7 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 	private bool generatorDisposed;
 	private int cancelableEnumerationCanceled;
 	private int blockingEnumerationCanceled;
+	private int blockingBatchCanceled;
 
 	internal TaskCompletionSource<bool> UncooperativeMoveNextStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -38,6 +39,24 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 
 	/// <summary>Gets a value indicating whether <see cref="GetNumbersIgnoringCancellationAsync"/> observed a canceled enumerator token.</summary>
 	internal bool BlockingEnumerationCanceled => Volatile.Read(ref this.blockingEnumerationCanceled) != 0;
+
+	/// <summary>Gets the signal that <see cref="GetBlockingBatchAsync"/> is blocked before its second value.</summary>
+	internal TaskCompletionSource<bool> BlockingBatchWaiting { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	/// <summary>Gets the gate that lets <see cref="GetBlockingBatchAsync"/> produce its second value.</summary>
+	internal TaskCompletionSource<bool> ReleaseBlockingBatch { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	/// <summary>Gets the signal that <see cref="GetBlockingBatchAsync"/> has started the move that produces its third value.</summary>
+	internal TaskCompletionSource<bool> BlockingBatchSecondMoveWaiting { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	/// <summary>Gets the gate that lets <see cref="GetBlockingBatchAsync"/> leave its third move.</summary>
+	internal TaskCompletionSource<bool> ReleaseBlockingBatchSecondMove { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	/// <summary>Gets the signal set from the <see langword="finally"/> block of <see cref="GetBlockingBatchAsync"/>.</summary>
+	internal TaskCompletionSource<bool> BlockingBatchDisposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	/// <summary>Gets a value indicating whether <see cref="GetBlockingBatchAsync"/> observed a canceled enumerator token.</summary>
+	internal bool BlockingBatchCanceled => Volatile.Read(ref this.blockingBatchCanceled) != 0;
 
 	/// <summary>Gets the callback retained by the last sequence-producing call.</summary>
 	internal ICallScopedCounter? LastCounter { get; private set; }
@@ -76,6 +95,10 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 			this.BlockingEnumerationDisposed.TrySetResult(true);
 		}
 	}
+
+	/// <inheritdoc/>
+	public IAsyncEnumerable<int> GetBlockingBatchAsync(int minBatchSize, CancellationToken cancellationToken)
+		=> this.BlockAcrossBatchAsync(cancellationToken).WithJsonRpcSettings(new JsonRpcEnumerableSettings { MinBatchSize = minBatchSize });
 
 	public IAsyncEnumerable<int> GetUncooperativeSequenceAsync(bool blockReadAhead, bool blockDispose, CancellationToken cancellationToken)
 		=> new UncooperativeSequence(this, blockReadAhead, blockDispose).WithJsonRpcSettings(new() { MaxReadAhead = blockReadAhead ? 1 : 0 });
@@ -207,6 +230,25 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 		finally
 		{
 			this.FailingGeneratorDisposed.TrySetResult(true);
+		}
+	}
+
+	private async IAsyncEnumerable<int> BlockAcrossBatchAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+	{
+		try
+		{
+			yield return 0;
+			this.BlockingBatchWaiting.TrySetResult(true);
+			await this.ReleaseBlockingBatch.Task;
+			yield return 1;
+			this.BlockingBatchSecondMoveWaiting.TrySetResult(true);
+			await this.ReleaseBlockingBatchSecondMove.Task;
+			yield return 2;
+		}
+		finally
+		{
+			Volatile.Write(ref this.blockingBatchCanceled, cancellationToken.IsCancellationRequested ? 1 : 0);
+			this.BlockingBatchDisposed.TrySetResult(true);
 		}
 	}
 

@@ -19,6 +19,12 @@ internal partial interface IAsyncEnumerableService
 	/// <returns>The sequence.</returns>
 	IAsyncEnumerable<int> GetNumbersIgnoringCancellationAsync(CancellationToken cancellationToken);
 
+	/// <summary>Returns a sequence that blocks before its second and third values, sent in batches of <paramref name="minBatchSize"/>.</summary>
+	/// <param name="minBatchSize">The minimum number of values in each batch.</param>
+	/// <param name="cancellationToken">A token to cancel production.</param>
+	/// <returns>The sequence.</returns>
+	IAsyncEnumerable<int> GetBlockingBatchAsync(int minBatchSize, CancellationToken cancellationToken);
+
 	IAsyncEnumerable<int> GetUncooperativeSequenceAsync(bool blockReadAhead, bool blockDispose, CancellationToken cancellationToken);
 
 	Task<IAsyncEnumerable<int>> GetNumbersWrappedAsync(int count, CancellationToken cancellationToken);

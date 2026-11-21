@@ -426,6 +426,50 @@ public partial class AsyncEnumerableTests : TestBase
 		}
 	}
 
+	/// <summary>
+	/// A canceled multi-value batch must not start another move after the in-flight one yields.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="disconnect">How the connection is severed.</param>
+	/// <returns>A task representing the test.</returns>
+	/// <remarks>
+	/// The batch size is 3 so the move in flight when the connection drops is not the last slot.
+	/// An iterator that ignores cancellation would otherwise block on the next advance and hold disposal open.
+	/// </remarks>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ServerDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ServerDisposed)]
+	public async Task ConnectionLossDoesNotAdvanceAnIncompleteBatch(JsonRpcEncoding encoding, ConnectionLoss disconnect)
+	{
+		const int minBatchSize = 3;
+		using Fixture fixture = new(encoding);
+		Task enumeration = this.EnumerateAsync(fixture.Client.GetBlockingBatchAsync(minBatchSize, this.TimeoutToken));
+		try
+		{
+			await fixture.Service.BlockingBatchWaiting.Task.WithCancellation(this.TimeoutToken);
+			await fixture.SeverAsync(disconnect);
+			await this.AwaitCompletionAsync(fixture.ServerRpc.Completion);
+			Assert.False(fixture.Service.BlockingBatchDisposed.Task.IsCompleted);
+			Assert.False(fixture.Service.BlockingBatchSecondMoveWaiting.Task.IsCompleted);
+
+			fixture.Service.ReleaseBlockingBatch.TrySetResult(true);
+			await fixture.Service.BlockingBatchDisposed.Task.WithCancellation(this.TimeoutToken);
+			Assert.True(fixture.Service.BlockingBatchCanceled);
+			Assert.False(fixture.Service.BlockingBatchSecondMoveWaiting.Task.IsCompleted);
+			await Assert.ThrowsAnyAsync<Exception>(() => enumeration);
+			await this.AwaitCompletionAsync(fixture.ClientRpc.Completion);
+		}
+		finally
+		{
+			fixture.Service.ReleaseBlockingBatch.TrySetResult(true);
+			fixture.Service.ReleaseBlockingBatchSecondMove.TrySetResult(true);
+		}
+	}
+
 	private async Task EnumerateAsync(IAsyncEnumerable<int> sequence)
 	{
 		await foreach (int value in sequence.WithCancellation(this.TimeoutToken))

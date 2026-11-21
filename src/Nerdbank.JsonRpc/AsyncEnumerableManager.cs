@@ -944,12 +944,14 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			}
 			else
 			{
-				// Hold the gate for the whole batch so disposal cannot overlap MoveNextAsync.
+				// Hold the gate across each MoveNextAsync so disposal cannot overlap it.
+				// Do not start another advance after cancellation: an iterator that ignores the token can block again and hold the gate indefinitely.
 				await this.enumerationLock.WaitAsync(generatorToken).ConfigureAwait(false);
 				try
 				{
 					for (int i = 0; i < this.settings.MinBatchSize; i++)
 					{
+						generatorToken.ThrowIfCancellationRequested();
 						if (!await this.enumerator.MoveNextAsync().ConfigureAwait(false))
 						{
 							finished = true;
