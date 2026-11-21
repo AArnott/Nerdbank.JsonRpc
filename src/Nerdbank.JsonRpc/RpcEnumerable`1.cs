@@ -599,6 +599,9 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		/// The linked callbacks are still counted in <see cref="pendingCancels"/> until they return, so
 		/// <see cref="Release"/> does not dispose <see cref="source"/> while one of them is reading its token.
 		/// That count does not delay <see cref="source"/> cancellation or iterator disposal.
+		/// The worker is a dedicated thread. A linked callback may block until the iterator resumes, and the
+		/// iterator resumes on the thread pool. Running <see cref="CancellationTokenSource.Cancel()"/> on a pool
+		/// thread would hold that thread for the whole callback and could keep the iterator from resuming.
 		/// </remarks>
 		private void SignalCompilerLinkedToken()
 		{
@@ -648,7 +651,7 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 
 			try
 			{
-				// A worker calls Cancel so its callbacks are snapshotted before it invokes them.
+				// A dedicated thread calls Cancel so its callbacks are snapshotted before it invokes them.
 				// CancelAsync can lose that race: iterator disposal clears the registration list
 				// before the queued handlers run, and the callback never starts.
 				// This thread waits only until the flag is visible, then cancels the prefetch source.
@@ -668,7 +671,7 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 			}
 		}
 
-		/// <summary>Queues <see cref="CancellationTokenSource.Cancel()"/> and waits until its flag is visible.</summary>
+		/// <summary>Starts <see cref="CancellationTokenSource.Cancel()"/> on its own thread and waits until its flag is visible.</summary>
 		/// <param name="linked">The compiler-linked source.</param>
 		/// <param name="token">The token of <paramref name="linked"/>.</param>
 		private void StartLinkedCancelWorker(CancellationTokenSource linked, CancellationToken token)
@@ -676,24 +679,26 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 			LinkedCancelWork work = new(this, linked);
 			try
 			{
+				// A pool work item can block inside a user callback for as long as the iterator takes to resume.
+				// That resume itself needs a pool thread, so the callback has to run somewhere else.
+				Thread thread = new(static state => ((LinkedCancelWork)state!).Run())
+				{
+					IsBackground = true,
+				};
+				thread.Start(work);
+			}
+			catch (Exception ex) when (ex is NotSupportedException or OutOfMemoryException or ThreadStartException)
+			{
 				try
 				{
 					ThreadPool.QueueUserWorkItem(static state => ((LinkedCancelWork)state!).Run(), work);
 				}
-				catch (NotSupportedException)
+				catch (Exception fallbackEx) when (fallbackEx is NotSupportedException or OutOfMemoryException)
 				{
-					Thread thread = new(static state => ((LinkedCancelWork)state!).Run())
-					{
-						IsBackground = true,
-					};
-					thread.Start(work);
+					// The worker never started, so nothing else will drop the pending count.
+					this.CompleteCancel();
+					throw;
 				}
-			}
-			catch (Exception ex) when (ex is NotSupportedException or OutOfMemoryException)
-			{
-				// The worker never started, so nothing else will drop the pending count.
-				this.CompleteCancel();
-				throw;
 			}
 
 			work.WaitUntilObservable(token);
