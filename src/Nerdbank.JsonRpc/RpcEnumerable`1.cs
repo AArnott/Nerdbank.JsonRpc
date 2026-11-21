@@ -207,8 +207,8 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		{
 			try
 			{
-				// Disposal can otherwise run before the queued cancel, so finally would observe a live token.
-				// Waiting only until the token is signaled lets blocking callbacks finish on the worker.
+				// A compiler iterator observes a token linked to this one. That link is updated by a callback
+				// inside Cancel, so disposal has to wait until Cancel returns or finally can miss it.
 				await cancellation.WaitUntilSignaledAsync().ConfigureAwait(false);
 				await inner.DisposeAsync().ConfigureAwait(false);
 			}
@@ -241,21 +241,6 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		/// <summary>Gets the token observed by the started enumerator.</summary>
 		internal CancellationToken Token => this.source.Token;
 
-		private bool IsSignaled
-		{
-			get
-			{
-				try
-				{
-					return this.source.IsCancellationRequested;
-				}
-				catch (ObjectDisposedException)
-				{
-					return true;
-				}
-			}
-		}
-
 		/// <summary>Queues cancellation so the caller's stack, including connection shutdown, is not blocked by iterator callbacks.</summary>
 		internal void CancelFromLinkedToken()
 		{
@@ -282,19 +267,19 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		}
 
 		/// <summary>
-		/// Completes when a queued cancel has marked the token canceled.
-		/// Completes immediately when cancellation was not requested. Does not wait for callbacks, which may depend on disposal finishing.
+		/// Completes when a queued cancellation call has returned.
+		/// Completes immediately when cancellation was not requested.
 		/// </summary>
-		/// <returns>A task that completes once the owned token is signaled, or immediately when no cancel is in flight.</returns>
+		/// <returns>A task that completes once cancellation callbacks have run, or immediately when no cancel is in flight.</returns>
+		/// <remarks>
+		/// Compiler-generated iterators combine the token passed to the iterator method with the token passed to
+		/// <see cref="IAsyncEnumerable{T}.GetAsyncEnumerator"/>. <see langword="finally"/> observes that linked token,
+		/// which becomes canceled from a callback during cancellation. Returning as soon as the owned flag is set lets
+		/// disposal run before that callback. The queued call still leaves the connection shutdown path, so a callback
+		/// that blocks on <see cref="JsonRpc.Completion"/> cannot stall it.
+		/// </remarks>
 		internal ValueTask WaitUntilSignaledAsync()
 		{
-			// Read the token outside the gate. Cancel invokes callbacks while holding its own lock, and those
-			// callbacks take this gate, so taking the gate and then touching the token can deadlock.
-			if (this.IsSignaled)
-			{
-				return default;
-			}
-
 			lock (this.gate)
 			{
 				if (this.published || !this.cancelScheduled || this.released)
@@ -341,9 +326,6 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		{
 			try
 			{
-				// Callbacks run in LIFO order, so this registration runs before iterator callbacks.
-				// Disposal can then continue without waiting for a callback that depends on cleanup.
-				_ = this.source.Token.Register(static state => ((OwnedCancellation)state!).PublishSignaled(), this);
 #pragma warning disable VSTHRD103 // CancelAsync is unavailable on all target frameworks.
 				this.source.Cancel();
 #pragma warning restore VSTHRD103
@@ -351,11 +333,10 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 			catch (Exception ex) when (ex is ObjectDisposedException or AggregateException)
 			{
 				// The source may already have been released, or a callback may have thrown after cancellation was signaled.
-				this.PublishSignaled();
 			}
 			finally
 			{
-				// If cancellation failed before its callback ran, release waiters anyway.
+				// Publish after Cancel returns so linked enumerator tokens are updated before disposal waits up.
 				this.PublishSignaled();
 				bool releaseNow = false;
 				lock (this.gate)

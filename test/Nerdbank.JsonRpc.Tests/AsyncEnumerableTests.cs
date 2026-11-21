@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO.Pipelines;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.Threading;
 using Nerdbank.Streams;
@@ -584,6 +585,27 @@ public partial class AsyncEnumerableTests : TestBase
 		await Assert.ThrowsAsync<OperationCanceledException>(() => prefetch.AsTask());
 	}
 
+	/// <summary>
+	/// A compiler iterator links the method token with the enumerator token, and <see langword="finally"/> observes the link.
+	/// Disposal after prefetch must not run until that link has been canceled.
+	/// </summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task PrefetchedCompilerIteratorObservesLinkedCancellation()
+	{
+		using CancellationTokenSource request = new();
+		CompilerLinkedSequence sequence = new(request.Token);
+		IAsyncEnumerable<int> prefetched = await sequence.Enumerate().WithPrefetchAsync(1, CancellationToken.None);
+		using CancellationTokenSource stop = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
+		await using IAsyncEnumerator<int> enumerator = prefetched.GetAsyncEnumerator(stop.Token);
+		Assert.True(await enumerator.MoveNextAsync());
+		Assert.Equal(0, enumerator.Current);
+
+		stop.Cancel();
+		await enumerator.DisposeAsync();
+		Assert.True(sequence.SawCanceled);
+	}
+
 	/// <summary>A second prefetch that is already canceled still disposes the iterator started by the first prefetch.</summary>
 	/// <returns>A task representing the test.</returns>
 	[Test]
@@ -635,6 +657,28 @@ public partial class AsyncEnumerableTests : TestBase
 		catch (Exception)
 		{
 			// A dropped transport can fault Completion. Shutdown must still finish.
+		}
+	}
+
+	private sealed class CompilerLinkedSequence(CancellationToken requestToken)
+	{
+		private int sawCanceled;
+
+		internal bool SawCanceled => Volatile.Read(ref this.sawCanceled) != 0;
+
+		public IAsyncEnumerable<int> Enumerate() => this.Run(requestToken);
+
+		private async IAsyncEnumerable<int> Run([EnumeratorCancellation] CancellationToken cancellationToken = default)
+		{
+			try
+			{
+				yield return 0;
+				yield return 1;
+			}
+			finally
+			{
+				Volatile.Write(ref this.sawCanceled, cancellationToken.IsCancellationRequested ? 1 : 0);
+			}
 		}
 	}
 
