@@ -658,6 +658,118 @@ public partial class AsyncEnumerableTests : TestBase
 	}
 
 	/// <summary>
+	/// A callback registered on the prefetch token ahead of the compiler's link must not let disposal drop that link.
+	/// </summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task PrefetchDisposalObservesCompilerLinkedTokenDespiteEarlierCallback()
+	{
+#if NET
+		if (!RuntimeFeature.IsDynamicCodeSupported)
+		{
+			Skip.Test("NativeAOT does not expose the compiler-generated linked cancellation field this race reaches.");
+			return;
+		}
+#endif
+
+		using CancellationTokenSource captured = new();
+		LinkedTokenRaceIterator iterator = new();
+		IAsyncEnumerable<int> prefetched = await iterator.Produce(captured.Token).WithPrefetchAsync(1, captured.Token);
+		using CancellationTokenSource enumeration = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
+		IAsyncEnumerator<int> enumerator = prefetched.GetAsyncEnumerator(enumeration.Token);
+		Assert.True(await enumerator.MoveNextAsync());
+		Assert.Equal(1, enumerator.Current);
+
+		enumeration.Cancel();
+		Task dispose = enumerator.DisposeAsync().AsTask();
+		try
+		{
+			await iterator.HoldingBeforeLink.Task.WithCancellation(this.TimeoutToken);
+			await dispose.WithCancellation(this.TimeoutToken);
+			Assert.False(captured.IsCancellationRequested);
+			Assert.True(iterator.SawCanceled);
+		}
+		finally
+		{
+			iterator.ReleaseBeforeLink.TrySetResult(true);
+		}
+
+		await iterator.BeforeLinkFinished.Task.WithCancellation(this.TimeoutToken);
+	}
+
+	/// <summary>
+	/// Canceling a call that is still pulling a prefetched argument cancels the compiler-linked token
+	/// even when an earlier callback holds the prefetch token. Covers both wire encodings.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task PrefetchedArgumentObservesCompilerLinkedToken(JsonRpcEncoding encoding)
+	{
+#if NET
+		if (!RuntimeFeature.IsDynamicCodeSupported)
+		{
+			Skip.Test("NativeAOT does not expose the compiler-generated linked cancellation field this race reaches.");
+			return;
+		}
+#endif
+
+		using Fixture fixture = new(encoding);
+		using CancellationTokenSource captured = new();
+		using CancellationTokenSource call = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
+		LinkedTokenRaceIterator iterator = new();
+		Task<int> sum = fixture.Client.SumAsync(
+			await iterator.Produce(captured.Token, blockAfterFirst: true).WithPrefetchAsync(1, captured.Token),
+			call.Token);
+		await iterator.Blocked.Task.WithCancellation(this.TimeoutToken);
+		call.Cancel();
+		await Assert.ThrowsAnyAsync<Exception>(() => sum);
+
+		try
+		{
+			await iterator.HoldingBeforeLink.Task.WithCancellation(this.TimeoutToken);
+			await iterator.FinallyObserved.Task.WithCancellation(this.TimeoutToken);
+			Assert.False(captured.IsCancellationRequested);
+			Assert.True(iterator.SawCanceled);
+		}
+		finally
+		{
+			iterator.ReleaseBeforeLink.TrySetResult(true);
+		}
+
+		await iterator.BeforeLinkFinished.Task.WithCancellation(this.TimeoutToken);
+	}
+
+	/// <summary>
+	/// A prefetch whose caller cancels inside <see cref="IAsyncEnumerable{T}.GetAsyncEnumerator"/> must not run
+	/// linked-token callbacks on the prefetch stack. Those callbacks can wait for <see langword="finally"/>.
+	/// </summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task PrefetchCatchUpCancellationDoesNotDeadlock()
+	{
+#if NET
+		if (!RuntimeFeature.IsDynamicCodeSupported)
+		{
+			Skip.Test("NativeAOT does not expose the compiler-generated linked cancellation field this race reaches.");
+			return;
+		}
+#endif
+
+		using CancellationTokenSource captured = new();
+		using CancellationTokenSource caller = new();
+		LinkedCatchUpIterator iterator = new();
+		Task prefetch = iterator.Produce(captured.Token, caller).WithPrefetchAsync(1, caller.Token).AsTask();
+		await Assert.ThrowsAsync<OperationCanceledException>(() => prefetch.WithCancellation(this.TimeoutToken));
+		Assert.False(this.TimeoutToken.IsCancellationRequested);
+		Assert.False(captured.IsCancellationRequested);
+		Assert.True(iterator.SawCanceled);
+		await iterator.CallbackFinished.Task.WithCancellation(this.TimeoutToken);
+	}
+
+	/// <summary>
 	/// After prefetch, canceling the token that was supplied to prefetch does not cancel the token the iterator captured.
 	/// </summary>
 	/// <returns>A task representing the test.</returns>
@@ -877,6 +989,128 @@ public partial class AsyncEnumerableTests : TestBase
 			{
 				Volatile.Write(ref this.sawCanceled, cancellationToken.IsCancellationRequested ? 1 : 0);
 				this.Disposed.TrySetResult(true);
+			}
+		}
+	}
+
+	/// <summary>
+	/// Compiler iterator whose prefetch token gets a callback registered after the compiler link,
+	/// so that callback runs first and can hold the prefetch token's callback list.
+	/// </summary>
+	private sealed class LinkedTokenRaceIterator
+	{
+		private int sawCanceled;
+
+		internal bool SawCanceled => Volatile.Read(ref this.sawCanceled) != 0;
+
+		internal TaskCompletionSource<bool> HoldingBeforeLink { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal TaskCompletionSource<bool> ReleaseBeforeLink { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal TaskCompletionSource<bool> BeforeLinkFinished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal TaskCompletionSource<bool> Blocked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal TaskCompletionSource<bool> FinallyObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public IAsyncEnumerable<int> Produce(CancellationToken captured, bool blockAfterFirst = false) => new RaceEnumerable(this, captured, blockAfterFirst);
+
+		private async IAsyncEnumerable<int> Run(bool blockAfterFirst, [EnumeratorCancellation] CancellationToken cancellationToken)
+		{
+			try
+			{
+				yield return 1;
+				if (blockAfterFirst)
+				{
+					this.Blocked.TrySetResult(true);
+					await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+				}
+
+				yield return 2;
+			}
+			finally
+			{
+				Volatile.Write(ref this.sawCanceled, cancellationToken.IsCancellationRequested ? 1 : 0);
+				this.FinallyObserved.TrySetResult(true);
+			}
+		}
+
+		private sealed class RaceEnumerable(LinkedTokenRaceIterator owner, CancellationToken captured, bool blockAfterFirst) : IAsyncEnumerable<int>
+		{
+			public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+			{
+				IAsyncEnumerator<int> inner = owner.Run(blockAfterFirst, captured).GetAsyncEnumerator(cancellationToken);
+				if (cancellationToken.CanBeCanceled)
+				{
+					// Registered after the compiler link, so cancellation runs this first and can drop the link
+					// if disposal proceeds from the prefetch token's wait handle.
+					cancellationToken.Register(
+						static state =>
+						{
+							LinkedTokenRaceIterator iterator = (LinkedTokenRaceIterator)state!;
+							iterator.HoldingBeforeLink.TrySetResult(true);
+#pragma warning disable VSTHRD002 // The callback holds the prefetch token until the test releases it.
+							iterator.ReleaseBeforeLink.Task.GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
+							iterator.BeforeLinkFinished.TrySetResult(true);
+						},
+						owner);
+				}
+
+				return inner;
+			}
+		}
+	}
+
+	/// <summary>
+	/// Starts a compiler iterator, registers a callback that waits for <see langword="finally"/>, then cancels prefetch.
+	/// </summary>
+	private sealed class LinkedCatchUpIterator
+	{
+		private int sawCanceled;
+
+		internal bool SawCanceled => Volatile.Read(ref this.sawCanceled) != 0;
+
+		internal TaskCompletionSource<bool> Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal TaskCompletionSource<bool> CallbackFinished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public IAsyncEnumerable<int> Produce(CancellationToken captured, CancellationTokenSource caller) => new Enumerable(this, captured, caller);
+
+		private async IAsyncEnumerable<int> Run([EnumeratorCancellation] CancellationToken cancellationToken)
+		{
+			try
+			{
+				cancellationToken.Register(
+					static state =>
+					{
+						LinkedCatchUpIterator iterator = (LinkedCatchUpIterator)state!;
+#pragma warning disable VSTHRD002 // The callback waits for finally; that is the hazard under test.
+						iterator.Disposed.Task.GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
+						iterator.CallbackFinished.TrySetResult(true);
+					},
+					this);
+				yield return 1;
+				yield return 2;
+			}
+			finally
+			{
+				Volatile.Write(ref this.sawCanceled, cancellationToken.IsCancellationRequested ? 1 : 0);
+				this.Disposed.TrySetResult(true);
+			}
+		}
+
+		private sealed class Enumerable(LinkedCatchUpIterator owner, CancellationToken captured, CancellationTokenSource caller) : IAsyncEnumerable<int>
+		{
+			public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+			{
+				IAsyncEnumerator<int> inner = owner.Run(captured).GetAsyncEnumerator(cancellationToken);
+#pragma warning disable VSTHRD002 // The first move registers the linked-token callback before prefetch continues.
+				inner.MoveNextAsync().AsTask().GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
+				caller.Cancel();
+				return inner;
 			}
 		}
 	}
