@@ -584,6 +584,23 @@ public partial class AsyncEnumerableTests : TestBase
 		await Assert.ThrowsAsync<OperationCanceledException>(() => prefetch.AsTask());
 	}
 
+	/// <summary>A second prefetch that is already canceled still disposes the iterator started by the first prefetch.</summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task CanceledRepeatPrefetchDisposesExistingIterator()
+	{
+		OneValueThenSuspended sequence = new();
+		IAsyncEnumerable<int> prefetched = await sequence.WithPrefetchAsync(1, this.TimeoutToken);
+		Assert.True(sequence.Started);
+		Assert.False(sequence.Disposed.Task.IsCompleted);
+
+		using CancellationTokenSource canceled = new();
+		canceled.Cancel();
+		await Assert.ThrowsAsync<OperationCanceledException>(() => prefetched.WithPrefetchAsync(1, canceled.Token).AsTask());
+		await sequence.Disposed.Task.WithCancellation(this.TimeoutToken);
+		Assert.True(sequence.DisposeObservedCancellation);
+	}
+
 	/// <summary>Canceling prefetch unblocks disposal of an enumerator that waits on the token it was given.</summary>
 	/// <returns>A task representing the test.</returns>
 	[Test]
@@ -618,6 +635,46 @@ public partial class AsyncEnumerableTests : TestBase
 		catch (Exception)
 		{
 			// A dropped transport can fault Completion. Shutdown must still finish.
+		}
+	}
+
+	private sealed class OneValueThenSuspended : IAsyncEnumerable<int>
+	{
+		private int started;
+		private int disposeObservedCancellation;
+
+		internal bool Started => Volatile.Read(ref this.started) != 0;
+
+		internal TaskCompletionSource<bool> Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal bool DisposeObservedCancellation => Volatile.Read(ref this.disposeObservedCancellation) != 0;
+
+		public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default) => new Enumerator(this, cancellationToken);
+
+		private sealed class Enumerator(OneValueThenSuspended owner, CancellationToken cancellationToken) : IAsyncEnumerator<int>
+		{
+			private int index;
+
+			public int Current => this.index;
+
+			public ValueTask<bool> MoveNextAsync()
+			{
+				if (this.index >= 2)
+				{
+					return new ValueTask<bool>(false);
+				}
+
+				this.index++;
+				Volatile.Write(ref owner.started, 1);
+				return new ValueTask<bool>(true);
+			}
+
+			public ValueTask DisposeAsync()
+			{
+				Volatile.Write(ref owner.disposeObservedCancellation, cancellationToken.IsCancellationRequested ? 1 : 0);
+				owner.Disposed.TrySetResult(true);
+				return default;
+			}
 		}
 	}
 
