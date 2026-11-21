@@ -93,11 +93,15 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		bool keepEnumerator = false;
 		try
 		{
+			// The caller registration only queues cancellation, so a token that is already canceled would otherwise
+			// let a synchronous iterator produce every requested value before that work runs.
+			cancellationToken.ThrowIfCancellationRequested();
 			this.startedEnumerator ??= this.inner.GetAsyncEnumerator(this.enumerationCancellation.Token);
 			enumerator = this.startedEnumerator;
 			List<T> values = this.prefetchedValues ?? new List<T>(count);
 			while (values.Count < count)
 			{
+				cancellationToken.ThrowIfCancellationRequested();
 				if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
 				{
 					this.exhausted = true;
@@ -121,6 +125,7 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 					{
 						// Keep the request linked until disposal finishes. The enumerator was started with the
 						// owned token, so unlinking first would leave a dispose that waits on that token stuck.
+						this.enumerationCancellation?.WaitUntilSignaled();
 						await enumerator.DisposeAsync().ConfigureAwait(false);
 					}
 				}
@@ -199,6 +204,9 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		{
 			try
 			{
+				// Disposal can otherwise run before the queued cancel, so finally would observe a live token.
+				// Waiting only until the token is signaled lets blocking callbacks finish on the worker.
+				cancellation.WaitUntilSignaled();
 				await inner.DisposeAsync().ConfigureAwait(false);
 			}
 			finally
@@ -228,6 +236,21 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		/// <summary>Gets the token observed by the started enumerator.</summary>
 		internal CancellationToken Token => this.source.Token;
 
+		private bool IsSignaled
+		{
+			get
+			{
+				try
+				{
+					return this.source.IsCancellationRequested;
+				}
+				catch (ObjectDisposedException)
+				{
+					return true;
+				}
+			}
+		}
+
 		/// <summary>Queues cancellation so the caller's stack, including connection shutdown, is not blocked by iterator callbacks.</summary>
 		internal void CancelFromLinkedToken()
 		{
@@ -241,7 +264,51 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 				this.cancelScheduled = true;
 			}
 
-			ThreadPool.QueueUserWorkItem(static state => ((OwnedCancellation)state!).CancelCore(), this);
+			// A dedicated thread, not the pool: disposal waits until the token is signaled and must not starve this work.
+			Thread thread = new(static state => ((OwnedCancellation)state!).CancelCore())
+			{
+				IsBackground = true,
+				Name = "JSON-RPC enumerable cancellation",
+			};
+			try
+			{
+				thread.Start(this);
+			}
+			catch (Exception ex) when (ex is OutOfMemoryException or ThreadStartException)
+			{
+				// Starting the thread failed after cancellation was marked scheduled. Run it here so a disposal
+				// waiting on the flag cannot spin forever. Callbacks may then run on this caller.
+				this.CancelCore();
+			}
+		}
+
+		/// <summary>
+		/// Blocks until a queued cancel has marked the token canceled.
+		/// Returns immediately when cancellation was not requested. Does not wait for callbacks, which may depend on disposal finishing.
+		/// </summary>
+		internal void WaitUntilSignaled()
+		{
+			if (this.IsSignaled)
+			{
+				return;
+			}
+
+			bool scheduled;
+			lock (this.gate)
+			{
+				scheduled = this.cancelScheduled && !this.released;
+			}
+
+			if (!scheduled)
+			{
+				return;
+			}
+
+			SpinWait spin = default;
+			while (!this.IsSignaled)
+			{
+				spin.SpinOnce();
+			}
 		}
 
 		/// <summary>

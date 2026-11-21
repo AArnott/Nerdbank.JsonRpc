@@ -11,6 +11,7 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 	private int blockingEnumerationCanceled;
 	private int blockingBatchCanceled;
 	private int prefetchedBlockCanceled;
+	private int suspendedYieldCanceled;
 
 	internal TaskCompletionSource<bool> UncooperativeMoveNextStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -80,6 +81,12 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 	/// <summary>Gets or sets the task a cancellation callback blocks on. Tests assign the server connection's <see cref="JsonRpc.Completion"/>.</summary>
 	internal Task? CancellationCallbackBlocksOn { get; set; }
 
+	/// <summary>Gets the signal set from the <see langword="finally"/> block of <see cref="GetPrefetchedSuspendedYieldAsync"/>.</summary>
+	internal TaskCompletionSource<bool> SuspendedYieldDisposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	/// <summary>Gets a value indicating whether <see cref="GetPrefetchedSuspendedYieldAsync"/> observed a canceled enumerator token.</summary>
+	internal bool SuspendedYieldCanceled => Volatile.Read(ref this.suspendedYieldCanceled) != 0;
+
 	/// <summary>Gets the callback retained by the last sequence-producing call.</summary>
 	internal ICallScopedCounter? LastCounter { get; private set; }
 
@@ -132,6 +139,10 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 	/// <inheritdoc/>
 	public IAsyncEnumerable<int> GetPrefetchedSequenceWhoseCancellationBlocksAsync(CancellationToken cancellationToken)
 		=> this.BlockOnCompletionWhenCanceledAsync(cancellationToken).WithJsonRpcSettings(new JsonRpcEnumerableSettings { Prefetch = 1 });
+
+	/// <inheritdoc/>
+	public IAsyncEnumerable<int> GetPrefetchedSuspendedYieldAsync(CancellationToken cancellationToken)
+		=> this.SuspendAfterPrefetchedYieldAsync(cancellationToken).WithJsonRpcSettings(new JsonRpcEnumerableSettings { Prefetch = 1 });
 
 	public IAsyncEnumerable<int> GetUncooperativeSequenceAsync(bool blockReadAhead, bool blockDispose, CancellationToken cancellationToken)
 		=> new UncooperativeSequence(this, blockReadAhead, blockDispose).WithJsonRpcSettings(new() { MaxReadAhead = blockReadAhead ? 1 : 0 });
@@ -333,6 +344,20 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 		finally
 		{
 			this.PrefetchedCancellationBlockDisposed.TrySetResult(true);
+		}
+	}
+
+	private async IAsyncEnumerable<int> SuspendAfterPrefetchedYieldAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+	{
+		try
+		{
+			yield return 0;
+			yield return 1;
+		}
+		finally
+		{
+			Volatile.Write(ref this.suspendedYieldCanceled, cancellationToken.IsCancellationRequested ? 1 : 0);
+			this.SuspendedYieldDisposed.TrySetResult(true);
 		}
 	}
 

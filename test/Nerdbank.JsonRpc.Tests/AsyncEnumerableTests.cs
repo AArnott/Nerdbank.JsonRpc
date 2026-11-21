@@ -545,6 +545,45 @@ public partial class AsyncEnumerableTests : TestBase
 		Assert.Equal(new[] { 0, 1, 2, 3, 4 }, values);
 	}
 
+	/// <summary>
+	/// An iterator suspended at a yield after prefetch must observe cancellation when the connection drops, even if disposal wins the race with the cancel worker.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="disconnect">How the connection is severed.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ServerDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ServerDisposed)]
+	public async Task ConnectionLossCancelsIteratorSuspendedAfterPrefetch(JsonRpcEncoding encoding, ConnectionLoss disconnect)
+	{
+		using Fixture fixture = new(encoding);
+		await using IAsyncEnumerator<int> enumerator = fixture.Client.GetPrefetchedSuspendedYieldAsync(this.TimeoutToken).GetAsyncEnumerator(this.TimeoutToken);
+		Assert.True(await enumerator.MoveNextAsync());
+		Assert.Equal(0, enumerator.Current);
+
+		await fixture.SeverAsync(disconnect);
+
+		await fixture.Service.SuspendedYieldDisposed.Task.WithCancellation(this.TimeoutToken);
+		Assert.True(fixture.Service.SuspendedYieldCanceled);
+		await this.AwaitCompletionAsync(fixture.ServerRpc.Completion);
+		await this.AwaitCompletionAsync(fixture.ClientRpc.Completion);
+	}
+
+	/// <summary>A prefetch whose token is already canceled does not produce values from a synchronous sequence.</summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task PrefetchHonorsAnAlreadyCanceledToken()
+	{
+		using CancellationTokenSource canceled = new();
+		canceled.Cancel();
+		ValueTask<IAsyncEnumerable<int>> prefetch = Enumerable.Range(0, 5).AsAsyncEnumerable().WithPrefetchAsync(5, canceled.Token);
+		await Assert.ThrowsAsync<OperationCanceledException>(() => prefetch.AsTask());
+	}
+
 	/// <summary>Canceling prefetch unblocks disposal of an enumerator that waits on the token it was given.</summary>
 	/// <returns>A task representing the test.</returns>
 	[Test]
