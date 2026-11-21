@@ -12,6 +12,8 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 {
 	private readonly IAsyncEnumerable<T> inner;
 	private IAsyncEnumerator<T>? startedEnumerator;
+	private IAsyncEnumerator<T>? continuation;
+	private CancellationTokenSource? enumerationCancellation;
 	private List<T>? prefetchedValues;
 	private bool exhausted;
 
@@ -37,17 +39,26 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 			return values.AsAsyncEnumerable().GetAsyncEnumerator(cancellationToken);
 		}
 
+		if (this.continuation is not null)
+		{
+			return this.continuation;
+		}
+
 		if (this.startedEnumerator is null)
 		{
 			return this.inner.GetAsyncEnumerator(cancellationToken);
 		}
 
-		// Prefetching already advanced an enumerator, so continue from where it left off,
-		// replaying any values that were fetched but never torn off for transmission.
+		// Prefetch started the iterator with a token owned by this sequence. The request token that
+		// was current during prefetch is disposed when that request completes, so later pulls and
+		// shutdown must cancel this token instead.
+		CancellationTokenRegistration registration = cancellationToken.Register(static state => CancelSource(state), this.enumerationCancellation);
 		List<T>? pending = this.prefetchedValues;
 		this.prefetchedValues = null;
 		IAsyncEnumerator<T> started = this.startedEnumerator;
-		return pending is { Count: > 0 } ? new PrependingEnumerator(pending, started) : started;
+		IAsyncEnumerator<T> enumerator = pending is { Count: > 0 } ? new PrependingEnumerator(pending, started) : started;
+		this.continuation = new LinkedEnumerator(enumerator, this.enumerationCancellation, registration);
+		return this.continuation;
 	}
 
 	/// <inheritdoc/>
@@ -67,11 +78,15 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 			return;
 		}
 
-		this.startedEnumerator ??= this.inner.GetAsyncEnumerator(cancellationToken);
-		IAsyncEnumerator<T> enumerator = this.startedEnumerator;
+		// Link the caller only for this prefetch. The completed request's token is disposed afterward and must not cancel later pulls.
+		this.enumerationCancellation ??= new CancellationTokenSource();
+		CancellationTokenRegistration requestRegistration = cancellationToken.Register(static state => CancelSource(state), this.enumerationCancellation);
+		IAsyncEnumerator<T>? enumerator = null;
 		bool keepEnumerator = false;
 		try
 		{
+			this.startedEnumerator ??= this.inner.GetAsyncEnumerator(this.enumerationCancellation.Token);
+			enumerator = this.startedEnumerator;
 			List<T> values = this.prefetchedValues ?? new List<T>(count);
 			while (values.Count < count)
 			{
@@ -89,10 +104,15 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		}
 		finally
 		{
-			if (!keepEnumerator)
+#pragma warning disable VSTHRD103 // Unregistering a cancellation callback is synchronous.
+			requestRegistration.Dispose();
+#pragma warning restore VSTHRD103
+			if (!keepEnumerator && enumerator is not null)
 			{
 				this.startedEnumerator = null;
 				await enumerator.DisposeAsync().ConfigureAwait(false);
+				this.enumerationCancellation?.Dispose();
+				this.enumerationCancellation = null;
 			}
 		}
 	}
@@ -110,6 +130,22 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		IReadOnlyList<T> values = this.prefetchedValues ?? (IReadOnlyList<T>)Array.Empty<T>();
 		this.prefetchedValues = null;
 		return (values, this.exhausted);
+	}
+
+	/// <summary>Cancels a source that may already have been disposed with its enumerator.</summary>
+	/// <param name="state">The <see cref="CancellationTokenSource"/> to cancel.</param>
+	private static void CancelSource(object? state)
+	{
+		try
+		{
+#pragma warning disable VSTHRD103 // CancelAsync is unavailable on all target frameworks.
+			((CancellationTokenSource)state!).Cancel();
+#pragma warning restore VSTHRD103
+		}
+		catch (ObjectDisposedException)
+		{
+			// The enumerator finished and disposed the source before this callback ran.
+		}
 	}
 
 	/// <summary>Yields a buffered prefix before continuing with an enumerator that has already been advanced.</summary>
@@ -134,6 +170,33 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 
 			this.index = prefix.Count;
 			return inner.MoveNextAsync();
+		}
+	}
+
+	/// <summary>Forwards an already started enumerator and releases the token that keeps it cancellable.</summary>
+	/// <param name="inner">The enumerator to forward to.</param>
+	/// <param name="cancellationSource">The token source passed to <paramref name="inner"/>, disposed with it.</param>
+	/// <param name="registration">The registration that cancels <paramref name="cancellationSource"/> when a later caller cancels.</param>
+	private sealed class LinkedEnumerator(IAsyncEnumerator<T> inner, CancellationTokenSource? cancellationSource, CancellationTokenRegistration registration) : IAsyncEnumerator<T>
+	{
+		/// <inheritdoc/>
+		public T Current => inner.Current;
+
+		/// <inheritdoc/>
+		public ValueTask<bool> MoveNextAsync() => inner.MoveNextAsync();
+
+		/// <inheritdoc/>
+		public async ValueTask DisposeAsync()
+		{
+			try
+			{
+				await inner.DisposeAsync().ConfigureAwait(false);
+			}
+			finally
+			{
+				registration.Dispose();
+				cancellationSource?.Dispose();
+			}
 		}
 	}
 }

@@ -236,6 +236,51 @@ public class CallScopedEnumerableTests : TestBase
 		Assert.False(counter.IsDisposed);
 	}
 
+	/// <summary>
+	/// Shutdown during a blocked pull after a partial prefetch cancels the iterator.
+	/// The iterator's finally completing is what lets generator disposal release the call-scoped argument.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="disconnect">How the connection is severed.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, AsyncEnumerableTests.ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, AsyncEnumerableTests.ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.Json, AsyncEnumerableTests.ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.MessagePack, AsyncEnumerableTests.ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.Json, AsyncEnumerableTests.ConnectionLoss.ServerDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, AsyncEnumerableTests.ConnectionLoss.ServerDisposed)]
+	public async Task PartialPrefetchDisconnectCancelsIteratorAndReleasesCallback(JsonRpcEncoding encoding, AsyncEnumerableTests.ConnectionLoss disconnect)
+	{
+		using Fixture fixture = new(encoding);
+		Counter counter = new();
+		await using IAsyncEnumerator<int> enumerator = fixture.Client.GetPrefetchedBlockingSequenceAsync(counter, this.TimeoutToken).GetAsyncEnumerator(this.TimeoutToken);
+		Assert.True(await enumerator.MoveNextAsync());
+		Assert.Equal(0, enumerator.Current);
+		Task<bool> pending = enumerator.MoveNextAsync().AsTask();
+		await fixture.Service.PrefetchedBlockWaiting.Task.WithCancellation(this.TimeoutToken);
+		await fixture.SeverAsync(disconnect);
+		await fixture.Service.PrefetchedBlockDisposed.Task.WithCancellation(this.TimeoutToken);
+		Assert.True(fixture.Service.PrefetchedBlockCanceled);
+		Assert.NotNull(fixture.Service.LastCounter);
+		await Assert.ThrowsAnyAsync<Exception>(() => fixture.Service.LastCounter.IncrementAsync(this.TimeoutToken));
+		await Assert.ThrowsAnyAsync<Exception>(() => pending);
+		try
+		{
+			await fixture.ServerRpc.Completion.WithCancellation(this.TimeoutToken);
+		}
+		catch (OperationCanceledException) when (this.TimeoutToken.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch (Exception)
+		{
+			// A dropped transport can fault Completion. Shutdown must still finish.
+		}
+
+		Assert.False(counter.IsDisposed);
+	}
+
 	/// <summary>Custom enumerator disposal can use callbacks even when prefetch consumes all values.</summary>
 	/// <param name="encoding">The wire encoding.</param>
 	/// <param name="prefetch">The prefetch count.</param>
@@ -340,6 +385,7 @@ public class CallScopedEnumerableTests : TestBase
 
 	private sealed class Fixture : IDisposable
 	{
+		private readonly IDuplexPipe clientPipe;
 		private readonly JsonRpc serverRpc;
 
 		/// <summary>Initializes a new instance of the <see cref="Fixture"/> class.</summary>
@@ -347,6 +393,7 @@ public class CallScopedEnumerableTests : TestBase
 		internal Fixture(JsonRpcEncoding encoding)
 		{
 			(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+			this.clientPipe = clientPipe;
 			this.ClientRpc = new(CreateChannel(clientPipe, encoding));
 			this.serverRpc = new(CreateChannel(serverPipe, encoding));
 			this.serverRpc.AddRpcTarget<IAsyncEnumerableService>(this.Service);
@@ -373,6 +420,28 @@ public class CallScopedEnumerableTests : TestBase
 		{
 			this.ClientRpc.Dispose();
 			this.serverRpc.Dispose();
+		}
+
+		/// <summary>Severs the connection without assuming which side is still running.</summary>
+		/// <param name="disconnect">How to sever the connection.</param>
+		/// <returns>A task that completes when the transport close has been requested.</returns>
+		internal async Task SeverAsync(AsyncEnumerableTests.ConnectionLoss disconnect)
+		{
+			switch (disconnect)
+			{
+				case AsyncEnumerableTests.ConnectionLoss.ClientDisposed:
+					this.ClientRpc.Dispose();
+					break;
+				case AsyncEnumerableTests.ConnectionLoss.TransportClosed:
+					await this.clientPipe.Output.CompleteAsync();
+					await this.clientPipe.Input.CompleteAsync();
+					break;
+				case AsyncEnumerableTests.ConnectionLoss.ServerDisposed:
+					this.serverRpc.Dispose();
+					break;
+				default:
+					throw new ArgumentOutOfRangeException(nameof(disconnect));
+			}
 		}
 
 		private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)

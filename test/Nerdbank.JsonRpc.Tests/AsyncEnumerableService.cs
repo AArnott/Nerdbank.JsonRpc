@@ -10,6 +10,7 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 	private int cancelableEnumerationCanceled;
 	private int blockingEnumerationCanceled;
 	private int blockingBatchCanceled;
+	private int prefetchedBlockCanceled;
 
 	internal TaskCompletionSource<bool> UncooperativeMoveNextStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -58,6 +59,15 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 	/// <summary>Gets a value indicating whether <see cref="GetBlockingBatchAsync"/> observed a canceled enumerator token.</summary>
 	internal bool BlockingBatchCanceled => Volatile.Read(ref this.blockingBatchCanceled) != 0;
 
+	/// <summary>Gets the signal that <see cref="GetPrefetchedBlockingSequenceAsync"/> is blocked after its prefetched value.</summary>
+	internal TaskCompletionSource<bool> PrefetchedBlockWaiting { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	/// <summary>Gets the signal set from the <see langword="finally"/> block of <see cref="GetPrefetchedBlockingSequenceAsync"/>.</summary>
+	internal TaskCompletionSource<bool> PrefetchedBlockDisposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	/// <summary>Gets a value indicating whether <see cref="GetPrefetchedBlockingSequenceAsync"/> observed a canceled enumerator token.</summary>
+	internal bool PrefetchedBlockCanceled => Volatile.Read(ref this.prefetchedBlockCanceled) != 0;
+
 	/// <summary>Gets the callback retained by the last sequence-producing call.</summary>
 	internal ICallScopedCounter? LastCounter { get; private set; }
 
@@ -99,6 +109,13 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 	/// <inheritdoc/>
 	public IAsyncEnumerable<int> GetBlockingBatchAsync(int minBatchSize, CancellationToken cancellationToken)
 		=> this.BlockAcrossBatchAsync(cancellationToken).WithJsonRpcSettings(new JsonRpcEnumerableSettings { MinBatchSize = minBatchSize });
+
+	/// <inheritdoc/>
+	public IAsyncEnumerable<int> GetPrefetchedBlockingSequenceAsync(ICallScopedCounter counter, CancellationToken cancellationToken)
+	{
+		this.LastCounter = counter;
+		return this.BlockAfterPrefetchAsync(cancellationToken).WithJsonRpcSettings(new JsonRpcEnumerableSettings { Prefetch = 1 });
+	}
 
 	public IAsyncEnumerable<int> GetUncooperativeSequenceAsync(bool blockReadAhead, bool blockDispose, CancellationToken cancellationToken)
 		=> new UncooperativeSequence(this, blockReadAhead, blockDispose).WithJsonRpcSettings(new() { MaxReadAhead = blockReadAhead ? 1 : 0 });
@@ -249,6 +266,21 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 		{
 			Volatile.Write(ref this.blockingBatchCanceled, cancellationToken.IsCancellationRequested ? 1 : 0);
 			this.BlockingBatchDisposed.TrySetResult(true);
+		}
+	}
+
+	private async IAsyncEnumerable<int> BlockAfterPrefetchAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+	{
+		try
+		{
+			yield return 0;
+			this.PrefetchedBlockWaiting.TrySetResult(true);
+			await Task.Delay(Timeout.Infinite, cancellationToken);
+		}
+		finally
+		{
+			Volatile.Write(ref this.prefetchedBlockCanceled, cancellationToken.IsCancellationRequested ? 1 : 0);
+			this.PrefetchedBlockDisposed.TrySetResult(true);
 		}
 	}
 
