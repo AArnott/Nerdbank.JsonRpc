@@ -388,9 +388,11 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		/// <remarks>
 		/// The runtime signals <see cref="CancellationToken.WaitHandle"/> before it runs callbacks on that token,
 		/// so a callback can block on disposal. When the compiler linked the prefetch token with the token the
-		/// iterator captured, the iterator observes the linked token. <see cref="CancelCore"/> cancels that source
-		/// before prefetch-token callbacks run; waiting only for the prefetch wait handle lets an earlier callback
-		/// hold that list while disposal drops the link.
+		/// iterator captured, the iterator observes the linked token. <see cref="CancelCore"/> sets that linked
+		/// flag before prefetch-token callbacks run, without waiting for the linked callbacks themselves.
+		/// Waiting only for the prefetch wait handle lets an earlier callback hold that list while disposal drops the link.
+		/// A disposed linked source ends this wait. Falling back to the prefetch token can hang, because a linked
+		/// callback may still be waiting for disposal and the prefetch source is canceled only after that callback returns.
 		/// A callback that blocks on <see cref="JsonRpc.Completion"/> still runs off the shutdown path because
 		/// cancellation itself is queued.
 		/// </remarks>
@@ -515,11 +517,35 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 			}
 		}
 
+#if NET
+		/// <summary>Observes callback failures from <see cref="CancellationTokenSource.CancelAsync"/> so they are not unobserved.</summary>
+		/// <param name="cancellation">The cancellation task.</param>
+		private static void ObserveFaultedCancellation(Task cancellation)
+		{
+			if (cancellation.IsFaulted)
+			{
+				_ = cancellation.Exception;
+				return;
+			}
+
+			if (!cancellation.IsCompleted)
+			{
+				_ = cancellation.ContinueWith(
+					static completed => _ = completed.Exception,
+					CancellationToken.None,
+					TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+					TaskScheduler.Default);
+			}
+		}
+#endif
+
 		private void CancelCore()
 		{
-			// The compiler link is one of this source's callbacks. Cancel the linked source first so a callback
+			// The compiler link is one of this source's callbacks. Set the linked flag first so a callback
 			// registered ahead of that link cannot keep the iterator's token uncanceled until disposal drops it.
-			this.CancelCompilerLinkedToken();
+			// Do not run the linked callbacks on this thread. One of them can wait for finally while finally
+			// waits for this source, and joining those callbacks would leave both waits stuck.
+			this.SignalCompilerLinkedToken();
 			try
 			{
 #pragma warning disable VSTHRD103 // CancelAsync is unavailable on all target frameworks.
@@ -547,7 +573,7 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		{
 			try
 			{
-				this.CancelCompilerLinkedToken();
+				this.SignalCompilerLinkedToken();
 			}
 			finally
 			{
@@ -581,32 +607,71 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 			}
 		}
 
-		private void CancelCompilerLinkedToken()
+		/// <summary>
+		/// Sets the compiler-linked cancellation flag without running that source's callbacks on this thread.
+		/// </summary>
+		/// <remarks>
+		/// <see cref="CancellationTokenSource.Cancel()"/> runs callbacks before it returns. A linked callback can
+		/// wait for the iterator's <see langword="finally"/> block while that block waits for <see cref="source"/>.
+		/// Joining the linked callbacks first leaves both waits stuck. The flag still has to flip before
+		/// <see cref="source"/> callbacks run, or an earlier prefetch-token callback can dispose the link
+		/// before the iterator observes it.
+		/// </remarks>
+		private void SignalCompilerLinkedToken()
 		{
 			CancellationTokenSource? linked = Volatile.Read(ref this.compilerLinked);
-			if (linked is null)
+			if (linked is null || !TryReadToken(linked, out CancellationToken token) || IsCancellationRequested(token))
 			{
 				return;
 			}
 
+#if NET
 			try
 			{
-#pragma warning disable VSTHRD103 // CancelAsync is unavailable on all target frameworks.
-				linked.Cancel();
-#pragma warning restore VSTHRD103
+				// CancelAsync flips the flag and signals the wait handle before returning, then runs callbacks
+				// on the thread pool. A second Cancel from the compiler's own link does not join those callbacks.
+				ObserveFaultedCancellation(linked.CancelAsync());
 			}
-			catch (Exception ex) when (ex is ObjectDisposedException or AggregateException)
+			catch (ObjectDisposedException)
 			{
-				// Disposal may already have released the compiler's source, or one of its callbacks threw.
+				// The compiler already disposed this source. There is no flag left to set.
 			}
+#else
+			// net472 and netstandard2.0 have no CancelAsync. A worker runs Cancel, and this thread waits only
+			// until the flag is signaled or that attempt finishes. The wait handle is signaled before callbacks.
+			// Dispose does not signal it, so the worker also sets an event when Cancel returns or throws.
+			LinkedCancelWork work = new(linked);
+			try
+			{
+				ThreadPool.QueueUserWorkItem(static state => ((LinkedCancelWork)state!).Run(), work);
+			}
+			catch (NotSupportedException)
+			{
+				Thread thread = new(static state => ((LinkedCancelWork)state!).Run())
+				{
+					IsBackground = true,
+				};
+				thread.Start(work);
+			}
+
+			work.WaitUntilObservable(token);
+#endif
 		}
 
 		private bool TryGetObservedToken(out CancellationToken observed)
 		{
 			CancellationTokenSource? linked = Volatile.Read(ref this.compilerLinked);
-			if (linked is not null && TryReadToken(linked, out observed))
+			if (linked is not null)
 			{
-				return true;
+				if (TryReadToken(linked, out observed))
+				{
+					return true;
+				}
+
+				// The linked source was disposed. Its wait handle does not wake waiters. Waiting on the
+				// prefetch token instead outlives the source the iterator was actually observing.
+				observed = default;
+				return false;
 			}
 
 			return TryReadToken(this.source, out observed);
@@ -724,5 +789,65 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 				this.source.Dispose();
 			}
 		}
+
+#if !NET
+		/// <summary>Runs <see cref="CancellationTokenSource.Cancel()"/> off the caller and wakes that caller when the flag is set or the attempt ends.</summary>
+		private sealed class LinkedCancelWork
+		{
+			private readonly CancellationTokenSource linked;
+			private readonly ManualResetEvent finished = new(false);
+
+			internal LinkedCancelWork(CancellationTokenSource linked)
+			{
+				this.linked = linked;
+			}
+
+			internal void Run()
+			{
+				try
+				{
+#pragma warning disable VSTHRD103 // CancelAsync is unavailable on this target.
+					this.linked.Cancel();
+#pragma warning restore VSTHRD103
+				}
+				catch (Exception ex) when (ex is ObjectDisposedException or AggregateException)
+				{
+					// Already disposed, or a callback threw after the flag was set.
+				}
+				finally
+				{
+					try
+					{
+						this.finished.Set();
+					}
+					catch (ObjectDisposedException)
+					{
+						// The waiter already observed the flag and released this event.
+					}
+				}
+			}
+
+			/// <summary>Blocks until <paramref name="token"/> is signaled or <see cref="Run"/> has finished.</summary>
+			/// <param name="token">The linked token. Its wait handle is signaled before callbacks run.</param>
+			internal void WaitUntilObservable(CancellationToken token)
+			{
+				try
+				{
+					if (!IsCancellationRequested(token))
+					{
+						WaitHandle.WaitAny(new WaitHandle[] { token.WaitHandle, this.finished });
+					}
+				}
+				catch (ObjectDisposedException)
+				{
+					// The linked source was disposed before its handle could be waited on.
+				}
+				finally
+				{
+					this.finished.Dispose();
+				}
+			}
+		}
+#endif
 	}
 }

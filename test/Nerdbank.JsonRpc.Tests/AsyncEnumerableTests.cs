@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO.Pipelines;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.Threading;
@@ -770,6 +771,160 @@ public partial class AsyncEnumerableTests : TestBase
 	}
 
 	/// <summary>
+	/// A linked-token callback that waits for <see langword="finally"/> must not keep the prefetch token from being canceled.
+	/// <see langword="finally"/> waits for that prefetch token.
+	/// </summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task PrefetchCancelSurvivesLinkedCallbackWaitingForOriginalToken()
+	{
+#if NET
+		if (!RuntimeFeature.IsDynamicCodeSupported)
+		{
+			Skip.Test("NativeAOT does not expose the compiler-generated linked cancellation field this race reaches.");
+			return;
+		}
+#endif
+
+		using CancellationTokenSource captured = new();
+		LinkedCallbackWaitsForOriginalTokenIterator iterator = new();
+		IAsyncEnumerable<int> prefetched = await iterator.Produce(captured.Token).WithPrefetchAsync(1, captured.Token);
+		using CancellationTokenSource enumeration = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
+		IAsyncEnumerator<int> enumerator = prefetched.GetAsyncEnumerator(enumeration.Token);
+		Assert.True(await enumerator.MoveNextAsync());
+		Assert.Equal(1, enumerator.Current);
+
+		enumeration.Cancel();
+		await enumerator.DisposeAsync().AsTask().WithCancellation(this.TimeoutToken);
+		Assert.False(this.TimeoutToken.IsCancellationRequested);
+		Assert.False(captured.IsCancellationRequested);
+		Assert.True(iterator.SawCanceled);
+		await iterator.CallbackFinished.Task.WithCancellation(this.TimeoutToken);
+	}
+
+	/// <summary>
+	/// Canceling a call while a linked callback waits for <see langword="finally"/> still cancels the prefetch token
+	/// that <see langword="finally"/> is waiting on. Covers both wire encodings.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task PrefetchedArgumentCancelSurvivesLinkedCallbackWaitingForOriginalToken(JsonRpcEncoding encoding)
+	{
+#if NET
+		if (!RuntimeFeature.IsDynamicCodeSupported)
+		{
+			Skip.Test("NativeAOT does not expose the compiler-generated linked cancellation field this race reaches.");
+			return;
+		}
+#endif
+
+		using Fixture fixture = new(encoding);
+		using CancellationTokenSource captured = new();
+		using CancellationTokenSource call = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
+		LinkedCallbackWaitsForOriginalTokenIterator iterator = new();
+		Task<int> sum = fixture.Client.SumAsync(
+			await iterator.Produce(captured.Token, blockAfterFirst: true).WithPrefetchAsync(1, captured.Token),
+			call.Token);
+		await iterator.Blocked.Task.WithCancellation(this.TimeoutToken);
+		call.Cancel();
+		await Assert.ThrowsAnyAsync<Exception>(() => sum);
+		await iterator.FinallyFinished.Task.WithCancellation(this.TimeoutToken);
+		Assert.False(this.TimeoutToken.IsCancellationRequested);
+		Assert.False(captured.IsCancellationRequested);
+		Assert.True(iterator.SawCanceled);
+		await iterator.CallbackFinished.Task.WithCancellation(this.TimeoutToken);
+	}
+
+	/// <summary>
+	/// Once the compiler-linked source has been disposed, disposal must not wait on the prefetch token.
+	/// The linked callback is still inside cancellation and is waiting for that disposal.
+	/// </summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task DisposedLinkedSourceDoesNotWaitOnPrefetchToken()
+	{
+#if NET
+		if (!RuntimeFeature.IsDynamicCodeSupported)
+		{
+			Skip.Test("NativeAOT does not expose the compiler-generated linked cancellation field this race reaches.");
+			return;
+		}
+#endif
+
+		using CancellationTokenSource captured = new();
+		DisposedLinkedSourceIterator iterator = new();
+		IAsyncEnumerable<int> prefetched = await iterator.Produce(captured.Token).WithPrefetchAsync(1, captured.Token);
+		using CancellationTokenSource enumeration = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
+		IAsyncEnumerator<int> enumerator = prefetched.GetAsyncEnumerator(enumeration.Token);
+		Assert.True(await enumerator.MoveNextAsync());
+
+		enumeration.Cancel();
+		await iterator.Holding.Task.WithCancellation(this.TimeoutToken);
+		Task dispose = enumerator.DisposeAsync().AsTask();
+		try
+		{
+			await dispose.WithCancellation(this.TimeoutToken);
+			Assert.False(this.TimeoutToken.IsCancellationRequested);
+			Assert.False(captured.IsCancellationRequested);
+			Assert.True(iterator.SawCanceled);
+		}
+		finally
+		{
+			iterator.Release.TrySetResult(true);
+		}
+
+		await iterator.CallbackFinished.Task.WithCancellation(this.TimeoutToken);
+	}
+
+	/// <summary>
+	/// A prefetched argument whose compiler-linked source is disposed from a linked callback still finishes disposal
+	/// when the call is canceled. Covers both wire encodings.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task PrefetchedArgumentDoesNotWaitOnPrefetchTokenAfterLinkedSourceDisposal(JsonRpcEncoding encoding)
+	{
+#if NET
+		if (!RuntimeFeature.IsDynamicCodeSupported)
+		{
+			Skip.Test("NativeAOT does not expose the compiler-generated linked cancellation field this race reaches.");
+			return;
+		}
+#endif
+
+		using Fixture fixture = new(encoding);
+		using CancellationTokenSource captured = new();
+		using CancellationTokenSource call = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
+		DisposedLinkedSourceIterator iterator = new();
+		Task<int> sum = fixture.Client.SumAsync(
+			await iterator.Produce(captured.Token, blockAfterFirst: true).WithPrefetchAsync(1, captured.Token),
+			call.Token);
+		await iterator.Blocked.Task.WithCancellation(this.TimeoutToken);
+		call.Cancel();
+		await iterator.Holding.Task.WithCancellation(this.TimeoutToken);
+		try
+		{
+			await iterator.FinallyObserved.Task.WithCancellation(this.TimeoutToken);
+			await Assert.ThrowsAnyAsync<Exception>(() => sum);
+			Assert.False(this.TimeoutToken.IsCancellationRequested);
+			Assert.False(captured.IsCancellationRequested);
+			Assert.True(iterator.SawCanceled);
+		}
+		finally
+		{
+			iterator.Release.TrySetResult(true);
+		}
+
+		await iterator.CallbackFinished.Task.WithCancellation(this.TimeoutToken);
+	}
+
+	/// <summary>
 	/// After prefetch, canceling the token that was supplied to prefetch does not cancel the token the iterator captured.
 	/// </summary>
 	/// <returns>A task representing the test.</returns>
@@ -1111,6 +1266,186 @@ public partial class AsyncEnumerableTests : TestBase
 #pragma warning restore VSTHRD002
 				caller.Cancel();
 				return inner;
+			}
+		}
+	}
+
+	/// <summary>
+	/// Linked callback waits until <see langword="finally"/> finishes, and <see langword="finally"/> waits for the prefetch token.
+	/// </summary>
+	private sealed class LinkedCallbackWaitsForOriginalTokenIterator
+	{
+		private int sawCanceled;
+
+		internal bool SawCanceled => Volatile.Read(ref this.sawCanceled) != 0;
+
+		internal TaskCompletionSource<bool> Blocked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal TaskCompletionSource<bool> FinallyFinished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal TaskCompletionSource<bool> CallbackFinished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public IAsyncEnumerable<int> Produce(CancellationToken captured, bool blockAfterFirst = false) => new Enumerable(this, captured, blockAfterFirst);
+
+		private async IAsyncEnumerable<int> Run(CancellationToken original, bool blockAfterFirst, [EnumeratorCancellation] CancellationToken cancellationToken)
+		{
+			static bool IsRequested(CancellationToken token)
+			{
+				try
+				{
+					return token.IsCancellationRequested;
+				}
+				catch (ObjectDisposedException)
+				{
+					return true;
+				}
+			}
+
+			try
+			{
+				cancellationToken.Register(
+					static state =>
+					{
+						LinkedCallbackWaitsForOriginalTokenIterator iterator = (LinkedCallbackWaitsForOriginalTokenIterator)state!;
+#pragma warning disable VSTHRD002 // The callback waits for finally, which waits for the prefetch token.
+						iterator.FinallyFinished.Task.GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
+						iterator.CallbackFinished.TrySetResult(true);
+					},
+					this);
+				yield return 1;
+				if (blockAfterFirst)
+				{
+					this.Blocked.TrySetResult(true);
+					await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+				}
+
+				yield return 2;
+			}
+			finally
+			{
+				Volatile.Write(ref this.sawCanceled, IsRequested(cancellationToken) ? 1 : 0);
+				if (original.CanBeCanceled && !IsRequested(original))
+				{
+					// Await the flag instead of blocking a thread. A synchronous wait here sits on the
+					// DisposeAsync caller and a regression then hangs the test past its timeout.
+					TaskCompletionSource<bool> signaled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+					try
+					{
+						using CancellationTokenRegistration registration = original.Register(
+							static state => ((TaskCompletionSource<bool>)state!).TrySetResult(true),
+							signaled);
+						if (!IsRequested(original))
+						{
+							await signaled.Task.ConfigureAwait(false);
+						}
+					}
+					catch (ObjectDisposedException)
+					{
+					}
+				}
+
+				this.FinallyFinished.TrySetResult(true);
+			}
+		}
+
+		private sealed class Enumerable(LinkedCallbackWaitsForOriginalTokenIterator owner, CancellationToken captured, bool blockAfterFirst) : IAsyncEnumerable<int>
+		{
+			public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+				=> owner.Run(cancellationToken, blockAfterFirst, captured).GetAsyncEnumerator(cancellationToken);
+		}
+	}
+
+	/// <summary>
+	/// Disposes the compiler-linked source from a callback on that source, then waits for enumerator disposal.
+	/// </summary>
+	private sealed class DisposedLinkedSourceIterator
+	{
+		private int sawCanceled;
+
+		internal bool SawCanceled => Volatile.Read(ref this.sawCanceled) != 0;
+
+		internal TaskCompletionSource<bool> Blocked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal TaskCompletionSource<bool> Holding { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal TaskCompletionSource<bool> Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal TaskCompletionSource<bool> FinallyObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal TaskCompletionSource<bool> CallbackFinished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public IAsyncEnumerable<int> Produce(CancellationToken captured, bool blockAfterFirst = false) => new Enumerable(this, captured, blockAfterFirst);
+
+		private async IAsyncEnumerable<int> Run(bool blockAfterFirst, [EnumeratorCancellation] CancellationToken cancellationToken)
+		{
+			try
+			{
+				yield return 1;
+				if (blockAfterFirst)
+				{
+					this.Blocked.TrySetResult(true);
+					await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+				}
+
+				yield return 2;
+			}
+			finally
+			{
+				bool canceled;
+				try
+				{
+					canceled = cancellationToken.IsCancellationRequested;
+				}
+				catch (ObjectDisposedException)
+				{
+					canceled = true;
+				}
+
+				Volatile.Write(ref this.sawCanceled, canceled ? 1 : 0);
+				this.FinallyObserved.TrySetResult(true);
+			}
+		}
+
+		private sealed class Enumerable(DisposedLinkedSourceIterator owner, CancellationToken captured, bool blockAfterFirst) : IAsyncEnumerable<int>
+		{
+			public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+			{
+#if NET
+				[System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Test-only lookup of the C# compiler's <>x__combinedTokens field.")]
+				[System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2075", Justification = "Test-only lookup of the C# compiler's <>x__combinedTokens field.")]
+#endif
+				static CancellationTokenSource? TryGetCompilerLinkedSource(object enumerator)
+				{
+					FieldInfo? field = enumerator.GetType().GetField(
+						"<>x__combinedTokens",
+						BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+					return field?.GetValue(enumerator) as CancellationTokenSource;
+				}
+
+				IAsyncEnumerator<int> inner = owner.Run(blockAfterFirst, captured).GetAsyncEnumerator(cancellationToken);
+				CancellationTokenSource? linked = TryGetCompilerLinkedSource(inner);
+				if (linked is not null)
+				{
+					linked.Token.Register(
+						static state => ((CallbackHold)state!).Run(),
+						new CallbackHold(owner, linked));
+				}
+
+				return inner;
+			}
+
+			private sealed class CallbackHold(DisposedLinkedSourceIterator iterator, CancellationTokenSource source)
+			{
+				public void Run()
+				{
+					source.Dispose();
+					iterator.Holding.TrySetResult(true);
+#pragma warning disable VSTHRD002 // The callback holds cancellation until disposal has passed the linked source.
+					iterator.Release.Task.GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
+					iterator.CallbackFinished.TrySetResult(true);
+				}
 			}
 		}
 	}
