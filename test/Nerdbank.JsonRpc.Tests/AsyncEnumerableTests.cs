@@ -959,6 +959,7 @@ public partial class AsyncEnumerableTests : TestBase
 
 	/// <summary>
 	/// Canceling a prefetched call leaves the prefetch token readable from a linked callback that outlives disposal.
+	/// The callback is released only after the argument enumerator's disposal has returned.
 	/// Covers both wire encodings.
 	/// </summary>
 	/// <param name="encoding">The wire encoding.</param>
@@ -980,14 +981,18 @@ public partial class AsyncEnumerableTests : TestBase
 		using CancellationTokenSource captured = new();
 		using CancellationTokenSource call = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
 		LinkedCallbackReadsPrefetchTokenIterator iterator = new();
-		Task<int> sum = fixture.Client.SumAsync(
-			await iterator.Produce(captured.Token, blockAfterFirst: true).WithPrefetchAsync(1, captured.Token),
-			call.Token);
+		TaskCompletionSource<bool> argumentDisposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		IAsyncEnumerable<int> prefetched = await iterator.Produce(captured.Token, blockAfterFirst: true).WithPrefetchAsync(1, captured.Token);
+		Task<int> sum = fixture.Client.SumAsync(new DisposalCompletedEnumerable(prefetched, argumentDisposed), call.Token);
 		await iterator.Blocked.Task.WithCancellation(this.TimeoutToken);
 		call.Cancel();
-		await Assert.ThrowsAnyAsync<Exception>(() => sum);
+
+		// A failed call can complete before the argument generator's DisposeAsync returns.
+		// Release runs inside that disposal, so the callback must not read the token until then.
+		await argumentDisposed.Task.WithCancellation(this.TimeoutToken);
 		iterator.DisposeReturned.TrySetResult(true);
 		await iterator.CallbackFinished.Task.WithCancellation(this.TimeoutToken);
+		await Assert.ThrowsAnyAsync<Exception>(() => sum);
 		Assert.False(this.TimeoutToken.IsCancellationRequested);
 		Assert.False(captured.IsCancellationRequested);
 		Assert.True(iterator.ReadWaitHandle);
@@ -1423,6 +1428,36 @@ public partial class AsyncEnumerableTests : TestBase
 		{
 			public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default)
 				=> owner.Run(cancellationToken, blockAfterFirst, captured).GetAsyncEnumerator(cancellationToken);
+		}
+	}
+
+	/// <summary>Signals after the forwarded enumerator's disposal has returned.</summary>
+	private sealed class DisposalCompletedEnumerable(IAsyncEnumerable<int> inner, TaskCompletionSource<bool> disposed) : IAsyncEnumerable<int>
+	{
+		/// <inheritdoc/>
+		public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+			=> new Enumerator(inner.GetAsyncEnumerator(cancellationToken), disposed);
+
+		private sealed class Enumerator(IAsyncEnumerator<int> inner, TaskCompletionSource<bool> disposed) : IAsyncEnumerator<int>
+		{
+			/// <inheritdoc/>
+			public int Current => inner.Current;
+
+			/// <inheritdoc/>
+			public ValueTask<bool> MoveNextAsync() => inner.MoveNextAsync();
+
+			/// <inheritdoc/>
+			public async ValueTask DisposeAsync()
+			{
+				try
+				{
+					await inner.DisposeAsync().ConfigureAwait(false);
+				}
+				finally
+				{
+					disposed.TrySetResult(true);
+				}
+			}
 		}
 	}
 
