@@ -18,6 +18,9 @@ internal struct DispatchRequest
 
 	internal required CancellationToken CancellationToken { get; init; }
 
+	/// <summary>Gets the cancellation lease for this request, when the request has an id.</summary>
+	internal InboundRequestCancellation? RequestCancellation { get; init; }
+
 	internal bool IsNotification => this.Request.Id is null;
 
 	/// <summary>Gets or sets the process-local identifier used to correlate dispatch diagnostics.</summary>

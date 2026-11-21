@@ -9,6 +9,57 @@ internal partial interface IAsyncEnumerableService
 {
 	IAsyncEnumerable<int> GetNumbersAsync(int count, CancellationToken cancellationToken);
 
+	/// <summary>Returns a sequence that yields once, then waits until its enumerator token is canceled.</summary>
+	/// <param name="cancellationToken">A token to cancel production.</param>
+	/// <returns>The sequence.</returns>
+	IAsyncEnumerable<int> GetNumbersUntilCanceledAsync(CancellationToken cancellationToken);
+
+	/// <summary>Returns a sequence that yields once, then waits without observing cancellation, then yields again.</summary>
+	/// <param name="cancellationToken">A token to cancel production.</param>
+	/// <returns>The sequence.</returns>
+	IAsyncEnumerable<int> GetNumbersIgnoringCancellationAsync(CancellationToken cancellationToken);
+
+	/// <summary>Returns a sequence that blocks before its second and third values, sent in batches of <paramref name="minBatchSize"/>.</summary>
+	/// <param name="minBatchSize">The minimum number of values in each batch.</param>
+	/// <param name="cancellationToken">A token to cancel production.</param>
+	/// <returns>The sequence.</returns>
+	IAsyncEnumerable<int> GetBlockingBatchAsync(int minBatchSize, CancellationToken cancellationToken);
+
+	/// <summary>Returns a sequence that prefetches one value, then waits until its enumerator token is canceled.</summary>
+	/// <param name="counter">A call-scoped callback retained for the sequence.</param>
+	/// <param name="cancellationToken">A token to cancel production.</param>
+	/// <returns>The sequence.</returns>
+	IAsyncEnumerable<int> GetPrefetchedBlockingSequenceAsync(ICallScopedCounter counter, CancellationToken cancellationToken);
+
+	/// <summary>
+	/// Returns a sequence that prefetches one value, then waits.
+	/// Canceling the enumerator runs a callback that blocks until <see cref="AsyncEnumerableService.CancellationCallbackBlocksOn"/> completes.
+	/// </summary>
+	/// <param name="cancellationToken">A token to cancel production.</param>
+	/// <returns>The sequence.</returns>
+	IAsyncEnumerable<int> GetPrefetchedSequenceWhoseCancellationBlocksAsync(CancellationToken cancellationToken);
+
+	/// <summary>Returns a sequence that prefetches one value and then suspends at the next yield, with no further await.</summary>
+	/// <param name="cancellationToken">A token to cancel production.</param>
+	/// <returns>The sequence.</returns>
+	IAsyncEnumerable<int> GetPrefetchedSuspendedYieldAsync(CancellationToken cancellationToken);
+
+	/// <summary>
+	/// Returns a sequence that prefetches one value and suspends at the next yield.
+	/// Canceling the enumerator runs a callback that blocks until the iterator is disposed.
+	/// </summary>
+	/// <param name="cancellationToken">A token to cancel production.</param>
+	/// <returns>The sequence.</returns>
+	IAsyncEnumerable<int> GetPrefetchedSequenceWhoseCancellationWaitsForDisposalAsync(CancellationToken cancellationToken);
+
+	/// <summary>
+	/// Returns a sequence whose prefetch blocks before the first value.
+	/// Canceling the enumerator runs a callback that blocks until <see cref="AsyncEnumerableService.CancellationCallbackBlocksOn"/> completes.
+	/// </summary>
+	/// <param name="cancellationToken">A token to cancel production.</param>
+	/// <returns>The sequence.</returns>
+	IAsyncEnumerable<int> GetSequenceThatBlocksDuringPrefetchAsync(CancellationToken cancellationToken);
+
 	IAsyncEnumerable<int> GetUncooperativeSequenceAsync(bool blockReadAhead, bool blockDispose, CancellationToken cancellationToken);
 
 	Task<IAsyncEnumerable<int>> GetNumbersWrappedAsync(int count, CancellationToken cancellationToken);

@@ -1484,9 +1484,10 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 			if (request.Id is RequestId id)
 			{
+				InboundRequestCancellation cancellation = new();
 				tracker = new()
 				{
-					CancellationTokenSource = new(),
+					Cancellation = cancellation,
 				};
 
 				bool added;
@@ -1517,7 +1518,8 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				Request = request,
 				TargetInstance = handler.Target,
 				CallState = callState,
-				CancellationToken = tracker.CancellationTokenSource?.Token ?? default,
+				CancellationToken = tracker.Cancellation?.Token ?? default,
+				RequestCancellation = tracker.Cancellation,
 			};
 
 			return this.DispatchCoreAsync(request, handler.Invoker, dispatchRequest);
@@ -2265,17 +2267,18 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 		this.CleanupStep(this.disposalSource.Cancel);
 		this.CleanupStep(() => this.channel.AbortInbound(this.disposalSource.Token));
 
-		CancellationTokenSource?[] sources;
+		InboundRequestCancellation?[] cancellations;
 		lock (this.pendingInboundRequests)
 		{
-			sources = this.pendingInboundRequests.Values.Select(static p => p.CancellationTokenSource).ToArray();
+			cancellations = this.pendingInboundRequests.Values.Select(static p => p.Cancellation).ToArray();
 		}
 
-		foreach (CancellationTokenSource? source in sources)
+		foreach (InboundRequestCancellation? cancellation in cancellations)
 		{
-			if (source is not null)
+			if (cancellation is not null)
 			{
-				this.CleanupStep(source.Cancel);
+				// Retained iterators cancel off this stack. A callback that waits for Completion cannot stall shutdown.
+				this.CleanupStep(cancellation.Cancel);
 			}
 		}
 	}
@@ -2302,12 +2305,9 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	private struct PendingInboundRequest : IDisposable
 	{
-		internal required CancellationTokenSource? CancellationTokenSource { get; init; }
+		internal required InboundRequestCancellation? Cancellation { get; init; }
 
-		public void Dispose()
-		{
-			this.CancellationTokenSource?.Dispose();
-		}
+		public void Dispose() => this.Cancellation?.Release();
 	}
 
 	[GenerateShape(Kind = TypeShapeKind.None, IncludeMethods = MethodShapeFlags.PublicInstance)]
@@ -2343,7 +2343,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 			// Cancel outside the lock, since cancellation runs arbitrary callbacks.
 			if (found)
 			{
-				tracker.CancellationTokenSource?.Cancel();
+				tracker.Cancellation?.Cancel();
 			}
 		}
 	}

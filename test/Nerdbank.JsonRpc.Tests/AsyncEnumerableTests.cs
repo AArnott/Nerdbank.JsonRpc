@@ -2,11 +2,26 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.IO.Pipelines;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.VisualStudio.Threading;
 using Nerdbank.Streams;
 
-public partial class AsyncEnumerableTests
+public partial class AsyncEnumerableTests : TestBase
 {
+	/// <summary>How a test severs an open JSON-RPC connection.</summary>
+	public enum ConnectionLoss
+	{
+		/// <summary>The client <see cref="JsonRpc"/> is disposed.</summary>
+		ClientDisposed,
+
+		/// <summary>The underlying pipe is closed without disposing either <see cref="JsonRpc"/>.</summary>
+		TransportClosed,
+
+		/// <summary>The server <see cref="JsonRpc"/> is disposed.</summary>
+		ServerDisposed,
+	}
+
 	[Test]
 	[Arguments(JsonRpcEncoding.Json)]
 	[Arguments(JsonRpcEncoding.MessagePack)]
@@ -346,6 +361,641 @@ public partial class AsyncEnumerableTests
 		Assert.True(argument.EnumeratorDisposed);
 	}
 
+	/// <summary>
+	/// Dropping the connection while a client is enumerating disposes the server iterator and cancels its token.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="disconnect">How the connection is severed.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ServerDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ServerDisposed)]
+	public async Task ConnectionLossDisposesAndCancelsServerIterator(JsonRpcEncoding encoding, ConnectionLoss disconnect)
+	{
+		using Fixture fixture = new(encoding);
+		Task enumeration = this.EnumerateAsync(fixture.Client.GetNumbersUntilCanceledAsync(this.TimeoutToken));
+		await fixture.Service.CancelableEnumerationWaiting.Task.WithCancellation(this.TimeoutToken);
+
+		await fixture.SeverAsync(disconnect);
+
+		await fixture.Service.CancelableEnumerationDisposed.Task.WithCancellation(this.TimeoutToken);
+		Assert.True(fixture.Service.CancelableEnumerationCanceled);
+		await Assert.ThrowsAnyAsync<Exception>(() => enumeration);
+		await this.AwaitCompletionAsync(fixture.ServerRpc.Completion);
+		await this.AwaitCompletionAsync(fixture.ClientRpc.Completion);
+	}
+
+	/// <summary>
+	/// An iterator that ignores cancellation and blocks in an await must not hold connection shutdown open, and it is disposed once it yields.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="disconnect">How the connection is severed.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ServerDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ServerDisposed)]
+	public async Task ConnectionLossDoesNotWaitForIteratorThatIgnoresCancellation(JsonRpcEncoding encoding, ConnectionLoss disconnect)
+	{
+		using Fixture fixture = new(encoding);
+		Task enumeration = this.EnumerateAsync(fixture.Client.GetNumbersIgnoringCancellationAsync(this.TimeoutToken));
+		try
+		{
+			await fixture.Service.BlockingEnumerationWaiting.Task.WithCancellation(this.TimeoutToken);
+			await fixture.SeverAsync(disconnect);
+
+			// Shutdown finishes while the iterator is still blocked on an await that does not observe cancellation.
+			await this.AwaitCompletionAsync(fixture.ServerRpc.Completion);
+			Assert.False(fixture.Service.BlockingEnumerationDisposed.Task.IsCompleted);
+
+			fixture.Service.ReleaseBlockingEnumeration.TrySetResult(true);
+			await fixture.Service.BlockingEnumerationDisposed.Task.WithCancellation(this.TimeoutToken);
+			Assert.True(fixture.Service.BlockingEnumerationCanceled);
+			await Assert.ThrowsAnyAsync<Exception>(() => enumeration);
+			await this.AwaitCompletionAsync(fixture.ClientRpc.Completion);
+		}
+		finally
+		{
+			fixture.Service.ReleaseBlockingEnumeration.TrySetResult(true);
+		}
+	}
+
+	/// <summary>
+	/// A canceled multi-value batch must not start another move after the in-flight one yields.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="disconnect">How the connection is severed.</param>
+	/// <returns>A task representing the test.</returns>
+	/// <remarks>
+	/// The batch size is 3 so the move in flight when the connection drops is not the last slot.
+	/// An iterator that ignores cancellation would otherwise block on the next advance and hold disposal open.
+	/// </remarks>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ServerDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ServerDisposed)]
+	public async Task ConnectionLossDoesNotAdvanceAnIncompleteBatch(JsonRpcEncoding encoding, ConnectionLoss disconnect)
+	{
+		const int minBatchSize = 3;
+		using Fixture fixture = new(encoding);
+		Task enumeration = this.EnumerateAsync(fixture.Client.GetBlockingBatchAsync(minBatchSize, this.TimeoutToken));
+		try
+		{
+			await fixture.Service.BlockingBatchWaiting.Task.WithCancellation(this.TimeoutToken);
+			await fixture.SeverAsync(disconnect);
+			await this.AwaitCompletionAsync(fixture.ServerRpc.Completion);
+			Assert.False(fixture.Service.BlockingBatchDisposed.Task.IsCompleted);
+			Assert.False(fixture.Service.BlockingBatchSecondMoveWaiting.Task.IsCompleted);
+
+			fixture.Service.ReleaseBlockingBatch.TrySetResult(true);
+			await fixture.Service.BlockingBatchDisposed.Task.WithCancellation(this.TimeoutToken);
+			Assert.True(fixture.Service.BlockingBatchCanceled);
+			Assert.False(fixture.Service.BlockingBatchSecondMoveWaiting.Task.IsCompleted);
+			await Assert.ThrowsAnyAsync<Exception>(() => enumeration);
+			await this.AwaitCompletionAsync(fixture.ClientRpc.Completion);
+		}
+		finally
+		{
+			fixture.Service.ReleaseBlockingBatch.TrySetResult(true);
+			fixture.Service.ReleaseBlockingBatchSecondMove.TrySetResult(true);
+		}
+	}
+
+	/// <summary>
+	/// A cancellation callback that waits for connection completion must not run on the shutdown path that signals that completion.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="disconnect">How the connection is severed.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ServerDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ServerDisposed)]
+	public async Task ConnectionLossSurvivesCancellationCallbackThatWaitsForCompletion(JsonRpcEncoding encoding, ConnectionLoss disconnect)
+	{
+		using Fixture fixture = new(encoding);
+		fixture.Service.CancellationCallbackBlocksOn = fixture.ServerRpc.Completion;
+		Task enumeration = this.EnumerateAsync(fixture.Client.GetPrefetchedSequenceWhoseCancellationBlocksAsync(this.TimeoutToken));
+		await fixture.Service.PrefetchedCancellationBlockWaiting.Task.WithCancellation(this.TimeoutToken);
+
+		await fixture.SeverAsync(disconnect);
+
+		await this.AwaitCompletionAsync(fixture.ServerRpc.Completion);
+		await fixture.Service.BlockingCancellationFinished.Task.WithCancellation(this.TimeoutToken);
+		await fixture.Service.PrefetchedCancellationBlockDisposed.Task.WithCancellation(this.TimeoutToken);
+		await Assert.ThrowsAnyAsync<Exception>(() => enumeration);
+		await this.AwaitCompletionAsync(fixture.ClientRpc.Completion);
+	}
+
+	/// <summary>Prefetching again before enumeration keeps the buffered prefix and the values that follow it.</summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task RepeatedPrefetchKeepsBufferedValues()
+	{
+		IAsyncEnumerable<int> sequence = await Enumerable.Range(0, 5).AsAsyncEnumerable().WithPrefetchAsync(2, this.TimeoutToken);
+		sequence = await sequence.WithPrefetchAsync(4, this.TimeoutToken);
+		List<int> values = [];
+		await foreach (int value in sequence.WithCancellation(this.TimeoutToken))
+		{
+			values.Add(value);
+		}
+
+		Assert.Equal(new[] { 0, 1, 2, 3, 4 }, values);
+	}
+
+	/// <summary>
+	/// A partially prefetched sequence has one owner. Enumerating it again, or prefetching after that, is rejected
+	/// without dropping the values the first enumerator still has to produce.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task PartiallyPrefetchedSequenceRejectsASecondOwner(JsonRpcEncoding encoding)
+	{
+		using Fixture fixture = new(encoding);
+		IAsyncEnumerable<int> sequence = await Enumerable.Range(0, 5).AsAsyncEnumerable().WithPrefetchAsync(2, this.TimeoutToken);
+		await using IAsyncEnumerator<int> first = sequence.GetAsyncEnumerator(this.TimeoutToken);
+		Assert.True(await first.MoveNextAsync());
+		Assert.Equal(0, first.Current);
+		Assert.Throws<InvalidOperationException>(() => sequence.GetAsyncEnumerator(CancellationToken.None));
+		await Assert.ThrowsAsync<InvalidOperationException>(() => sequence.WithPrefetchAsync(4, this.TimeoutToken).AsTask());
+		Exception serialization = await Assert.ThrowsAnyAsync<Exception>(() => fixture.Client.SumAsync(sequence, this.TimeoutToken));
+		Assert.IsType<InvalidOperationException>(serialization.InnerException);
+
+		List<int> values = [first.Current];
+		while (await first.MoveNextAsync())
+		{
+			values.Add(first.Current);
+		}
+
+		Assert.Equal(new[] { 0, 1, 2, 3, 4 }, values);
+	}
+
+	/// <summary>
+	/// An iterator suspended at a yield after prefetch must observe cancellation when the connection drops, even if disposal wins the race with the cancel worker.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="disconnect">How the connection is severed.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ServerDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ServerDisposed)]
+	public async Task ConnectionLossCancelsIteratorSuspendedAfterPrefetch(JsonRpcEncoding encoding, ConnectionLoss disconnect)
+	{
+		using Fixture fixture = new(encoding);
+		await using IAsyncEnumerator<int> enumerator = fixture.Client.GetPrefetchedSuspendedYieldAsync(this.TimeoutToken).GetAsyncEnumerator(this.TimeoutToken);
+		Assert.True(await enumerator.MoveNextAsync());
+		Assert.Equal(0, enumerator.Current);
+
+		await fixture.SeverAsync(disconnect);
+
+		await fixture.Service.SuspendedYieldDisposed.Task.WithCancellation(this.TimeoutToken);
+		Assert.True(fixture.Service.SuspendedYieldCanceled);
+		await this.AwaitCompletionAsync(fixture.ServerRpc.Completion);
+		await this.AwaitCompletionAsync(fixture.ClientRpc.Completion);
+	}
+
+	/// <summary>
+	/// A cancellation callback registered by an in-flight iterator must not keep that iterator alive by waiting for its disposal.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="disconnect">How the connection is severed.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ServerDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ServerDisposed)]
+	public async Task ConnectionLossDisposesIteratorWhenCancellationCallbackWaitsForDisposal(JsonRpcEncoding encoding, ConnectionLoss disconnect)
+	{
+		using Fixture fixture = new(encoding);
+		await using IAsyncEnumerator<int> enumerator = fixture.Client.GetPrefetchedSequenceWhoseCancellationWaitsForDisposalAsync(this.TimeoutToken).GetAsyncEnumerator(this.TimeoutToken);
+		Assert.True(await enumerator.MoveNextAsync());
+		Assert.Equal(0, enumerator.Current);
+
+		await fixture.SeverAsync(disconnect);
+
+		await fixture.Service.PrefetchedDisposalWaitDisposed.Task.WithCancellation(this.TimeoutToken);
+		Assert.True(fixture.Service.DisposalWaitCanceled);
+		await fixture.Service.DisposalWaitCallbackFinished.Task.WithCancellation(this.TimeoutToken);
+		await this.AwaitCompletionAsync(fixture.ServerRpc.Completion);
+		await this.AwaitCompletionAsync(fixture.ClientRpc.Completion);
+	}
+
+	/// <summary>A prefetch whose token is already canceled does not produce values from a synchronous sequence.</summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task PrefetchHonorsAnAlreadyCanceledToken()
+	{
+		using CancellationTokenSource canceled = new();
+		canceled.Cancel();
+		ValueTask<IAsyncEnumerable<int>> prefetch = Enumerable.Range(0, 5).AsAsyncEnumerable().WithPrefetchAsync(5, canceled.Token);
+		await Assert.ThrowsAsync<OperationCanceledException>(() => prefetch.AsTask());
+	}
+
+	/// <summary>
+	/// A callback registered on the iterator token must not block disposal, and <see langword="finally"/> still observes cancellation.
+	/// </summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task PrefetchedIteratorDisposalSurvivesCancellationCallback()
+	{
+		CancellationCallbackSequence sequence = new();
+		IAsyncEnumerable<int> prefetched = await sequence.Enumerate().WithPrefetchAsync(1, CancellationToken.None);
+		using CancellationTokenSource stop = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
+		await using IAsyncEnumerator<int> enumerator = prefetched.GetAsyncEnumerator(stop.Token);
+		Assert.True(await enumerator.MoveNextAsync());
+		Assert.Equal(0, enumerator.Current);
+
+		stop.Cancel();
+		await enumerator.DisposeAsync();
+		Assert.True(sequence.SawCanceled);
+		await sequence.CallbackFinished.Task.WithCancellation(this.TimeoutToken);
+	}
+
+	/// <summary>
+	/// A later enumeration token cancels the sequence's own source. The token the iterator captured stays usable,
+	/// and a callback that blocks on <see langword="finally"/> still completes.
+	/// </summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task PrefetchedIteratorObservesDistinctEnumerationToken()
+	{
+		using CancellationTokenSource captured = new();
+		DistinctTokenIterator iterator = new();
+		IAsyncEnumerable<int> prefetched = await iterator.Produce(captured.Token).WithPrefetchAsync(1, captured.Token);
+		using CancellationTokenSource enumeration = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
+		await using IAsyncEnumerator<int> enumerator = prefetched.GetAsyncEnumerator(enumeration.Token);
+		Assert.True(await enumerator.MoveNextAsync());
+		Assert.Equal(0, enumerator.Current);
+
+		enumeration.Cancel();
+		await enumerator.DisposeAsync();
+		Assert.False(captured.IsCancellationRequested);
+		Assert.True(iterator.SawCanceled);
+		await iterator.CallbackFinished.Task.WithCancellation(this.TimeoutToken);
+	}
+
+	/// <summary>
+	/// After prefetch, canceling the token that was supplied to prefetch does not cancel the token the iterator captured.
+	/// </summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task CancelingThePrefetchTokenLeavesTheCapturedTokenUsable()
+	{
+		using CancellationTokenSource captured = new();
+		using CancellationTokenSource prefetch = new();
+		DistinctCapturedIterator iterator = new();
+		IAsyncEnumerable<int> prefetched = await iterator.Produce(captured.Token).WithPrefetchAsync(1, prefetch.Token);
+		prefetch.Cancel();
+
+		await using IAsyncEnumerator<int> enumerator = prefetched.GetAsyncEnumerator(this.TimeoutToken);
+		Assert.True(await enumerator.MoveNextAsync());
+		await enumerator.DisposeAsync();
+		Assert.False(captured.IsCancellationRequested);
+		Assert.False(iterator.SawCanceled);
+	}
+
+	/// <summary>
+	/// Sending a partially prefetched sequence with the same token as the call must not cancel that token
+	/// when the remote consumer finishes the sequence.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task PrefetchedArgumentKeepsTheSharedCallToken(JsonRpcEncoding encoding)
+	{
+		using Fixture fixture = new(encoding);
+		using CancellationTokenSource shared = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
+		SharedTokenIterator iterator = new();
+		int sum = await fixture.Client.SumAsync(
+			await iterator.Produce(shared.Token).WithPrefetchAsync(1, shared.Token),
+			shared.Token);
+
+		Assert.Equal(3, sum);
+		await iterator.Disposed.Task.WithCancellation(this.TimeoutToken);
+		Assert.False(shared.IsCancellationRequested);
+	}
+
+	/// <summary>
+	/// Disposing the prefetch token after values were buffered must not prevent enumeration or strand the iterator.
+	/// </summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task DisposingThePrefetchTokenDoesNotStrandTheIterator()
+	{
+		OneValueThenSuspended sequence = new();
+		CancellationTokenSource prefetch = new();
+		IAsyncEnumerable<int> prefetched = await sequence.WithPrefetchAsync(1, prefetch.Token);
+		Assert.True(sequence.Started);
+		prefetch.Dispose();
+
+		using CancellationTokenSource enumeration = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
+		await using IAsyncEnumerator<int> enumerator = prefetched.GetAsyncEnumerator(enumeration.Token);
+		Assert.True(await enumerator.MoveNextAsync());
+		enumeration.Cancel();
+		await enumerator.DisposeAsync();
+		await sequence.Disposed.Task.WithCancellation(this.TimeoutToken);
+		Assert.True(sequence.DisposeObservedCancellation);
+	}
+
+	/// <summary>
+	/// Dropping the connection while prefetch is blocked must not run a completion-waiting callback on the shutdown path.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="disconnect">How the connection is severed.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ServerDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ServerDisposed)]
+	public async Task ConnectionLossDuringBlockedPrefetchSurvivesCancellationCallback(JsonRpcEncoding encoding, ConnectionLoss disconnect)
+	{
+		using Fixture fixture = new(encoding);
+		fixture.Service.CancellationCallbackBlocksOn = fixture.ServerRpc.Completion;
+		Task enumeration = this.EnumerateAsync(fixture.Client.GetSequenceThatBlocksDuringPrefetchAsync(this.TimeoutToken));
+		await fixture.Service.PrefetchDuringBlockWaiting.Task.WithCancellation(this.TimeoutToken);
+
+		await fixture.SeverAsync(disconnect);
+
+		await this.AwaitCompletionAsync(fixture.ServerRpc.Completion);
+		await fixture.Service.BlockingCancellationFinished.Task.WithCancellation(this.TimeoutToken);
+		await fixture.Service.PrefetchDuringBlockDisposed.Task.WithCancellation(this.TimeoutToken);
+		await Assert.ThrowsAnyAsync<Exception>(() => enumeration);
+		await this.AwaitCompletionAsync(fixture.ClientRpc.Completion);
+	}
+
+	/// <summary>A second prefetch that is already canceled still disposes the iterator started by the first prefetch.</summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task CanceledRepeatPrefetchDisposesExistingIterator()
+	{
+		OneValueThenSuspended sequence = new();
+		using CancellationTokenSource prefetchCancellation = new();
+		IAsyncEnumerable<int> prefetched = await sequence.WithPrefetchAsync(1, prefetchCancellation.Token);
+		Assert.True(sequence.Started);
+		Assert.False(sequence.Disposed.Task.IsCompleted);
+
+		using CancellationTokenSource canceled = new();
+		canceled.Cancel();
+		await Assert.ThrowsAsync<OperationCanceledException>(() => prefetched.WithPrefetchAsync(1, canceled.Token).AsTask());
+		await sequence.Disposed.Task.WithCancellation(this.TimeoutToken);
+		Assert.True(sequence.DisposeObservedCancellation);
+	}
+
+	/// <summary>Canceling prefetch unblocks disposal of an enumerator that waits on the token it was given.</summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task CanceledPrefetchUnblocksEnumeratorDisposal()
+	{
+		DisposeBlocksUntilCanceled sequence = new();
+		using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
+		Task prefetch = sequence.WithPrefetchAsync(1, cancellation.Token).AsTask();
+		await sequence.DisposeStarted.Task.WithCancellation(this.TimeoutToken);
+		cancellation.Cancel();
+		await Assert.ThrowsAsync<InvalidOperationException>(() => prefetch);
+		Assert.True(sequence.DisposeObservedCancellation);
+	}
+
+	private async Task EnumerateAsync(IAsyncEnumerable<int> sequence)
+	{
+		await foreach (int value in sequence.WithCancellation(this.TimeoutToken))
+		{
+		}
+	}
+
+	private async Task AwaitCompletionAsync(Task completion)
+	{
+		try
+		{
+			await completion.WithCancellation(this.TimeoutToken);
+		}
+		catch (OperationCanceledException) when (this.TimeoutToken.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch (Exception)
+		{
+			// A dropped transport can fault Completion. Shutdown must still finish.
+		}
+	}
+
+	private sealed class CancellationCallbackSequence
+	{
+		private int sawCanceled;
+
+		internal bool SawCanceled => Volatile.Read(ref this.sawCanceled) != 0;
+
+		internal TaskCompletionSource<bool> Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal TaskCompletionSource<bool> CallbackFinished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public IAsyncEnumerable<int> Enumerate() => this.Run();
+
+		private async IAsyncEnumerable<int> Run([EnumeratorCancellation] CancellationToken cancellationToken = default)
+		{
+			try
+			{
+				// Registered during prefetch, before the later enumeration token is canceled.
+				cancellationToken.Register(
+					static state =>
+					{
+						CancellationCallbackSequence sequence = (CancellationCallbackSequence)state!;
+#pragma warning disable VSTHRD002 // The callback blocks on disposal; that is the hazard under test.
+						sequence.Disposed.Task.GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
+						sequence.CallbackFinished.TrySetResult(true);
+					},
+					this);
+				yield return 0;
+				yield return 1;
+			}
+			finally
+			{
+				Volatile.Write(ref this.sawCanceled, cancellationToken.IsCancellationRequested ? 1 : 0);
+				this.Disposed.TrySetResult(true);
+			}
+		}
+	}
+
+	private sealed class DistinctTokenIterator
+	{
+		private int sawCanceled;
+
+		internal bool SawCanceled => Volatile.Read(ref this.sawCanceled) != 0;
+
+		internal TaskCompletionSource<bool> Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal TaskCompletionSource<bool> CallbackFinished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public IAsyncEnumerable<int> Produce(CancellationToken captured) => this.Run(captured);
+
+		private async IAsyncEnumerable<int> Run([EnumeratorCancellation] CancellationToken cancellationToken)
+		{
+			try
+			{
+				cancellationToken.Register(
+					static state =>
+					{
+						DistinctTokenIterator iterator = (DistinctTokenIterator)state!;
+#pragma warning disable VSTHRD002 // The callback blocks on disposal; that is the hazard under test.
+						iterator.Disposed.Task.GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
+						iterator.CallbackFinished.TrySetResult(true);
+					},
+					this);
+				yield return 0;
+				yield return 1;
+			}
+			finally
+			{
+				Volatile.Write(ref this.sawCanceled, cancellationToken.IsCancellationRequested ? 1 : 0);
+				this.Disposed.TrySetResult(true);
+			}
+		}
+	}
+
+	private sealed class DistinctCapturedIterator
+	{
+		private int sawCanceled;
+
+		internal bool SawCanceled => Volatile.Read(ref this.sawCanceled) != 0;
+
+		public IAsyncEnumerable<int> Produce(CancellationToken captured) => this.Run(captured);
+
+		private async IAsyncEnumerable<int> Run([EnumeratorCancellation] CancellationToken cancellationToken)
+		{
+			try
+			{
+				yield return 0;
+				yield return 1;
+			}
+			finally
+			{
+				Volatile.Write(ref this.sawCanceled, cancellationToken.IsCancellationRequested ? 1 : 0);
+			}
+		}
+	}
+
+	private sealed class SharedTokenIterator
+	{
+		internal TaskCompletionSource<bool> Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public IAsyncEnumerable<int> Produce(CancellationToken captured) => this.Run(captured);
+
+		private async IAsyncEnumerable<int> Run([EnumeratorCancellation] CancellationToken cancellationToken)
+		{
+			try
+			{
+				cancellationToken.ThrowIfCancellationRequested();
+				yield return 1;
+				yield return 2;
+			}
+			finally
+			{
+				this.Disposed.TrySetResult(true);
+			}
+		}
+	}
+
+	private sealed class OneValueThenSuspended : IAsyncEnumerable<int>
+	{
+		private int started;
+		private int disposeObservedCancellation;
+
+		internal bool Started => Volatile.Read(ref this.started) != 0;
+
+		internal TaskCompletionSource<bool> Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal bool DisposeObservedCancellation => Volatile.Read(ref this.disposeObservedCancellation) != 0;
+
+		public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default) => new Enumerator(this, cancellationToken);
+
+		private sealed class Enumerator(OneValueThenSuspended owner, CancellationToken cancellationToken) : IAsyncEnumerator<int>
+		{
+			private int index;
+
+			public int Current => this.index;
+
+			public ValueTask<bool> MoveNextAsync()
+			{
+				if (this.index >= 2)
+				{
+					return new ValueTask<bool>(false);
+				}
+
+				this.index++;
+				Volatile.Write(ref owner.started, 1);
+				return new ValueTask<bool>(true);
+			}
+
+			public ValueTask DisposeAsync()
+			{
+				Volatile.Write(ref owner.disposeObservedCancellation, cancellationToken.IsCancellationRequested ? 1 : 0);
+				owner.Disposed.TrySetResult(true);
+				return default;
+			}
+		}
+	}
+
+	private sealed class DisposeBlocksUntilCanceled : IAsyncEnumerable<int>
+	{
+		private int disposeObservedCancellation;
+
+		internal TaskCompletionSource<bool> DisposeStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal bool DisposeObservedCancellation => Volatile.Read(ref this.disposeObservedCancellation) != 0;
+
+		public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default) => new Enumerator(this, cancellationToken);
+
+		private sealed class Enumerator(DisposeBlocksUntilCanceled owner, CancellationToken cancellationToken) : IAsyncEnumerator<int>
+		{
+			public int Current => 0;
+
+			public ValueTask<bool> MoveNextAsync() => new(false);
+
+			public async ValueTask DisposeAsync()
+			{
+				owner.DisposeStarted.TrySetResult(true);
+				try
+				{
+					await Task.Delay(Timeout.Infinite, cancellationToken);
+				}
+				catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+				{
+					Volatile.Write(ref owner.disposeObservedCancellation, 1);
+					throw new InvalidOperationException("Disposal failed after observing cancellation.");
+				}
+			}
+		}
+	}
+
 	private sealed class TrackingSequence : IAsyncEnumerable<int>
 	{
 		internal bool EnumeratorDisposed { get; private set; }
@@ -368,12 +1018,14 @@ public partial class AsyncEnumerableTests
 
 	private sealed class Fixture : IDisposable
 	{
+		private readonly IDuplexPipe clientPipe;
 		private readonly JsonRpc clientRpc;
 		private readonly JsonRpc serverRpc;
 
 		internal Fixture(JsonRpcEncoding encoding)
 		{
 			(IDuplexPipe clientPipe, IDuplexPipe serverPipe) = FullDuplexStream.CreatePipePair();
+			this.clientPipe = clientPipe;
 			this.clientRpc = new(CreateChannel(clientPipe, encoding));
 			this.serverRpc = new(CreateChannel(serverPipe, encoding));
 			this.Service = new AsyncEnumerableService();
@@ -385,14 +1037,39 @@ public partial class AsyncEnumerableTests
 
 		internal JsonRpc ClientRpc => this.clientRpc;
 
+		internal JsonRpc ServerRpc => this.serverRpc;
+
 		internal IAsyncEnumerableService Client { get; }
 
 		internal AsyncEnumerableService Service { get; }
 
+		/// <inheritdoc/>
 		public void Dispose()
 		{
 			this.clientRpc.Dispose();
 			this.serverRpc.Dispose();
+		}
+
+		/// <summary>Severs the connection without assuming which side is still running.</summary>
+		/// <param name="disconnect">How to sever the connection.</param>
+		/// <returns>A task that completes when the transport close has been requested.</returns>
+		internal async Task SeverAsync(ConnectionLoss disconnect)
+		{
+			switch (disconnect)
+			{
+				case ConnectionLoss.ClientDisposed:
+					this.clientRpc.Dispose();
+					break;
+				case ConnectionLoss.TransportClosed:
+					await this.clientPipe.Output.CompleteAsync();
+					await this.clientPipe.Input.CompleteAsync();
+					break;
+				case ConnectionLoss.ServerDisposed:
+					this.serverRpc.Dispose();
+					break;
+				default:
+					throw new ArgumentOutOfRangeException(nameof(disconnect));
+			}
 		}
 
 		private static JsonRpcPipeChannel CreateChannel(IDuplexPipe pipe, JsonRpcEncoding encoding)

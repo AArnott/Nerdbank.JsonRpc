@@ -18,4 +18,12 @@ internal interface IRpcEnumerable
 	/// <param name="cancellationToken">A token to cancel value production.</param>
 	/// <returns>A task that completes when prefetching is done.</returns>
 	ValueTask PrefetchAsync(CancellationToken cancellationToken);
+
+	/// <summary>
+	/// Uses <paramref name="cancellation"/> as the token the prefetched iterator observes.
+	/// The target method was invoked with that same token, so a compiler-generated iterator does not
+	/// create a second linked token that would only become canceled from inside a callback.
+	/// </summary>
+	/// <param name="cancellation">The request cancellation lease. The enumerable retains it while an iterator is outstanding.</param>
+	void AttachRequestCancellation(InboundRequestCancellation cancellation);
 }

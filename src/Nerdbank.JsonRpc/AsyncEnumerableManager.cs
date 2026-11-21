@@ -884,6 +884,7 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 		private readonly ITypeShape<T> elementShape;
 		private readonly JsonRpcEnumerableSettings settings;
 		private readonly CancellationTokenSource cancellationSource = new();
+		private readonly SemaphoreSlim enumerationLock = new(1, 1);
 		private readonly IAsyncEnumerator<T> enumerator;
 		private readonly Channel<T>? readAhead;
 		private readonly Task? readAheadTask;
@@ -943,15 +944,26 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 			}
 			else
 			{
-				for (int i = 0; i < this.settings.MinBatchSize; i++)
+				// Hold the gate across each MoveNextAsync so disposal cannot overlap it.
+				// Do not start another advance after cancellation: an iterator that ignores the token can block again and hold the gate indefinitely.
+				await this.enumerationLock.WaitAsync(generatorToken).ConfigureAwait(false);
+				try
 				{
-					if (!await this.enumerator.MoveNextAsync().ConfigureAwait(false))
+					for (int i = 0; i < this.settings.MinBatchSize; i++)
 					{
-						finished = true;
-						break;
-					}
+						generatorToken.ThrowIfCancellationRequested();
+						if (!await this.enumerator.MoveNextAsync().ConfigureAwait(false))
+						{
+							finished = true;
+							break;
+						}
 
-					results.Add(this.enumerator.Current);
+						results.Add(this.enumerator.Current);
+					}
+				}
+				finally
+				{
+					this.enumerationLock.Release();
 				}
 			}
 
@@ -1001,7 +1013,17 @@ internal sealed class AsyncEnumerableManager(JsonRpc owner) : IDisposable
 					}
 				}
 
-				await this.enumerator.DisposeAsync().ConfigureAwait(false);
+				// Compiler-generated iterators throw if DisposeAsync overlaps MoveNextAsync, and that
+				// exception never runs their finally block. Wait until the in-flight move yields or completes.
+				await this.enumerationLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+				try
+				{
+					await this.enumerator.DisposeAsync().ConfigureAwait(false);
+				}
+				finally
+				{
+					this.enumerationLock.Release();
+				}
 			}
 			catch (Exception ex)
 			{
