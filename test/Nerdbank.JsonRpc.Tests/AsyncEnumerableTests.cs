@@ -470,6 +470,95 @@ public partial class AsyncEnumerableTests : TestBase
 		}
 	}
 
+	/// <summary>
+	/// A cancellation callback that waits for connection completion must not run on the shutdown path that signals that completion.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="disconnect">How the connection is severed.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ServerDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ServerDisposed)]
+	public async Task ConnectionLossSurvivesCancellationCallbackThatWaitsForCompletion(JsonRpcEncoding encoding, ConnectionLoss disconnect)
+	{
+		using Fixture fixture = new(encoding);
+		fixture.Service.CancellationCallbackBlocksOn = fixture.ServerRpc.Completion;
+		Task enumeration = this.EnumerateAsync(fixture.Client.GetPrefetchedSequenceWhoseCancellationBlocksAsync(this.TimeoutToken));
+		await fixture.Service.PrefetchedCancellationBlockWaiting.Task.WithCancellation(this.TimeoutToken);
+
+		await fixture.SeverAsync(disconnect);
+
+		await this.AwaitCompletionAsync(fixture.ServerRpc.Completion);
+		await fixture.Service.BlockingCancellationFinished.Task.WithCancellation(this.TimeoutToken);
+		await fixture.Service.PrefetchedCancellationBlockDisposed.Task.WithCancellation(this.TimeoutToken);
+		await Assert.ThrowsAnyAsync<Exception>(() => enumeration);
+		await this.AwaitCompletionAsync(fixture.ClientRpc.Completion);
+	}
+
+	/// <summary>Prefetching again before enumeration keeps the buffered prefix and the values that follow it.</summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task RepeatedPrefetchKeepsBufferedValues()
+	{
+		IAsyncEnumerable<int> sequence = await Enumerable.Range(0, 5).AsAsyncEnumerable().WithPrefetchAsync(2, this.TimeoutToken);
+		sequence = await sequence.WithPrefetchAsync(4, this.TimeoutToken);
+		List<int> values = [];
+		await foreach (int value in sequence.WithCancellation(this.TimeoutToken))
+		{
+			values.Add(value);
+		}
+
+		Assert.Equal(new[] { 0, 1, 2, 3, 4 }, values);
+	}
+
+	/// <summary>
+	/// A partially prefetched sequence has one owner. Enumerating it again, or prefetching after that, is rejected
+	/// without dropping the values the first enumerator still has to produce.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json)]
+	[Arguments(JsonRpcEncoding.MessagePack)]
+	public async Task PartiallyPrefetchedSequenceRejectsASecondOwner(JsonRpcEncoding encoding)
+	{
+		using Fixture fixture = new(encoding);
+		IAsyncEnumerable<int> sequence = await Enumerable.Range(0, 5).AsAsyncEnumerable().WithPrefetchAsync(2, this.TimeoutToken);
+		await using IAsyncEnumerator<int> first = sequence.GetAsyncEnumerator(this.TimeoutToken);
+		Assert.True(await first.MoveNextAsync());
+		Assert.Equal(0, first.Current);
+		Assert.Throws<InvalidOperationException>(() => sequence.GetAsyncEnumerator(CancellationToken.None));
+		await Assert.ThrowsAsync<InvalidOperationException>(() => sequence.WithPrefetchAsync(4, this.TimeoutToken).AsTask());
+		Exception serialization = await Assert.ThrowsAnyAsync<Exception>(() => fixture.Client.SumAsync(sequence, this.TimeoutToken));
+		Assert.IsType<InvalidOperationException>(serialization.InnerException);
+
+		List<int> values = [first.Current];
+		while (await first.MoveNextAsync())
+		{
+			values.Add(first.Current);
+		}
+
+		Assert.Equal(new[] { 0, 1, 2, 3, 4 }, values);
+	}
+
+	/// <summary>Canceling prefetch unblocks disposal of an enumerator that waits on the token it was given.</summary>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	public async Task CanceledPrefetchUnblocksEnumeratorDisposal()
+	{
+		DisposeBlocksUntilCanceled sequence = new();
+		using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
+		Task prefetch = sequence.WithPrefetchAsync(1, cancellation.Token).AsTask();
+		await sequence.DisposeStarted.Task.WithCancellation(this.TimeoutToken);
+		cancellation.Cancel();
+		await Assert.ThrowsAsync<InvalidOperationException>(() => prefetch);
+		Assert.True(sequence.DisposeObservedCancellation);
+	}
+
 	private async Task EnumerateAsync(IAsyncEnumerable<int> sequence)
 	{
 		await foreach (int value in sequence.WithCancellation(this.TimeoutToken))
@@ -490,6 +579,38 @@ public partial class AsyncEnumerableTests : TestBase
 		catch (Exception)
 		{
 			// A dropped transport can fault Completion. Shutdown must still finish.
+		}
+	}
+
+	private sealed class DisposeBlocksUntilCanceled : IAsyncEnumerable<int>
+	{
+		private int disposeObservedCancellation;
+
+		internal TaskCompletionSource<bool> DisposeStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal bool DisposeObservedCancellation => Volatile.Read(ref this.disposeObservedCancellation) != 0;
+
+		public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default) => new Enumerator(this, cancellationToken);
+
+		private sealed class Enumerator(DisposeBlocksUntilCanceled owner, CancellationToken cancellationToken) : IAsyncEnumerator<int>
+		{
+			public int Current => 0;
+
+			public ValueTask<bool> MoveNextAsync() => new(false);
+
+			public async ValueTask DisposeAsync()
+			{
+				owner.DisposeStarted.TrySetResult(true);
+				try
+				{
+					await Task.Delay(Timeout.Infinite, cancellationToken);
+				}
+				catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+				{
+					Volatile.Write(ref owner.disposeObservedCancellation, 1);
+					throw new InvalidOperationException("Disposal failed after observing cancellation.");
+				}
+			}
 		}
 	}
 

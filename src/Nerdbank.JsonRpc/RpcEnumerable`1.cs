@@ -11,11 +11,11 @@ namespace Nerdbank.JsonRpc;
 internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 {
 	private readonly IAsyncEnumerable<T> inner;
+	private OwnedCancellation? enumerationCancellation;
 	private IAsyncEnumerator<T>? startedEnumerator;
-	private IAsyncEnumerator<T>? continuation;
-	private CancellationTokenSource? enumerationCancellation;
 	private List<T>? prefetchedValues;
 	private bool exhausted;
+	private bool enumeratorAcquired;
 
 	/// <summary>Initializes a new instance of the <see cref="RpcEnumerable{T}"/> class.</summary>
 	/// <param name="inner">The sequence being decorated.</param>
@@ -39,26 +39,29 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 			return values.AsAsyncEnumerable().GetAsyncEnumerator(cancellationToken);
 		}
 
-		if (this.continuation is not null)
-		{
-			return this.continuation;
-		}
-
 		if (this.startedEnumerator is null)
 		{
 			return this.inner.GetAsyncEnumerator(cancellationToken);
 		}
 
+		// Prefetch already started the only enumerator this wrapper can own. A second acquire would keep
+		// the first caller's token (often CancellationToken.None) and drop any values buffered later.
+		if (this.enumeratorAcquired)
+		{
+			throw new InvalidOperationException("A partially prefetched sequence may only be enumerated once.");
+		}
+
 		// Prefetch started the iterator with a token owned by this sequence. The request token that
 		// was current during prefetch is disposed when that request completes, so later pulls and
 		// shutdown must cancel this token instead.
-		CancellationTokenRegistration registration = cancellationToken.Register(static state => CancelSource(state), this.enumerationCancellation);
+		this.enumeratorAcquired = true;
+		OwnedCancellation cancellation = this.enumerationCancellation!;
+		CancellationTokenRegistration registration = cancellationToken.Register(static state => ((OwnedCancellation)state!).CancelFromLinkedToken(), cancellation);
 		List<T>? pending = this.prefetchedValues;
 		this.prefetchedValues = null;
 		IAsyncEnumerator<T> started = this.startedEnumerator;
 		IAsyncEnumerator<T> enumerator = pending is { Count: > 0 } ? new PrependingEnumerator(pending, started) : started;
-		this.continuation = new LinkedEnumerator(enumerator, this.enumerationCancellation, registration);
-		return this.continuation;
+		return new LinkedEnumerator(enumerator, cancellation, registration);
 	}
 
 	/// <inheritdoc/>
@@ -78,9 +81,14 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 			return;
 		}
 
+		if (this.enumeratorAcquired)
+		{
+			throw new InvalidOperationException("A partially prefetched sequence cannot buffer more values after enumeration has started.");
+		}
+
 		// Link the caller only for this prefetch. The completed request's token is disposed afterward and must not cancel later pulls.
-		this.enumerationCancellation ??= new CancellationTokenSource();
-		CancellationTokenRegistration requestRegistration = cancellationToken.Register(static state => CancelSource(state), this.enumerationCancellation);
+		this.enumerationCancellation ??= new OwnedCancellation();
+		CancellationTokenRegistration requestRegistration = cancellationToken.Register(static state => ((OwnedCancellation)state!).CancelFromLinkedToken(), this.enumerationCancellation);
 		IAsyncEnumerator<T>? enumerator = null;
 		bool keepEnumerator = false;
 		try
@@ -104,15 +112,32 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		}
 		finally
 		{
-#pragma warning disable VSTHRD103 // Unregistering a cancellation callback is synchronous.
-			requestRegistration.Dispose();
-#pragma warning restore VSTHRD103
-			if (!keepEnumerator && enumerator is not null)
+			if (!keepEnumerator)
 			{
 				this.startedEnumerator = null;
-				await enumerator.DisposeAsync().ConfigureAwait(false);
-				this.enumerationCancellation?.Dispose();
-				this.enumerationCancellation = null;
+				try
+				{
+					if (enumerator is not null)
+					{
+						// Keep the request linked until disposal finishes. The enumerator was started with the
+						// owned token, so unlinking first would leave a dispose that waits on that token stuck.
+						await enumerator.DisposeAsync().ConfigureAwait(false);
+					}
+				}
+				finally
+				{
+#pragma warning disable VSTHRD103 // Unregistering a cancellation callback is synchronous.
+					requestRegistration.Dispose();
+#pragma warning restore VSTHRD103
+					this.enumerationCancellation?.Release();
+					this.enumerationCancellation = null;
+				}
+			}
+			else
+			{
+#pragma warning disable VSTHRD103 // Unregistering a cancellation callback is synchronous.
+				requestRegistration.Dispose();
+#pragma warning restore VSTHRD103
 			}
 		}
 	}
@@ -130,22 +155,6 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		IReadOnlyList<T> values = this.prefetchedValues ?? (IReadOnlyList<T>)Array.Empty<T>();
 		this.prefetchedValues = null;
 		return (values, this.exhausted);
-	}
-
-	/// <summary>Cancels a source that may already have been disposed with its enumerator.</summary>
-	/// <param name="state">The <see cref="CancellationTokenSource"/> to cancel.</param>
-	private static void CancelSource(object? state)
-	{
-		try
-		{
-#pragma warning disable VSTHRD103 // CancelAsync is unavailable on all target frameworks.
-			((CancellationTokenSource)state!).Cancel();
-#pragma warning restore VSTHRD103
-		}
-		catch (ObjectDisposedException)
-		{
-			// The enumerator finished and disposed the source before this callback ran.
-		}
 	}
 
 	/// <summary>Yields a buffered prefix before continuing with an enumerator that has already been advanced.</summary>
@@ -175,9 +184,9 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 
 	/// <summary>Forwards an already started enumerator and releases the token that keeps it cancellable.</summary>
 	/// <param name="inner">The enumerator to forward to.</param>
-	/// <param name="cancellationSource">The token source passed to <paramref name="inner"/>, disposed with it.</param>
-	/// <param name="registration">The registration that cancels <paramref name="cancellationSource"/> when a later caller cancels.</param>
-	private sealed class LinkedEnumerator(IAsyncEnumerator<T> inner, CancellationTokenSource? cancellationSource, CancellationTokenRegistration registration) : IAsyncEnumerator<T>
+	/// <param name="cancellation">The token source passed to <paramref name="inner"/>, released with it.</param>
+	/// <param name="registration">The registration that cancels <paramref name="cancellation"/> when a later caller cancels.</param>
+	private sealed class LinkedEnumerator(IAsyncEnumerator<T> inner, OwnedCancellation cancellation, CancellationTokenRegistration registration) : IAsyncEnumerator<T>
 	{
 		/// <inheritdoc/>
 		public T Current => inner.Current;
@@ -194,8 +203,106 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 			}
 			finally
 			{
+#pragma warning disable VSTHRD103 // Unregistering a cancellation callback is synchronous.
 				registration.Dispose();
-				cancellationSource?.Dispose();
+#pragma warning restore VSTHRD103
+				cancellation.Release();
+			}
+		}
+	}
+
+	/// <summary>
+	/// A token source whose cancellation is queued off the caller.
+	/// Connection shutdown cancels through this source, and a callback that waits for
+	/// <see cref="JsonRpc.Completion"/> must not run on the path that signals that completion.
+	/// </summary>
+	private sealed class OwnedCancellation
+	{
+		private readonly CancellationTokenSource source = new();
+		private readonly object gate = new();
+		private bool cancelScheduled;
+		private bool cancelFinished;
+		private bool disposeRequested;
+		private bool released;
+
+		/// <summary>Gets the token observed by the started enumerator.</summary>
+		internal CancellationToken Token => this.source.Token;
+
+		/// <summary>Queues cancellation so the caller's stack, including connection shutdown, is not blocked by iterator callbacks.</summary>
+		internal void CancelFromLinkedToken()
+		{
+			lock (this.gate)
+			{
+				if (this.released || this.cancelScheduled)
+				{
+					return;
+				}
+
+				this.cancelScheduled = true;
+			}
+
+			ThreadPool.QueueUserWorkItem(static state => ((OwnedCancellation)state!).CancelCore(), this);
+		}
+
+		/// <summary>
+		/// Releases the source. An in-flight cancel disposes the source after its callbacks return,
+		/// so a callback cannot observe a disposed source and a disposal exception cannot skip the release.
+		/// </summary>
+		internal void Release()
+		{
+			bool releaseNow = false;
+			lock (this.gate)
+			{
+				if (this.released)
+				{
+					return;
+				}
+
+				if (this.cancelScheduled && !this.cancelFinished)
+				{
+					this.disposeRequested = true;
+					return;
+				}
+
+				this.released = true;
+				releaseNow = true;
+			}
+
+			if (releaseNow)
+			{
+				this.source.Dispose();
+			}
+		}
+
+		private void CancelCore()
+		{
+			try
+			{
+#pragma warning disable VSTHRD103 // CancelAsync is unavailable on all target frameworks.
+				this.source.Cancel();
+#pragma warning restore VSTHRD103
+			}
+			catch (Exception ex) when (ex is ObjectDisposedException or AggregateException)
+			{
+				// The source may already have been released, or a callback may have thrown after cancellation was signaled.
+			}
+			finally
+			{
+				bool releaseNow = false;
+				lock (this.gate)
+				{
+					this.cancelFinished = true;
+					if (this.disposeRequested && !this.released)
+					{
+						this.released = true;
+						releaseNow = true;
+					}
+				}
+
+				if (releaseNow)
+				{
+					this.source.Dispose();
+				}
 			}
 		}
 	}

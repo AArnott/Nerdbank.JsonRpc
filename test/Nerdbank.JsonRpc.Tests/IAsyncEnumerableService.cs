@@ -31,6 +31,14 @@ internal partial interface IAsyncEnumerableService
 	/// <returns>The sequence.</returns>
 	IAsyncEnumerable<int> GetPrefetchedBlockingSequenceAsync(ICallScopedCounter counter, CancellationToken cancellationToken);
 
+	/// <summary>
+	/// Returns a sequence that prefetches one value, then waits.
+	/// Canceling the enumerator runs a callback that blocks until <see cref="AsyncEnumerableService.CancellationCallbackBlocksOn"/> completes.
+	/// </summary>
+	/// <param name="cancellationToken">A token to cancel production.</param>
+	/// <returns>The sequence.</returns>
+	IAsyncEnumerable<int> GetPrefetchedSequenceWhoseCancellationBlocksAsync(CancellationToken cancellationToken);
+
 	IAsyncEnumerable<int> GetUncooperativeSequenceAsync(bool blockReadAhead, bool blockDispose, CancellationToken cancellationToken);
 
 	Task<IAsyncEnumerable<int>> GetNumbersWrappedAsync(int count, CancellationToken cancellationToken);
