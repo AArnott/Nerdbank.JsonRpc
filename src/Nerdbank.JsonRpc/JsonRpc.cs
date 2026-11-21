@@ -1484,9 +1484,10 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 			if (request.Id is RequestId id)
 			{
+				InboundRequestCancellation cancellation = new();
 				tracker = new()
 				{
-					CancellationTokenSource = new(),
+					Cancellation = cancellation,
 				};
 
 				bool added;
@@ -1518,6 +1519,7 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 				TargetInstance = handler.Target,
 				CallState = callState,
 				CancellationToken = tracker.CancellationTokenSource?.Token ?? default,
+				RequestCancellation = tracker.Cancellation,
 			};
 
 			return this.DispatchCoreAsync(request, handler.Invoker, dispatchRequest);
@@ -2302,12 +2304,11 @@ public partial class JsonRpc : IDisposableObservable, IJsonRpcClient, IArguments
 
 	private struct PendingInboundRequest : IDisposable
 	{
-		internal required CancellationTokenSource? CancellationTokenSource { get; init; }
+		internal required InboundRequestCancellation? Cancellation { get; init; }
 
-		public void Dispose()
-		{
-			this.CancellationTokenSource?.Dispose();
-		}
+		internal CancellationTokenSource? CancellationTokenSource => this.Cancellation?.Source;
+
+		public void Dispose() => this.Cancellation?.Release();
 	}
 
 	[GenerateShape(Kind = TypeShapeKind.None, IncludeMethods = MethodShapeFlags.PublicInstance)]

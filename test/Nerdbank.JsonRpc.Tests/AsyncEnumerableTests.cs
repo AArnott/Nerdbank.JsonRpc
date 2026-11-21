@@ -574,6 +574,35 @@ public partial class AsyncEnumerableTests : TestBase
 		await this.AwaitCompletionAsync(fixture.ClientRpc.Completion);
 	}
 
+	/// <summary>
+	/// A cancellation callback registered by an in-flight iterator must not keep that iterator alive by waiting for its disposal.
+	/// </summary>
+	/// <param name="encoding">The wire encoding.</param>
+	/// <param name="disconnect">How the connection is severed.</param>
+	/// <returns>A task representing the test.</returns>
+	[Test]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ClientDisposed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.TransportClosed)]
+	[Arguments(JsonRpcEncoding.Json, ConnectionLoss.ServerDisposed)]
+	[Arguments(JsonRpcEncoding.MessagePack, ConnectionLoss.ServerDisposed)]
+	public async Task ConnectionLossDisposesIteratorWhenCancellationCallbackWaitsForDisposal(JsonRpcEncoding encoding, ConnectionLoss disconnect)
+	{
+		using Fixture fixture = new(encoding);
+		await using IAsyncEnumerator<int> enumerator = fixture.Client.GetPrefetchedSequenceWhoseCancellationWaitsForDisposalAsync(this.TimeoutToken).GetAsyncEnumerator(this.TimeoutToken);
+		Assert.True(await enumerator.MoveNextAsync());
+		Assert.Equal(0, enumerator.Current);
+
+		await fixture.SeverAsync(disconnect);
+
+		await fixture.Service.PrefetchedDisposalWaitDisposed.Task.WithCancellation(this.TimeoutToken);
+		Assert.True(fixture.Service.DisposalWaitCanceled);
+		await fixture.Service.DisposalWaitCallbackFinished.Task.WithCancellation(this.TimeoutToken);
+		await this.AwaitCompletionAsync(fixture.ServerRpc.Completion);
+		await this.AwaitCompletionAsync(fixture.ClientRpc.Completion);
+	}
+
 	/// <summary>A prefetch whose token is already canceled does not produce values from a synchronous sequence.</summary>
 	/// <returns>A task representing the test.</returns>
 	[Test]
@@ -586,15 +615,13 @@ public partial class AsyncEnumerableTests : TestBase
 	}
 
 	/// <summary>
-	/// A compiler iterator links the method token with the enumerator token, and <see langword="finally"/> observes the link.
-	/// Disposal after prefetch must not run until that link has been canceled.
+	/// A callback registered on the iterator token must not block disposal, and <see langword="finally"/> still observes cancellation.
 	/// </summary>
 	/// <returns>A task representing the test.</returns>
 	[Test]
-	public async Task PrefetchedCompilerIteratorObservesLinkedCancellation()
+	public async Task PrefetchedIteratorDisposalSurvivesCancellationCallback()
 	{
-		using CancellationTokenSource request = new();
-		CompilerLinkedSequence sequence = new(request.Token);
+		CancellationCallbackSequence sequence = new();
 		IAsyncEnumerable<int> prefetched = await sequence.Enumerate().WithPrefetchAsync(1, CancellationToken.None);
 		using CancellationTokenSource stop = CancellationTokenSource.CreateLinkedTokenSource(this.TimeoutToken);
 		await using IAsyncEnumerator<int> enumerator = prefetched.GetAsyncEnumerator(stop.Token);
@@ -604,6 +631,7 @@ public partial class AsyncEnumerableTests : TestBase
 		stop.Cancel();
 		await enumerator.DisposeAsync();
 		Assert.True(sequence.SawCanceled);
+		await sequence.CallbackFinished.Task.WithCancellation(this.TimeoutToken);
 	}
 
 	/// <summary>A second prefetch that is already canceled still disposes the iterator started by the first prefetch.</summary>
@@ -660,24 +688,40 @@ public partial class AsyncEnumerableTests : TestBase
 		}
 	}
 
-	private sealed class CompilerLinkedSequence(CancellationToken requestToken)
+	private sealed class CancellationCallbackSequence
 	{
 		private int sawCanceled;
 
 		internal bool SawCanceled => Volatile.Read(ref this.sawCanceled) != 0;
 
-		public IAsyncEnumerable<int> Enumerate() => this.Run(requestToken);
+		internal TaskCompletionSource<bool> Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		internal TaskCompletionSource<bool> CallbackFinished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public IAsyncEnumerable<int> Enumerate() => this.Run();
 
 		private async IAsyncEnumerable<int> Run([EnumeratorCancellation] CancellationToken cancellationToken = default)
 		{
 			try
 			{
+				// Registered during prefetch, before the later enumeration token is canceled.
+				cancellationToken.Register(
+					static state =>
+					{
+						CancellationCallbackSequence sequence = (CancellationCallbackSequence)state!;
+#pragma warning disable VSTHRD002 // The callback blocks on disposal; that is the hazard under test.
+						sequence.Disposed.Task.GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
+						sequence.CallbackFinished.TrySetResult(true);
+					},
+					this);
 				yield return 0;
 				yield return 1;
 			}
 			finally
 			{
 				Volatile.Write(ref this.sawCanceled, cancellationToken.IsCancellationRequested ? 1 : 0);
+				this.Disposed.TrySetResult(true);
 			}
 		}
 	}

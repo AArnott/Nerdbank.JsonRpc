@@ -11,6 +11,7 @@ namespace Nerdbank.JsonRpc;
 internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 {
 	private readonly IAsyncEnumerable<T> inner;
+	private InboundRequestCancellation? requestCancellation;
 	private OwnedCancellation? enumerationCancellation;
 	private IAsyncEnumerator<T>? startedEnumerator;
 	private List<T>? prefetchedValues;
@@ -65,6 +66,9 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 	}
 
 	/// <inheritdoc/>
+	public void AttachRequestCancellation(InboundRequestCancellation cancellation) => this.requestCancellation ??= cancellation;
+
+	/// <inheritdoc/>
 	public ValueTask PrefetchAsync(CancellationToken cancellationToken)
 		=> this.Settings.Prefetch > 0 && this.prefetchedValues is null
 			? this.PrefetchAsync(this.Settings.Prefetch, cancellationToken)
@@ -86,9 +90,28 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 			throw new InvalidOperationException("A partially prefetched sequence cannot buffer more values after enumeration has started.");
 		}
 
-		// Link the caller only for this prefetch. The completed request's token is disposed afterward and must not cancel later pulls.
-		this.enumerationCancellation ??= new OwnedCancellation();
-		CancellationTokenRegistration requestRegistration = cancellationToken.Register(static state => ((OwnedCancellation)state!).CancelFromLinkedToken(), this.enumerationCancellation);
+		// Prefer the request token the iterator method already captured. A second token would make a compiler
+		// iterator link the two, and that link flips only inside a cancellation callback.
+		if (this.enumerationCancellation is null)
+		{
+			if (this.requestCancellation is InboundRequestCancellation request)
+			{
+				request.Retain();
+				this.enumerationCancellation = OwnedCancellation.Adopt(request);
+			}
+			else
+			{
+				this.enumerationCancellation = OwnedCancellation.Create();
+			}
+		}
+
+		// Link the caller only for this prefetch. Skip it when the caller token is the iterator token:
+		// registering a callback on that token would run during its own cancellation.
+		CancellationTokenRegistration requestRegistration = default;
+		if (cancellationToken.CanBeCanceled && !cancellationToken.Equals(this.enumerationCancellation.Token))
+		{
+			requestRegistration = cancellationToken.Register(static state => ((OwnedCancellation)state!).CancelFromLinkedToken(), this.enumerationCancellation);
+		}
 
 		// A previous prefetch may already own an enumerator. Capturing it before the token check means a
 		// canceled repeat prefetch still disposes that enumerator instead of dropping it.
@@ -126,8 +149,7 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 				{
 					if (enumerator is not null)
 					{
-						// Keep the request linked until disposal finishes. The enumerator was started with the
-						// owned token, so unlinking first would leave a dispose that waits on that token stuck.
+						// Disposal waits until the iterator token is canceled. Unlinking first can drop that signal.
 						await this.enumerationCancellation!.WaitUntilSignaledAsync().ConfigureAwait(false);
 						await enumerator.DisposeAsync().ConfigureAwait(false);
 					}
@@ -207,8 +229,8 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		{
 			try
 			{
-				// A compiler iterator observes a token linked to this one. That link is updated by a callback
-				// inside Cancel, so disposal has to wait until Cancel returns or finally can miss it.
+				// The token flag flips before any callback. Waiting for that, not for callbacks to finish,
+				// lets a callback block on disposal without keeping the iterator alive.
 				await cancellation.WaitUntilSignaledAsync().ConfigureAwait(false);
 				await inner.DisposeAsync().ConfigureAwait(false);
 			}
@@ -229,17 +251,35 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 	/// </summary>
 	private sealed class OwnedCancellation
 	{
-		private readonly CancellationTokenSource source = new();
+		private readonly CancellationTokenSource source;
+		private readonly InboundRequestCancellation? lease;
 		private readonly object gate = new();
+		private RegisteredWaitHandle? waitRegistration;
 		private TaskCompletionSource<bool>? signaled;
 		private bool published;
 		private bool cancelScheduled;
 		private bool cancelFinished;
 		private bool disposeRequested;
 		private bool released;
+		private int waitArmed;
+
+		private OwnedCancellation(CancellationTokenSource source, InboundRequestCancellation? lease)
+		{
+			this.source = source;
+			this.lease = lease;
+		}
 
 		/// <summary>Gets the token observed by the started enumerator.</summary>
 		internal CancellationToken Token => this.source.Token;
+
+		/// <summary>Creates a source owned entirely by the sequence.</summary>
+		/// <returns>The cancellation owner.</returns>
+		internal static OwnedCancellation Create() => new(new CancellationTokenSource(), lease: null);
+
+		/// <summary>Cancels and releases an existing request source instead of a private one.</summary>
+		/// <param name="lease">The request lease. The caller has already retained it.</param>
+		/// <returns>The cancellation owner.</returns>
+		internal static OwnedCancellation Adopt(InboundRequestCancellation lease) => new(lease.Source, lease);
 
 		/// <summary>Queues cancellation so the caller's stack, including connection shutdown, is not blocked by iterator callbacks.</summary>
 		internal void CancelFromLinkedToken()
@@ -267,29 +307,42 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 		}
 
 		/// <summary>
-		/// Completes when a queued cancellation call has returned.
-		/// Completes immediately when cancellation was not requested.
+		/// Completes when the token's cancellation flag is set, or immediately when cancellation was not requested.
 		/// </summary>
-		/// <returns>A task that completes once cancellation callbacks have run, or immediately when no cancel is in flight.</returns>
+		/// <returns>A task that completes once the token is canceled, without waiting for cancellation callbacks.</returns>
 		/// <remarks>
-		/// Compiler-generated iterators combine the token passed to the iterator method with the token passed to
-		/// <see cref="IAsyncEnumerable{T}.GetAsyncEnumerator"/>. <see langword="finally"/> observes that linked token,
-		/// which becomes canceled from a callback during cancellation. Returning as soon as the owned flag is set lets
-		/// disposal run before that callback. The queued call still leaves the connection shutdown path, so a callback
-		/// that blocks on <see cref="JsonRpc.Completion"/> cannot stall it.
+		/// The runtime sets the flag and signals <see cref="CancellationToken.WaitHandle"/> before it runs callbacks.
+		/// A callback registered by an in-flight move can therefore block on disposal without delaying this wait,
+		/// and a callback that blocks on <see cref="JsonRpc.Completion"/> still runs off the shutdown path because
+		/// cancellation itself is queued.
 		/// </remarks>
 		internal ValueTask WaitUntilSignaledAsync()
 		{
+			TaskCompletionSource<bool>? waiter = null;
 			lock (this.gate)
 			{
-				if (this.published || !this.cancelScheduled || this.released)
+				if (this.published || this.released)
+				{
+					return default;
+				}
+
+				if (this.IsCanceled())
+				{
+					this.published = true;
+					return default;
+				}
+
+				if (!this.cancelScheduled)
 				{
 					return default;
 				}
 
 				this.signaled ??= new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-				return new ValueTask(this.signaled.Task);
+				waiter = this.signaled;
 			}
+
+			this.ArmWait();
+			return new ValueTask(waiter.Task);
 		}
 
 		/// <summary>
@@ -318,7 +371,7 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 
 			if (releaseNow)
 			{
-				this.source.Dispose();
+				this.DisposeSource();
 			}
 		}
 
@@ -336,7 +389,8 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 			}
 			finally
 			{
-				// Publish after Cancel returns so linked enumerator tokens are updated before disposal waits up.
+				// The wait handle is what unblocks disposal. Publishing here only covers a waiter that raced
+				// ahead of the flag; it does not make disposal depend on callback order.
 				this.PublishSignaled();
 				bool releaseNow = false;
 				lock (this.gate)
@@ -351,22 +405,115 @@ internal sealed class RpcEnumerable<T> : IAsyncEnumerable<T>, IRpcEnumerable
 
 				if (releaseNow)
 				{
-					this.source.Dispose();
+					this.DisposeSource();
 				}
 			}
 		}
 
-		/// <summary>Releases waiters once the token is signaled, without waiting for later callbacks.</summary>
+		private void ArmWait()
+		{
+			if (Interlocked.Exchange(ref this.waitArmed, 1) != 0)
+			{
+				return;
+			}
+
+			CancellationToken token = this.source.Token;
+			if (this.IsCanceled())
+			{
+				this.PublishSignaled();
+				return;
+			}
+
+			try
+			{
+				RegisteredWaitHandle registration = ThreadPool.RegisterWaitForSingleObject(
+					token.WaitHandle,
+					static (state, timedOut) => ((OwnedCancellation)state!).PublishSignaled(),
+					this,
+					Timeout.Infinite,
+					executeOnlyOnce: true);
+
+				bool unregister = false;
+				lock (this.gate)
+				{
+					if (this.published || this.released)
+					{
+						unregister = true;
+					}
+					else
+					{
+						this.waitRegistration = registration;
+					}
+				}
+
+				if (unregister)
+				{
+					registration.Unregister(null);
+				}
+
+				// Cancellation can win the race between the check above and the registration.
+				if (this.IsCanceled())
+				{
+					this.PublishSignaled();
+				}
+			}
+			catch (NotSupportedException)
+			{
+				if (this.IsCanceled())
+				{
+					this.PublishSignaled();
+				}
+			}
+		}
+
+		/// <summary>Releases waiters once the token flag is set, without waiting for later callbacks.</summary>
 		private void PublishSignaled()
 		{
 			TaskCompletionSource<bool>? waiter;
 			lock (this.gate)
 			{
+				if (this.published)
+				{
+					return;
+				}
+
 				this.published = true;
 				waiter = this.signaled;
 			}
 
 			waiter?.TrySetResult(true);
+		}
+
+		private bool IsCanceled()
+		{
+			try
+			{
+				return this.source.IsCancellationRequested;
+			}
+			catch (ObjectDisposedException)
+			{
+				return true;
+			}
+		}
+
+		private void DisposeSource()
+		{
+			RegisteredWaitHandle? registration;
+			lock (this.gate)
+			{
+				registration = this.waitRegistration;
+				this.waitRegistration = null;
+			}
+
+			registration?.Unregister(null);
+			if (this.lease is not null)
+			{
+				this.lease.Release();
+			}
+			else
+			{
+				this.source.Dispose();
+			}
 		}
 	}
 }

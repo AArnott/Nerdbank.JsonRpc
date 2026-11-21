@@ -364,6 +364,13 @@ internal class RpcTargetVisitor : TypeShapeVisitor
 				{
 					// Prefetching only matters if the result will actually be serialized and sent back; a
 					// notification has no response to carry it, and an unbounded sequence could block forever.
+					// The iterator method already captured this request token. Starting prefetch with the same
+					// token keeps a compiler iterator from linking a second source that disposal cannot see.
+					if (prefetchable.Settings.Prefetch > 0 && dispatch.RequestCancellation is InboundRequestCancellation requestCancellation)
+					{
+						prefetchable.AttachRequestCancellation(requestCancellation);
+					}
+
 					await prefetchable.PrefetchAsync(dispatch.CancellationToken).ConfigureAwait(false);
 				}
 
