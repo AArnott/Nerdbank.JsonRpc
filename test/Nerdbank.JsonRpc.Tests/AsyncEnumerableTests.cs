@@ -664,11 +664,13 @@ public partial class AsyncEnumerableTests : TestBase
 	[Test]
 	public async Task PrefetchDisposalObservesCompilerLinkedTokenDespiteEarlierCallback()
 	{
+#if NET
 		if (!RuntimeFeature.IsDynamicCodeSupported)
 		{
 			Skip.Test("NativeAOT does not expose the compiler-generated linked cancellation field this race reaches.");
 			return;
 		}
+#endif
 
 		using CancellationTokenSource captured = new();
 		LinkedTokenRaceIterator iterator = new();
@@ -682,8 +684,8 @@ public partial class AsyncEnumerableTests : TestBase
 		Task dispose = enumerator.DisposeAsync().AsTask();
 		try
 		{
-			await iterator.HoldingBeforeLink.Task.WaitAsync(this.TimeoutToken);
-			await dispose.WaitAsync(this.TimeoutToken);
+			await iterator.HoldingBeforeLink.Task.WithCancellation(this.TimeoutToken);
+			await dispose.WithCancellation(this.TimeoutToken);
 			Assert.False(captured.IsCancellationRequested);
 			Assert.True(iterator.SawCanceled);
 		}
@@ -692,7 +694,7 @@ public partial class AsyncEnumerableTests : TestBase
 			iterator.ReleaseBeforeLink.TrySetResult(true);
 		}
 
-		await iterator.BeforeLinkFinished.Task.WaitAsync(this.TimeoutToken);
+		await iterator.BeforeLinkFinished.Task.WithCancellation(this.TimeoutToken);
 	}
 
 	/// <summary>
@@ -706,11 +708,13 @@ public partial class AsyncEnumerableTests : TestBase
 	[Arguments(JsonRpcEncoding.MessagePack)]
 	public async Task PrefetchedArgumentObservesCompilerLinkedToken(JsonRpcEncoding encoding)
 	{
+#if NET
 		if (!RuntimeFeature.IsDynamicCodeSupported)
 		{
 			Skip.Test("NativeAOT does not expose the compiler-generated linked cancellation field this race reaches.");
 			return;
 		}
+#endif
 
 		using Fixture fixture = new(encoding);
 		using CancellationTokenSource captured = new();
@@ -719,14 +723,14 @@ public partial class AsyncEnumerableTests : TestBase
 		Task<int> sum = fixture.Client.SumAsync(
 			await iterator.Produce(captured.Token, blockAfterFirst: true).WithPrefetchAsync(1, captured.Token),
 			call.Token);
-		await iterator.Blocked.Task.WaitAsync(this.TimeoutToken);
+		await iterator.Blocked.Task.WithCancellation(this.TimeoutToken);
 		call.Cancel();
 		await Assert.ThrowsAnyAsync<Exception>(() => sum);
 
 		try
 		{
-			await iterator.HoldingBeforeLink.Task.WaitAsync(this.TimeoutToken);
-			await iterator.FinallyObserved.Task.WaitAsync(this.TimeoutToken);
+			await iterator.HoldingBeforeLink.Task.WithCancellation(this.TimeoutToken);
+			await iterator.FinallyObserved.Task.WithCancellation(this.TimeoutToken);
 			Assert.False(captured.IsCancellationRequested);
 			Assert.True(iterator.SawCanceled);
 		}
@@ -735,7 +739,7 @@ public partial class AsyncEnumerableTests : TestBase
 			iterator.ReleaseBeforeLink.TrySetResult(true);
 		}
 
-		await iterator.BeforeLinkFinished.Task.WaitAsync(this.TimeoutToken);
+		await iterator.BeforeLinkFinished.Task.WithCancellation(this.TimeoutToken);
 	}
 
 	/// <summary>
@@ -746,20 +750,23 @@ public partial class AsyncEnumerableTests : TestBase
 	[Test]
 	public async Task PrefetchCatchUpCancellationDoesNotDeadlock()
 	{
+#if NET
 		if (!RuntimeFeature.IsDynamicCodeSupported)
 		{
 			Skip.Test("NativeAOT does not expose the compiler-generated linked cancellation field this race reaches.");
 			return;
 		}
+#endif
 
 		using CancellationTokenSource captured = new();
 		using CancellationTokenSource caller = new();
 		LinkedCatchUpIterator iterator = new();
 		Task prefetch = iterator.Produce(captured.Token, caller).WithPrefetchAsync(1, caller.Token).AsTask();
-		await Assert.ThrowsAsync<OperationCanceledException>(() => prefetch.WaitAsync(this.TimeoutToken));
+		await Assert.ThrowsAsync<OperationCanceledException>(() => prefetch.WithCancellation(this.TimeoutToken));
+		Assert.False(this.TimeoutToken.IsCancellationRequested);
 		Assert.False(captured.IsCancellationRequested);
 		Assert.True(iterator.SawCanceled);
-		await iterator.CallbackFinished.Task.WaitAsync(this.TimeoutToken);
+		await iterator.CallbackFinished.Task.WithCancellation(this.TimeoutToken);
 	}
 
 	/// <summary>
