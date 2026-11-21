@@ -97,6 +97,12 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 	/// <summary>Gets a value indicating whether <see cref="GetPrefetchedSequenceWhoseCancellationWaitsForDisposalAsync"/> observed a canceled enumerator token.</summary>
 	internal bool DisposalWaitCanceled => Volatile.Read(ref this.disposalWaitCanceled) != 0;
 
+	/// <summary>Gets the signal that <see cref="GetSequenceThatBlocksDuringPrefetchAsync"/> is blocked inside prefetch.</summary>
+	internal TaskCompletionSource<bool> PrefetchDuringBlockWaiting { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	/// <summary>Gets the signal set from the <see langword="finally"/> block of <see cref="GetSequenceThatBlocksDuringPrefetchAsync"/>.</summary>
+	internal TaskCompletionSource<bool> PrefetchDuringBlockDisposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
 	/// <summary>Gets the callback retained by the last sequence-producing call.</summary>
 	internal ICallScopedCounter? LastCounter { get; private set; }
 
@@ -157,6 +163,10 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 	/// <inheritdoc/>
 	public IAsyncEnumerable<int> GetPrefetchedSequenceWhoseCancellationWaitsForDisposalAsync(CancellationToken cancellationToken)
 		=> this.WaitForDisposalWhenCanceledAsync(cancellationToken).WithJsonRpcSettings(new JsonRpcEnumerableSettings { Prefetch = 1 });
+
+	/// <inheritdoc/>
+	public IAsyncEnumerable<int> GetSequenceThatBlocksDuringPrefetchAsync(CancellationToken cancellationToken)
+		=> this.BlockDuringPrefetchAsync(cancellationToken).WithJsonRpcSettings(new JsonRpcEnumerableSettings { Prefetch = 1 });
 
 	public IAsyncEnumerable<int> GetUncooperativeSequenceAsync(bool blockReadAhead, bool blockDispose, CancellationToken cancellationToken)
 		=> new UncooperativeSequence(this, blockReadAhead, blockDispose).WithJsonRpcSettings(new() { MaxReadAhead = blockReadAhead ? 1 : 0 });
@@ -392,6 +402,40 @@ internal sealed class AsyncEnumerableService : IAsyncEnumerableService
 		{
 			Volatile.Write(ref this.disposalWaitCanceled, cancellationToken.IsCancellationRequested ? 1 : 0);
 			this.PrefetchedDisposalWaitDisposed.TrySetResult(true);
+		}
+	}
+
+	private async IAsyncEnumerable<int> BlockDuringPrefetchAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+	{
+		try
+		{
+			// Registered before the blocking wait, while prefetch of the first value is still outstanding.
+			// The registration is left in place: disposing it from finally would wait on the callback.
+			cancellationToken.Register(
+				static state =>
+				{
+					AsyncEnumerableService service = (AsyncEnumerableService)state!;
+					try
+					{
+#pragma warning disable VSTHRD002 // The callback must block synchronously; that is the shutdown hazard under test.
+						service.CancellationCallbackBlocksOn!.GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
+					}
+					catch (Exception)
+					{
+						// A dropped transport can fault Completion. The callback still has to return.
+					}
+
+					service.BlockingCancellationFinished.TrySetResult(true);
+				},
+				this);
+			this.PrefetchDuringBlockWaiting.TrySetResult(true);
+			await Task.Delay(Timeout.Infinite, cancellationToken);
+			yield return 0;
+		}
+		finally
+		{
+			this.PrefetchDuringBlockDisposed.TrySetResult(true);
 		}
 	}
 
